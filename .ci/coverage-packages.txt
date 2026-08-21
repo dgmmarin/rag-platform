@@ -1,0 +1,11 @@
+# Coverage-gated packages (STORY-01.3, traces NFR-MNT-03).
+# One module-relative package path per line. Threshold is 70% (see mise-tasks/coverage).
+# Packages listed here are enforced only once they exist; not-yet-created
+# packages are reported SKIP by the gate (see mise-tasks/lib/coverage.sh) so this
+# list can be authored ahead of the code that lands in EPIC-02+.
+#
+# '#' comments and blank lines are ignored.
+internal/tenant
+internal/ingest
+internal/retrieve
+internal/connector

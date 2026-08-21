@@ -1,0 +1,13 @@
+.git
+bin
+docs
+schemas
+*.md
+.editorconfig
+.golangci.yml
+docker-compose.yml
+mprocs.yaml
+mise.toml
+mise-tasks
+.env
+.env.example

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#MISE description="Run unit tests with coverage and enforce the per-package gate (70%)"
+# STORY-01.3, traces NFR-MNT-03. CI and local use this identical task so the
+# coverage gate never diverges; the gate logic lives in mise-tasks/lib/coverage.sh.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+# shellcheck source=lib/coverage.sh
+source "$ROOT/mise-tasks/lib/coverage.sh"
+
+THRESHOLD="${COVERAGE_THRESHOLD:-70}"
+GATED_CONFIG="$ROOT/.ci/coverage-packages.txt"
+COVER_DIR="${COVER_DIR:-$ROOT/coverage}"
+PROFILE="$COVER_DIR/coverage.out"
+
+mkdir -p "$COVER_DIR"
+
+MODULE="$(go list -m)"
+
+# Unit tests across the module with a coverage profile. Excludes the e2e suite,
+# which is guarded by the `e2e` build tag and needs the local stack.
+go test -covermode=atomic -coverprofile="$PROFILE" ./...
+
+# Human/CI-readable reports (artifacts).
+go tool cover -func="$PROFILE" | tee "$COVER_DIR/coverage-func.txt"
+go tool cover -html="$PROFILE" -o "$COVER_DIR/coverage.html"
+
+echo
+echo "== Coverage gate (threshold ${THRESHOLD}%) =="
+
+# Existing packages = everything `go list` reports (module-qualified).
+go list ./... >"$COVER_DIR/existing-packages.txt"
+
+if eval_coverage_gate "$THRESHOLD" "$MODULE" \
+    "$GATED_CONFIG" \
+    "$COVER_DIR/existing-packages.txt" \
+    "$COVER_DIR/coverage-func.txt"; then
+  echo "Coverage gate: PASS"
+else
+  echo "Coverage gate: FAIL" >&2
+  exit 1
+fi

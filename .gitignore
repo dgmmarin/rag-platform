@@ -1,1 +1,11 @@
 .claude/settings.local.json
+
+# Build output
+/bin/
+
+# Coverage reports (mise run coverage; uploaded as a CI artifact)
+/coverage/
+
+# Local environment (copy of .env.example; may hold local credentials)
+.env
+

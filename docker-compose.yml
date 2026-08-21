@@ -1,5 +1,10 @@
-# Local development infrastructure (STORY-01.2).
-# Application processes (api, worker) run on the host via mprocs, not here.
+# Local development stack (STORY-01.2).
+#
+# Default `docker compose up` brings up infrastructure the host processes talk
+# to: Postgres 16 + pgvector, MinIO, and the parsing sidecar stub. The app
+# (`ragctl serve` / `ragctl work`) normally runs on the host under mprocs
+# (`mise run dev`); it is also available here as the `app` profile
+# (`docker compose --profile app up`, or `mise run up-app`) — see ADR-0011.
 name: rag-platform
 
 services:
@@ -13,8 +18,10 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Seed: creates the control-plane DB + installs pgvector on first init.
+      - ./deploy/seed:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag} -d ${POSTGRES_DB:-control_plane}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -26,6 +33,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio12345}
     ports:
+      # NOTE: :9000 collides with other local MinIO instances. Override with
+      # MINIO_PORT / MINIO_CONSOLE_PORT in .env (see .env.example).
       - "${MINIO_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
@@ -36,16 +45,41 @@ services:
       timeout: 3s
       retries: 10
 
-  # Parsing sidecar (Python) — added in STORY-05.3. Uncomment once services/parser exists.
-  # parser:
-  #   build: ./services/parser
-  #   ports:
-  #     - "8081:8081"
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:8081/healthz"]
-  #     interval: 5s
-  #     timeout: 3s
-  #     retries: 10
+  # Parsing sidecar stub (Python). Health-only for now; the real POST /parse
+  # (ADR-0006, SPEC-05 §3) arrives in STORY-05.3.
+  parser:
+    build: ./services/parser
+    ports:
+      - "${PARSER_PORT:-8081}:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8081/healthz').status==200 else 1)\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # The app image (ragctl). Opt-in via the `app` profile so a stubbed `serve`
+  # (ADR-0010) never blocks `docker compose up --wait` (ADR-0011).
+  app:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["serve", "--addr", ":8080"]
+    environment:
+      CONTROL_PLANE_URL: postgres://${POSTGRES_USER:-rag}:${POSTGRES_PASSWORD:-rag}@postgres:5432/${POSTGRES_DB:-control_plane}?sslmode=disable
+      PARSER_URL: http://parser:8081
+      OBJECT_STORE_ENDPOINT: http://minio:9000
+      OBJECT_STORE_ACCESS_KEY: ${MINIO_ROOT_USER:-minio}
+      OBJECT_STORE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minio12345}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      parser:
+        condition: service_healthy
 
 volumes:
   pgdata:

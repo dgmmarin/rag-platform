@@ -2,6 +2,18 @@
 
 **Implements:** FR-OBS-01..04, FR-ADM-06
 
+**Scaffolding (STORY-01.6):** the `internal/obs` package delivers the reusable
+seam for §1–4 — a JSON `slog` logger with the base fields, a Prometheus registry
+exposing the representative `api_request_duration_seconds` histogram at
+`/metrics`, HTTP middleware that injects/propagates `request_id` and emits one
+structured line per request with `duration_ms`, an env-configured OpenTelemetry
+tracer (disabled by default, W3C tracecontext propagation) with a shutdown hook,
+and `/healthz` + `/readyz` handlers (readiness is a skeleton with a `Check` seam).
+`ragctl serve` starts this minimal server. The full metric catalogue (§2) is
+STORY-10.1, span instrumentation of request paths (§3) is STORY-10.3, and the
+real readiness checks (§4) land with STORY-02/09. The tenant label/field is `-`
+until tenant resolution (STORY-02) fills it.
+
 ## 1. Logging
 `log/slog` JSON. Mandatory fields where applicable: `ts, level, msg, service, request_id, tenant_id, job_id, source_id, user_id|api_key_id, duration_ms, err`. Content fields (question, document text) are never logged at info level.
 

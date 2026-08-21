@@ -1,0 +1,33 @@
+# golangci-lint configuration for ragctl (STORY-01.1, traces ADR-0002).
+# Kept intentionally lean; project-specific rules (e.g. forbidding Unsafe()
+# outside internal/tenant and cmd/ragctl per ADR-0003) are added by STORY-02.6.
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  # Lint the e2e-tagged tests too so end-to-end code meets the same bar.
+  build-tags:
+    - e2e
+
+linters:
+  default: standard
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - misspell
+    - revive
+    - unconvert
+    - gocritic
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

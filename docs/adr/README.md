@@ -11,5 +11,10 @@
 | [0007](0007-hybrid-retrieval-rrf.md) | Hybrid retrieval with reciprocal rank fusion, optional rerank | Accepted |
 | [0008](0008-document-versioning-atomic-swap.md) | Document versions with atomic current-version swap | Accepted |
 | [0009](0009-kong-cli-framework.md) | Kong for the CLI and platform entrypoint | Accepted |
+| [0010](0010-ragctl-exit-codes-and-error-sentinels.md) | ragctl exit-code contract and error sentinels | Accepted |
+| [0011](0011-local-app-container-profile.md) | Local app container is an opt-in compose profile | Accepted |
+| [0012](0012-secret-envelope-encryption-and-kms.md) | Secret envelope encryption format and KMS providers | Accepted |
+| [0013](0013-observability-scaffolding.md) | Observability scaffolding — obs package, private registry, no-op-by-default tracing | Accepted |
+| [0014](0014-ci-drives-mise-tasks.md) | CI drives mise tasks; coverage gate in a shell lib, skips absent packages | Accepted |
 
 Template for new ADRs: `NNNN-short-title.md` with sections Status, Context, Options, Decision, Consequences. Reference requirement IDs from the SRS.

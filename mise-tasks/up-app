@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Start the full stack including the containerised app (app profile)"
+set -euo pipefail
+# The app image runs `ragctl serve`, a stub until STORY-04.1, so we do not
+# --wait on it here (ADR-0011); infra is still gated healthy by `up`.
+docker compose up -d --wait
+docker compose --profile app up -d --build

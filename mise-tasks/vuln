@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Scan for known vulnerabilities (govulncheck)"
+# STORY-01.3, traces NFR-MNT-03. Version pinned for Go 1.22 compatibility
+# (go.mod is `go 1.22` with no toolchain directive; do not force an upgrade).
+set -euo pipefail
+
+GOVULNCHECK="golang.org/x/vuln/cmd/govulncheck@v1.1.4"
+go run "$GOVULNCHECK" ./...

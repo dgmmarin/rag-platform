@@ -2,10 +2,15 @@
 # one definition per command (in ./mise-tasks/).
 procs:
   infra:
+    # Postgres+pgvector, MinIO and the parsing sidecar stub (docker-compose.yml).
+    # The containerised app is opt-in via the `app` profile (ADR-0011).
     shell: "docker compose up"
   api:
     shell: "mise run api"
-    autostart: false   # start once cmd/ragctl exists
+    # serve now runs the scaffolding HTTP server (STORY-01.6: /healthz, /readyz,
+    # /metrics + obs middleware) but requires a local DEK and is still pre-router;
+    # left off by default until the full middleware chain lands (STORY-04.1).
+    autostart: false
   worker:
     shell: "mise run worker"
-    autostart: false
+    autostart: false   # ragctl work is a stub (STORY-01.1); enable in STORY-09.1

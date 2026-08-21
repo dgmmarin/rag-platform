@@ -1,3 +1,4 @@
+-- +goose Up
 -- Control-plane schema (shared database).
 -- Holds tenant registry, users, source definitions, job tracking, and usage.
 -- Never holds tenant content. All tenant content lives in the per-tenant databases.
@@ -175,9 +176,29 @@ create index on audit_log (tenant_id, created_at desc);
 -- updated_at trigger
 -- ---------------------------------------------------------------------------
 
+-- +goose StatementBegin
 create or replace function set_updated_at() returns trigger language plpgsql as $$
 begin new.updated_at = now(); return new; end $$;
+-- +goose StatementEnd
 
 create trigger tenants_updated_at          before update on tenants          for each row execute function set_updated_at();
 create trigger tenant_databases_updated_at before update on tenant_databases for each row execute function set_updated_at();
 create trigger sources_updated_at          before update on sources          for each row execute function set_updated_at();
+
+-- +goose Down
+drop table if exists audit_log;
+drop table if exists usage_daily;
+drop table if exists jobs;
+drop table if exists sources;
+drop table if exists api_keys;
+drop table if exists tenant_members;
+drop table if exists users;
+drop table if exists tenant_databases;
+drop table if exists tenants;
+drop function if exists set_updated_at();
+drop type if exists job_status;
+drop type if exists job_kind;
+drop type if exists source_status;
+drop type if exists source_kind;
+drop type if exists tenant_role;
+drop type if exists tenant_status;

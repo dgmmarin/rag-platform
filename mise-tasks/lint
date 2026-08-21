@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-#MISE description="Lint Go code (golangci-lint if available, else go vet)"
+#MISE description="Lint Go code (golangci-lint; falls back to go vet)"
 set -euo pipefail
+# Prefer an installed golangci-lint; otherwise run the pinned version through the
+# Go toolchain so lint is identical locally and in CI. Fall back to `go vet` only
+# when neither is reachable (e.g. fully offline).
+GCL="github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1"
 if command -v golangci-lint >/dev/null 2>&1; then
   golangci-lint run
+elif go run "$GCL" version >/dev/null 2>&1; then
+  go run "$GCL" run
 else
-  echo "golangci-lint not found; falling back to 'go vet'" >&2
+  echo "golangci-lint unavailable; falling back to 'go vet'" >&2
   go vet ./...
 fi
