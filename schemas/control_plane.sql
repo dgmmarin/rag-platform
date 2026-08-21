@@ -113,7 +113,8 @@ create index on sources (next_run_at) where status = 'active' and schedule_cron 
 -- If you adopt River or another Postgres-backed queue, it brings its own tables;
 -- this table is then the *history* view you show in the admin UI, not the queue.
 
-create type job_kind as enum ('sync_source', 'reindex_tenant', 'provision_tenant', 'delete_tenant', 'delete_source');
+-- Kept in sync with SPEC-08 §1. All kinds whose transitions are mirrored here.
+create type job_kind as enum ('sync_source', 'ingest_document', 'reindex_tenant', 'provision_tenant', 'delete_tenant', 'delete_source', 'gc_tenant', 'eval_run');
 create type job_status as enum ('queued', 'running', 'succeeded', 'failed', 'cancelled');
 
 create table jobs (

@@ -11,7 +11,7 @@
 - **products** — optional structured extraction.
 - **query_log / query_feedback** — observability and eval data.
 - **eval_cases / eval_runs / eval_results** — evaluation harness.
-- **schema_migrations** — goose table.
+- **schema_migrations** — records applied tenant-schema versions inside the tenant DB (`version`, `applied_at`); the authoritative per-tenant version is mirrored to control-plane `tenant_databases.schema_version` (SPEC-01 §7).
 
 ```mermaid
 erDiagram

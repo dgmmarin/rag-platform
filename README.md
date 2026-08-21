@@ -19,6 +19,19 @@ schemas/tenant.sql           Per-tenant (data-plane) database schema
 4. Import the CSV into your tracker; re-slice stories into tasks during sprint planning.
 5. Use the traceability matrix (SRS §7) and the `Traces` field on every story to check coverage before release.
 
+## Diagrams
+Mermaid diagrams embedded in the docs (render natively on GitHub):
+
+| Diagram | Type | Location |
+|---|---|---|
+| System architecture | flowchart | [SRS §2.1](docs/SRS.md#21-product-perspective) |
+| Resolver flow | flowchart | [SPEC-01 §3](docs/specs/SPEC-01-tenancy-and-resolver.md#3-resolution-rules) |
+| Control-plane ERD | erDiagram | [SPEC-02 §1](docs/specs/SPEC-02-control-plane.md#1-responsibilities) |
+| Tenant data-model ERD | erDiagram | [SPEC-03 §1](docs/specs/SPEC-03-tenant-data-model.md#1-entities) |
+| Ingestion pipeline | flowchart | [SPEC-05 §1](docs/specs/SPEC-05-ingestion-pipeline.md#1-flow-per-document) |
+| Retrieval and answering | sequenceDiagram | [SPEC-06 §1](docs/specs/SPEC-06-retrieval-and-answering.md#1-pipeline) |
+| Job lifecycle | stateDiagram | [SPEC-08 §3](docs/specs/SPEC-08-jobs-and-scheduling.md#3-status-mirroring) |
+
 ## Key decisions at a glance
 - One PostgreSQL database per tenant, shared control plane (ADR-0001).
 - Go services, Python parsing sidecar (ADR-0002, ADR-0006).
