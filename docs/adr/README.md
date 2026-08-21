@@ -10,5 +10,6 @@
 | [0006](0006-python-parsing-sidecar.md) | Python sidecar for document parsing | Accepted |
 | [0007](0007-hybrid-retrieval-rrf.md) | Hybrid retrieval with reciprocal rank fusion, optional rerank | Accepted |
 | [0008](0008-document-versioning-atomic-swap.md) | Document versions with atomic current-version swap | Accepted |
+| [0009](0009-kong-cli-framework.md) | Kong for the CLI and platform entrypoint | Accepted |
 
 Template for new ADRs: `NNNN-short-title.md` with sections Status, Context, Options, Decision, Consequences. Reference requirement IDs from the SRS.

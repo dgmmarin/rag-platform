@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Start local infra (Postgres+pgvector, MinIO) in the background"
+set -euo pipefail
+docker compose up -d --wait

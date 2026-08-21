@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Stop local infra (keeps volumes)"
+set -euo pipefail
+docker compose down

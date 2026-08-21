@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Run the local dev stack (infra + services) with mprocs"
+set -euo pipefail
+exec mprocs

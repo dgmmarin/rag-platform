@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Run the job worker against the local stack"
+set -euo pipefail
+go run ./cmd/ragctl work

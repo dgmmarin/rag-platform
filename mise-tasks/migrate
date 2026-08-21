@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Apply control-plane and tenant migrations"
+#MISE depends=["up"]
+set -euo pipefail
+go run ./cmd/ragctl migrate control
+go run ./cmd/ragctl migrate tenants

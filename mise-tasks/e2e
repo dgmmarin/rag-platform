@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Run end-to-end tests against the real local stack"
+#MISE depends=["up"]
+set -euo pipefail
+go test -tags e2e ./test/e2e/...

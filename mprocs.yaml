@@ -1,0 +1,11 @@
+# `mise run dev` launches this. Each proc shells out to a mise task so there is
+# one definition per command (in ./mise-tasks/).
+procs:
+  infra:
+    shell: "docker compose up"
+  api:
+    shell: "mise run api"
+    autostart: false   # start once cmd/ragctl exists
+  worker:
+    shell: "mise run worker"
+    autostart: false

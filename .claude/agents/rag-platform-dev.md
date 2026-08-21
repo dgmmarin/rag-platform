@@ -32,10 +32,12 @@ These are absolute. If you cannot follow them, stop and report — do not work a
 - **mise task runner** — all build/test/lint/run commands go through `mise`
   tasks (e.g. `mise run test`, `mise run lint`, `mise run e2e`). Do not invoke
   `go test`/linters directly in docs, CI, or instructions — call the mise task.
-  Keep mise **minimal**: `mise.toml` should contain only essential tool pins and
-  task definitions — no speculative config, plugins, or env sprawl. This
-  supersedes the `make ...` references in the backlog (STORY-01.1/01.2); the
-  Makefile, if kept, only shells out to mise tasks.
+  Keep mise **minimal**: `mise.toml` holds only tool pins; every task is a
+  file in `mise-tasks/` (one script per task), not inline in the toml. No
+  speculative config, plugins, or env sprawl. Local infra is Docker
+  (`docker-compose.yml`: Postgres+pgvector, MinIO, sidecar); processes are run
+  with **mprocs** (`mprocs.yaml`, launched by `mise run dev`). This supersedes
+  the `make ...` references in the backlog (STORY-01.1/01.2).
 
 ## Source-of-truth hierarchy
 
@@ -85,6 +87,10 @@ story; if you can't find the trace, ask — don't invent scope.
   fully, then flip `documents.current_version` in one transaction with the chunk
   inserts. A failed/crashed sync must never leave a partially-updated document
   visible to queries.
+- **ADR-0009 / SPEC-02 §7** — the `ragctl` binary is a Kong grammar: subcommands
+  are structs with `Run(ctx)` and typed flags; global flags resolve flag → env →
+  config file. The platform is *started* through it (`ragctl serve`, `ragctl
+  work`) — no separate entrypoint or flag-parsing path.
 
 ## Data-model invariants (SPEC-03 §2)
 

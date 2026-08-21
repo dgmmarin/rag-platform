@@ -1,0 +1,8 @@
+# Minimal by design: tool pins only.
+# Tasks live in ./mise-tasks/ (one script per task); run them with `mise run <task>`.
+# Local infra is Docker (see docker-compose.yml); processes are run with mprocs (see mprocs.yaml).
+
+[tools]
+go = "1.22"
+python = "3.11"
+mprocs = "latest"
