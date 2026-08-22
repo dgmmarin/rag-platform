@@ -135,10 +135,10 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] scope enforced; expiry honoured
 
 ### STORY-03.5 — Tenant settings with JSON-schema validation (FR-TEN-08, SPEC-02 §5)
-- [ ] `GET/PATCH /v1/settings`
-- [ ] invalid documents rejected with field errors
-- [ ] `embedding.dim` immutable
-- [ ] change audited
+- [x] `GET/PATCH /v1/settings`
+- [x] invalid documents rejected with field errors
+- [x] `embedding.dim` immutable
+- [x] change audited
 
 ### STORY-03.6 — Audit log (FR-ADM-05, SPEC-02 §6)
 - [ ] every listed action writes an audit row with actor, tenant, target

@@ -1,6 +1,6 @@
 # SPEC-02: Control plane
 
-**Implements:** FR-TEN-01/05/06/08, FR-ACC-01..07, FR-ADM-05/06/07 · **Decisions:** ADR-0001, ADR-0005 · **Schema:** schemas/control_plane.sql
+**Implements:** FR-TEN-01/05/06/08, FR-ACC-01..07, FR-ADM-05/06/07 · **Decisions:** ADR-0001, ADR-0005, ADR-0022 · **Schema:** schemas/control_plane.sql
 
 ## 1. Responsibilities
 Tenant registry and lifecycle, users and membership, API keys, source definitions, job history, usage counters, audit log. Never holds tenant content.
@@ -121,7 +121,7 @@ Platform admin (`users.is_platform_admin`) may act on any tenant; every such act
   "providers_allowed": ["anthropic","voyage","cohere"]
 }
 ```
-Validated against a JSON schema on write. `embedding.dim` is immutable after provisioning except through the reindex job.
+Validated against a JSON schema on write (the schema and a defaults document ship embedded in the binary; see ADR-0022). Reads and writes overlay the stored document on the defaults, so a freshly provisioned tenant — whose stored `tenants.settings` holds only the flat `embedding_dim` mirror — still presents a complete document. `embedding.dim` is the API view of the immutable dimension: the durable source of truth is the flat top-level `tenants.settings.embedding_dim` that the migration runner and provisioner read (SPEC-01 §6/§7, ADR-0015); the settings service projects it into nested `embedding.dim` on read and holds the two equal on write. `embedding.dim` is immutable after provisioning except through the reindex job (SPEC-03 §5); an attempt to change it is rejected `409`. Every accepted change writes a `settings.update` audit event (§6), recording the changed top-level keys but never the values.
 
 ## 6. Audit events (minimum set)
 tenant.create/suspend/resume/move/delete-request/delete-cancel/delete-done, member.add/remove/role-change, apikey.create/revoke, source.create/update/delete/sync-trigger, settings.update, job.cancel, admin.impersonate.

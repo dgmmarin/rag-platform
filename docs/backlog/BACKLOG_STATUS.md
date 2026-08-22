@@ -15,7 +15,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 |---|---|--:|--:|---|
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
-| EPIC-03 | Control plane services | 34 | 20 | 🚧 In progress |
+| EPIC-03 | Control plane services | 34 | 23 | 🚧 In progress |
 | EPIC-04 | Public API surface | 21 | 0 | 🔲 Todo |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **75** | **22%** |
+| **Total** | | **337** | **78** | **23%** |
 
 ---
 
@@ -128,7 +128,7 @@ rule fails `mise run lint` in CI if any package outside `internal/provision`/`in
 cross-tenant endpoint matrix (A's credentials against B's IDs over every route, 404/403) plugs into this
 two-tenant fixture when EPIC-04 lands. ADR-0018; SPEC-01 §6/§9 and SPEC-09 §1 updated with the code.
 
-## EPIC-03 · Control plane services — 🚧 20/34 pts
+## EPIC-03 · Control plane services — 🚧 23/34 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -136,7 +136,7 @@ two-tenant fixture when EPIC-04 lands. ADR-0018; SPEC-01 §6/§9 and SPEC-09 §1
 | STORY-03.2 | OIDC login | 5 | ✅ Done | FR-ACC-01 |
 | STORY-03.3 | Tenant membership and roles | 5 | ✅ Done | FR-ACC-02/06, SPEC-02 §4 |
 | STORY-03.4 | API keys | 5 | ✅ Done | FR-ACC-04/05 |
-| STORY-03.5 | Tenant settings with JSON-schema validation | 3 | 🔲 Todo | FR-TEN-08, SPEC-02 §5 |
+| STORY-03.5 | Tenant settings with JSON-schema validation | 3 | ✅ Done | FR-TEN-08, SPEC-02 §5 |
 | STORY-03.6 | Audit log | 3 | 🔲 Todo | FR-ADM-05, SPEC-02 §6 |
 | STORY-03.7 | Usage counters | 3 | 🔲 Todo | FR-ADM-06, SPEC-10 §6 |
 | STORY-03.8 | Platform admin impersonation | 3 | 🔲 Todo | FR-ACC-07 |

@@ -23,5 +23,6 @@
 | [0019](0019-password-auth-and-sessions.md) | Password authentication and server-side sessions — argon2id, hashed session tokens, double-submit CSRF | Accepted |
 | [0020](0020-oidc-login-identity-linking-and-pkce-state.md) | OIDC login — identity-linking model, PKCE/state/nonce handling, and JIT provisioning | Accepted |
 | [0021](0021-api-key-format-and-verification.md) | API key format, scopes, and verification — `rk_<hexprefix>_<secret>`, sha256-at-rest, SQL-side revocation | Accepted |
+| [0022](0022-tenant-settings-schema-defaults-and-embedding-dim-immutability.md) | Tenant settings — embedded JSON Schema, defaults overlay, flat `embedding_dim` mirror for immutability | Accepted |
 
 Template for new ADRs: `NNNN-short-title.md` with sections Status, Context, Options, Decision, Consequences. Reference requirement IDs from the SRS.
