@@ -60,3 +60,35 @@ func TestCreateDatabaseSQLQuotesBoth(t *testing.T) {
 		t.Errorf("database/owner not both quoted: %s", sql)
 	}
 }
+
+// TestLockdownDatabaseSQLRevokesPublicConnect proves the connection-level
+// boundary NFR-SEC-01 requires: after provisioning, PUBLIC cannot CONNECT to the
+// tenant database, so no other tenant's role can even open a session against it
+// (Postgres grants CONNECT to PUBLIC by default). The owning role is granted
+// CONNECT explicitly so it keeps access to its own database (STORY-02.6,
+// ADR-0018, SPEC-01 §9). Both identifiers are quoted.
+func TestLockdownDatabaseSQLRevokesPublicConnect(t *testing.T) {
+	stmts, err := lockdownDatabaseSQL("tenant_acme_ab12cd34", "role_acme_ab12cd34")
+	if err != nil {
+		t.Fatalf("lockdownDatabaseSQL: %v", err)
+	}
+	joined := strings.ToUpper(strings.Join(stmts, "\n"))
+	if !strings.Contains(joined, "REVOKE CONNECT ON DATABASE") || !strings.Contains(joined, "FROM PUBLIC") {
+		t.Errorf("lockdown must REVOKE CONNECT ... FROM PUBLIC:\n%s", strings.Join(stmts, "\n"))
+	}
+	if !strings.Contains(joined, "GRANT CONNECT ON DATABASE") {
+		t.Errorf("lockdown must GRANT CONNECT back to the owning role:\n%s", strings.Join(stmts, "\n"))
+	}
+	all := strings.Join(stmts, "\n")
+	if !strings.Contains(all, `"tenant_acme_ab12cd34"`) || !strings.Contains(all, `"role_acme_ab12cd34"`) {
+		t.Errorf("database/owner not both quoted in lockdown:\n%s", all)
+	}
+}
+
+// TestLockdownDatabaseSQLRejectsUnsafeIdent proves the lockdown builder fails
+// closed on an unsafe identifier rather than emitting injectable SQL.
+func TestLockdownDatabaseSQLRejectsUnsafeIdent(t *testing.T) {
+	if _, err := lockdownDatabaseSQL("db; drop database control_plane", "role"); err == nil {
+		t.Fatal("lockdownDatabaseSQL accepted an unsafe database name")
+	}
+}

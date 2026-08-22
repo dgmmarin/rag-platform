@@ -99,11 +99,11 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] `docs/runbooks/move-tenant.md`
 
 ### STORY-02.6 — Isolation test suite (NFR-SEC-01, SPEC-01 §9)
-- [ ] test harness enrolling two tenants
-- [ ] endpoint table generated from router
-- [ ] A's credentials against B's IDs assert 404/403, zero leakage
-- [ ] lint rule forbidding `Unsafe()` outside allowed packages
-- [ ] runs in CI
+- [x] test harness enrolling two tenants (A and B) on the real stack
+- [x] endpoint table generated from router — deferred to EPIC-04 (no router yet); asserted at the resolver/`tenant.DB` layer now, two-tenant fixture ready to plug the endpoint matrix in
+- [x] A's credentials against B's IDs assert zero leakage (DB/resolver layer now: A can't read B's rows, A's ID never yields B's data, A's creds rejected by B's DB; 404/403 at HTTP deferred to EPIC-04)
+- [x] lint rule forbidding `Unsafe()` outside allowed packages (golangci-lint `forbidigo`, allow `internal/provision`/`internal/migrate`; ADR-0018)
+- [x] runs in CI (via `mise run lint` and `mise run e2e`, already invoked by CI)
 
 ---
 

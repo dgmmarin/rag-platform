@@ -1,11 +1,11 @@
 # SPEC-09: Security
 
-**Implements:** NFR-SEC-01..07, FR-SRC-10, FR-ACC-05, C-4 · **Decisions:** ADR-0001, ADR-0003
+**Implements:** NFR-SEC-01..07, FR-SRC-10, FR-ACC-05, C-4 · **Decisions:** ADR-0001, ADR-0003, ADR-0018
 
 ## 1. Isolation
-- Database per tenant (ADR-0001); distinct Postgres role per tenant database with privileges only on that database.
+- Database per tenant (ADR-0001); distinct Postgres role per tenant database with privileges only on that database. Provisioning revokes the default `CONNECT` grant to `PUBLIC` on each tenant database and grants it back only to the owning role (SPEC-01 §6.2a, ADR-0018), so no other tenant's role can open a session against it — the connection-level boundary NFR-SEC-01 requires.
 - Application connects with the tenant role, never a superuser, for data-plane operations. Provisioning/migration uses a separate privileged role held only by the `ragctl` process.
-- `tenant.DB` is the only path to tenant data (ADR-0003); `golangci-lint` custom rule forbids `Unsafe()` and raw `pgxpool` outside `internal/tenant` and `cmd/ragctl`.
+- `tenant.DB` is the only path to tenant data (ADR-0003); a `golangci-lint` `forbidigo` rule forbids `tenant.DB.Unsafe()` (the raw `*pgxpool` escape hatch) outside the privileged provisioning/migration packages `internal/provision` and `internal/migrate` (ADR-0018, STORY-02.6), failing CI on any other caller.
 - Isolation test suite (SPEC-01 §9) in CI.
 
 ## 2. Secrets

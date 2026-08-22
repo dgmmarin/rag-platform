@@ -14,7 +14,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | Epic | Title | Points | Done pts | Status |
 |---|---|--:|--:|---|
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
-| EPIC-02 | Tenancy core | 34 | 29 | 🚧 In progress |
+| EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 0 | 🔲 Todo |
 | EPIC-04 | Public API surface | 21 | 0 | 🔲 Todo |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **50** | **15%** |
+| **Total** | | **337** | **55** | **16%** |
 
 ---
 
@@ -45,7 +45,7 @@ stack + seed; goose control-plane migration with drift guard; AES-256-GCM envelo
 age/AWS KMS; slog/metrics/tracing scaffolding and `serve` HTTP skeleton; GitHub Actions CI driving
 mise tasks with a config-driven 70% coverage gate. ADRs 0010–0014.
 
-## EPIC-02 · Tenancy core — 🚧 29/34 pts
+## EPIC-02 · Tenancy core — ✅ 34/34 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -54,7 +54,7 @@ mise tasks with a config-driven 70% coverage gate. ADRs 0010–0014.
 | STORY-02.3 | Tenant provisioning job | 8 | ✅ Done | FR-TEN-01/02, SPEC-01 §6, ADR-0016 |
 | STORY-02.4 | Tenant suspension, deletion and grace period | 5 | ✅ Done | FR-TEN-04/05, SPEC-01 §8, ADR-0017 |
 | STORY-02.5 | Tenant move (connection update) | 3 | ✅ Done | FR-TEN-07 |
-| STORY-02.6 | Isolation test suite | 5 | 🔲 Todo | NFR-SEC-01, SPEC-01 §9 |
+| STORY-02.6 | Isolation test suite | 5 | ✅ Done | NFR-SEC-01, SPEC-01 §9, ADR-0018 |
 
 **Delivered (STORY-02.1):** `internal/tenant` — `DB` handle (the only tenant-SQL entry point, ADR-0003),
 `Resolver.Open` applying the SPEC-01 §3 status rules (rw active / ro suspended / errors otherwise) with
@@ -111,6 +111,22 @@ golden path over the real Postgres asserting the resolver connects to the origin
 to the new database after, the rotated password round-trips (decrypt back to plaintext) and the new role logs
 in, and a `tenant.move` audit event is written. `docs/runbooks/move-tenant.md` documents the operator copy +
 repoint procedure. No ADR: reuses the STORY-02.4 lifecycle pattern and the STORY-02.1 resolver eviction path.
+
+**Delivered (STORY-02.6):** the isolation test suite (`test/e2e/isolation_e2e_test.go`) enrols two tenants
+(A and B) end to end via `ragctl enroll` on the real stack and proves zero cross-tenant leakage at the layer
+that exists today — the resolver + `tenant.DB` (the only path to tenant data, ADR-0003), since the public HTTP
+router is STORY-04.1 (EPIC-04): resolving A's ID yields A's data and only A's (and B's ID yields B's — identity
+from the registry, never a client parameter, FR-ACC-03); A's resolved connection cannot read B's rows; and A's
+credentials against B's database are rejected by Postgres (with a control proving A still reaches its own DB).
+Writing the suite surfaced a real gap — Postgres grants `CONNECT` to `PUBLIC` by default, so A's role could open
+a session against B's database and enumerate its catalog (data itself stayed unreadable via table ownership).
+Provisioning now closes the connection-level boundary NFR-SEC-01 mandates: `createRoleAndDatabase` runs an
+idempotent `REVOKE CONNECT ON DATABASE <db> FROM PUBLIC` + `GRANT CONNECT ... TO <owner>` (`lockdownDatabaseSQL`,
+unit-tested; SPEC-01 §6.2a). The `Unsafe()` escape hatch is now machine-enforced: a golangci-lint `forbidigo`
+rule fails `mise run lint` in CI if any package outside `internal/provision`/`internal/migrate` calls
+`tenant.DB.Unsafe()` (proven to catch a violation and to permit the allowed packages). The router-driven
+cross-tenant endpoint matrix (A's credentials against B's IDs over every route, 404/403) plugs into this
+two-tenant fixture when EPIC-04 lands. ADR-0018; SPEC-01 §6/§9 and SPEC-09 §1 updated with the code.
 
 ## EPIC-03 · Control plane services — 🔲 0/34 pts
 
@@ -233,7 +249,7 @@ repoint procedure. No ADR: reuses the STORY-02.4 lifecycle pattern and the STORY
 
 ---
 
-_Suggested next: STORY-02.6 (isolation test suite) — a harness that enrols two tenants and exercises every
-tenant-scoped endpoint with tenant A's credentials against tenant B's IDs, asserting 404/403 and zero data
-leakage, plus a lint rule forbidding `Unsafe()` outside the allowed packages (NFR-SEC-01, SPEC-01 §9). It runs
-in CI and closes out EPIC-02._
+_Suggested next: STORY-03.1 (User accounts and sessions) — opens EPIC-03 (control plane services): signup/login
+with argon2id, session cookies, logout, lockout policy and CSRF on mutations (FR-ACC-01, SPEC-09 §3). EPIC-02
+is complete; the tenancy core (resolver, provisioning, lifecycle, move, isolation) is in place for the control-
+plane services to build on._

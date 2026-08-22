@@ -1,6 +1,8 @@
 # golangci-lint configuration for ragctl (STORY-01.1, traces ADR-0002).
-# Kept intentionally lean; project-specific rules (e.g. forbidding Unsafe()
-# outside internal/tenant and cmd/ragctl per ADR-0003) are added by STORY-02.6.
+# STORY-02.6 adds the forbidigo rule (below) that forbids calling
+# tenant.DB.Unsafe() outside the privileged provisioning/migration packages,
+# enforcing ADR-0003 in CI (see
+# docs/adr/0018-forbid-unsafe-outside-privileged-packages.md).
 version: "2"
 
 run:
@@ -23,6 +25,26 @@ linters:
     - revive
     - unconvert
     - gocritic
+    # STORY-02.6 / ADR-0003: forbid tenant.DB.Unsafe() (the raw *pgxpool escape
+    # hatch) outside the privileged provisioning/migration packages. Exclusions
+    # for those packages are declared in issues.exclude-rules below.
+    - forbidigo
+
+  settings:
+    forbidigo:
+      # Match the call by source text (analyze-types would require resolving the
+      # method's receiver type across packages; the textual pattern is precise
+      # enough because .Unsafe() is a bespoke method name in this codebase).
+      analyze-types: false
+      forbid:
+        # forbidigo matches the textual selector name (e.g. `db.Unsafe`), so the
+        # method is pinned with `\.Unsafe$`; this leaves stdlib `unsafe.Pointer`
+        # and any locally-named `unsafe` package untouched.
+        - pattern: '\.Unsafe$'
+          msg: >-
+            tenant.DB.Unsafe() exposes the raw *pgxpool and bypasses the
+            read-only/isolation guarantees; it is allowed only in
+            internal/provision and internal/migrate (ADR-0003, STORY-02.6).
 
 formatters:
   enable:
@@ -31,3 +53,10 @@ formatters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+  exclude-rules:
+    # The privileged provisioning and migration packages are the only code
+    # permitted to reach the raw pool via Unsafe() (SPEC-01 §2, ADR-0003).
+    - path: 'internal/provision/'
+      linters: [forbidigo]
+    - path: 'internal/migrate/'
+      linters: [forbidigo]

@@ -58,6 +58,32 @@ func createDatabaseSQL(dbName, owner string) (string, error) {
 	return fmt.Sprintf("CREATE DATABASE %s OWNER %s", qdb, qowner), nil
 }
 
+// lockdownDatabaseSQL builds the statements that close the connection-level
+// boundary NFR-SEC-01 mandates. Postgres grants CONNECT on a new database to
+// PUBLIC by default, which would let any other tenant's least-privilege role open
+// a session against this database (and enumerate its catalog), even though
+// table-level ownership keeps the data itself unreadable. Revoking CONNECT from
+// PUBLIC and granting it back only to the owning role means no query path from
+// another tenant can address this database at all (SPEC-01 §9, ADR-0018).
+//
+// Both statements are idempotent, so re-running provisioning (retry safety) is a
+// no-op. Identifiers are validated+quoted (fail closed); GRANT/REVOKE targets
+// cannot be parameterised.
+func lockdownDatabaseSQL(dbName, owner string) ([]string, error) {
+	qdb, err := quoteIdent(dbName)
+	if err != nil {
+		return nil, err
+	}
+	qowner, err := quoteIdent(owner)
+	if err != nil {
+		return nil, err
+	}
+	return []string{
+		fmt.Sprintf("REVOKE CONNECT ON DATABASE %s FROM PUBLIC", qdb),
+		fmt.Sprintf("GRANT CONNECT ON DATABASE %s TO %s", qdb, qowner),
+	}, nil
+}
+
 // dropDatabaseSQL builds an idempotent DROP DATABASE for tenant teardown after
 // the grace period (SPEC-01 §8). WITH (FORCE) terminates any lingering backend
 // sessions (a suspended tenant's evicted pool, a stray admin connection) so the

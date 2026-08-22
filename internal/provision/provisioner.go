@@ -376,6 +376,20 @@ func createRoleAndDatabase(ctx context.Context, admin *pgxpool.Pool, row databas
 			return fmt.Errorf("provision: create database: %w", err)
 		}
 	}
+
+	// Close the connection-level boundary (NFR-SEC-01, SPEC-01 §9): revoke the
+	// default PUBLIC CONNECT so no other tenant's role can address this database,
+	// and grant CONNECT back to the owner. Idempotent, so retries are safe and it
+	// also repairs databases created before this lockdown existed.
+	lockdown, err := lockdownDatabaseSQL(row.database, row.username)
+	if err != nil {
+		return err
+	}
+	for _, stmt := range lockdown {
+		if _, err := admin.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("provision: lock down database connect privilege: %w", err)
+		}
+	}
 	return nil
 }
 

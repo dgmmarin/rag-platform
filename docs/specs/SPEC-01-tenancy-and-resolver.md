@@ -1,6 +1,6 @@
 # SPEC-01: Tenancy and the resolver
 
-**Implements:** FR-TEN-02/03/04/05/07/09, FR-ACC-03, NFR-SEC-01 · **Decisions:** ADR-0001, ADR-0003, ADR-0015, ADR-0016, ADR-0017
+**Implements:** FR-TEN-02/03/04/05/07/09, FR-ACC-03, NFR-SEC-01 · **Decisions:** ADR-0001, ADR-0003, ADR-0015, ADR-0016, ADR-0017, ADR-0018
 
 ## 1. Package layout
 ```
@@ -96,6 +96,7 @@ Registry lookups are cached for 30 s; status changes are also published via `LIS
 ## 6. Provisioning (`ragctl enroll`)
 1. Insert `tenants` row with status `provisioning`.
 2. Create role + database on the target host (`CREATE DATABASE tenant_<id>`), generate password, encrypt, insert `tenant_databases`. The privileged provisioning connection also installs the required extensions (`vector`, `pgcrypto`, `pg_trgm`) in the new database: `CREATE EXTENSION` is superuser-only, so it cannot live in a tenant migration, which runs as the least-privilege per-tenant role (SPEC-09). Migrations assume the extensions exist.
+2a. Lock down the connection-level boundary (NFR-SEC-01, ADR-0018): the privileged connection runs `REVOKE CONNECT ON DATABASE <db> FROM PUBLIC` then `GRANT CONNECT ... TO <owner>`, so only the owning tenant role (and the superuser) can open a session against the database. Postgres grants `CONNECT` to `PUBLIC` by default; without this, another tenant's role could connect and enumerate the catalog even though table ownership keeps the rows unreadable. Idempotent, so retries and re-enrol are safe.
 3. Run all tenant migrations; substitute the `vector(N)` dimension placeholder from `tenants.settings.embedding_dim`.
 4. Set status `active`; emit audit event.
 Steps 2–4 run as a `provision_tenant` job so failures are retried and visible.
@@ -182,3 +183,7 @@ enroll/suspend/delete defer their HTTP routes (ADR-0016/0017).
 
 ## 9. Isolation test suite
 Automated tests enrol two tenants and assert that every API endpoint, with credentials for tenant A, cannot read or write anything created under tenant B, including by guessing IDs. Runs in CI on every change to `internal/tenant`, `internal/api`, `internal/worker`.
+
+As implemented in STORY-02.6 (ADR-0018), and because the public HTTP router is STORY-04.1 (EPIC-04) and does not exist yet, the suite (`test/e2e/isolation_e2e_test.go`) asserts isolation at the layer that exists today — the resolver + `tenant.DB`, the only path to tenant data (ADR-0003). Against the real stack it proves: (a) resolving A's ID yields A's data and only A's, and B's ID yields B's (identity from the registry, never a client parameter — FR-ACC-03); (b) A's resolved connection cannot read B's rows; (c) A's credentials against B's database are rejected by Postgres (connection-level enforcement — NFR-SEC-01, backed by the §6.2a lockdown), with a control proving A still reaches its own database. **Follow-up (EPIC-04):** when the router lands, the router-driven cross-tenant endpoint matrix (A's credentials against B's IDs over every tenant-scoped route, asserting 404/403) plugs into the two-tenant fixture this suite already builds; only the HTTP driver is deferred.
+
+The `Unsafe()` escape hatch (§2) is machine-enforced: a golangci-lint `forbidigo` rule (ADR-0018) fails `mise run lint` in CI if any package other than `internal/provision`/`internal/migrate` calls `tenant.DB.Unsafe()`.

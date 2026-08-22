@@ -150,13 +150,25 @@ func TestResolverGoldenPath(t *testing.T) {
 		t.Fatalf("read back %q, want %q", body, "hello")
 	}
 
-	// Pool reuse: a second Open returns a handle over the same pool.
+	// Pool reuse: a second Open returns a handle bound to the same tenant DB.
+	// (Pointer-level pool identity across Opens is asserted by the internal unit
+	// test TestPoolCacheLazyCreateAndReuse; reaching the raw pool via Unsafe()
+	// here is forbidden by the ADR-0003 lint rule, STORY-02.6.) A row written via
+	// the first handle is immediately visible via the second, proving both handles
+	// route to the same database (SPEC-01 §4).
 	adb2, err := res.Open(ctx, activeID)
 	if err != nil {
 		t.Fatalf("second Open active: %v", err)
 	}
-	if adb.Unsafe() != adb2.Unsafe() {
-		t.Fatal("expected the pool to be reused across Opens (SPEC-01 §4)")
+	if _, err := adb.Exec(ctx, "INSERT INTO notes (body) VALUES ($1)", "reuse-probe"); err != nil {
+		t.Fatalf("write via first handle: %v", err)
+	}
+	var seen int
+	if err := adb2.QueryRow(ctx, "SELECT count(*) FROM notes WHERE body = $1", "reuse-probe").Scan(&seen); err != nil {
+		t.Fatalf("read via second handle: %v", err)
+	}
+	if seen != 1 {
+		t.Fatalf("second Open handle does not see the first handle's write; got %d rows (SPEC-01 §4)", seen)
 	}
 
 	// --- Suspended tenant: read-only handle (reads ok, writes refused). ---
