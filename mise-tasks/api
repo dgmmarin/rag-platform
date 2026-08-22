@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
 #MISE description="Run the API server against the local stack"
 set -euo pipefail
+
+# serve reads its config from the environment; unlike docker compose the host
+# process does not auto-load .env, so load it here (copy .env.example first).
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+else
+  echo "api: .env not found — run 'cp .env.example .env' first" >&2
+  exit 1
+fi
+
 go run ./cmd/ragctl serve

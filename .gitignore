@@ -9,3 +9,6 @@
 # Local environment (copy of .env.example; may hold local credentials)
 .env
 
+# Local wrapped DEK (dev bootstrap; unwrapped by AGE_SECRET_KEY in .env)
+local-dek.age
+
