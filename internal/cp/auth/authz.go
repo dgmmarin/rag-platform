@@ -65,6 +65,40 @@ func (a *AuthzService) lookupPrincipal(ctx context.Context, tenantID, userID str
 	return p, nil
 }
 
+// RequirePlatformAdmin returns middleware that admits only platform admins
+// (FR-ACC-07). Unlike RequireRole it is tenant-less: platform-admin endpoints
+// (e.g. GET /admin/audit?tenant=) act across tenants, naming the tenant as a
+// parameter rather than resolving it from the credential. It must run inside
+// RequireSession. Responses: 401 with no session; 403 when the user is not a
+// platform admin; otherwise the inner handler runs.
+func (a *AuthzService) RequirePlatformAdmin() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sess, ok := SessionFrom(r.Context())
+			if !ok || sess.UserID == "" {
+				writeError(w, http.StatusUnauthorized, "authentication required")
+				return
+			}
+			var plat bool
+			err := a.DB.QueryRow(r.Context(),
+				`select is_platform_admin from users where id = $1`, sess.UserID).Scan(&plat)
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					writeError(w, http.StatusForbidden, "platform admin required")
+					return
+				}
+				writeError(w, http.StatusInternalServerError, "authorization failed")
+				return
+			}
+			if !plat {
+				writeError(w, http.StatusForbidden, "platform admin required")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // RequireRole returns middleware that authorises the request for the given
 // permission. It must run inside RequireSession (it reads the session) and after
 // tenant resolution (it reads the tenant ID). Responses: 401 when there is no
