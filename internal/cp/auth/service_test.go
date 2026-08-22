@@ -58,10 +58,14 @@ func (t fakeTag) RowsAffected() int64 { return t.n }
 type fakeDB struct {
 	rows  []fakeRow // consumed FIFO by QueryRow
 	execs []string  // sql of every Exec, in order
+	tag   *fakeTag  // command tag returned by Exec; nil => 1 row affected
 }
 
 func (f *fakeDB) Exec(_ context.Context, sql string, _ ...any) (pgconnTag, error) {
 	f.execs = append(f.execs, sql)
+	if f.tag != nil {
+		return *f.tag, nil
+	}
 	return fakeTag{n: 1}, nil
 }
 
@@ -72,6 +76,12 @@ func (f *fakeDB) QueryRow(_ context.Context, _ string, _ ...any) Row {
 	r := f.rows[0]
 	f.rows = f.rows[1:]
 	return r
+}
+
+// Query lets fakeDB satisfy MembershipDB; list reads are exercised e2e, so this
+// unit-level fake returns an error if called.
+func (f *fakeDB) Query(_ context.Context, _ string, _ ...any) (Rows, error) {
+	return nil, errors.New("fakeDB: Query not supported")
 }
 
 func fixedClock(t time.Time) Clock { return func() time.Time { return t } }

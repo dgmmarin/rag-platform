@@ -15,7 +15,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 |---|---|--:|--:|---|
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
-| EPIC-03 | Control plane services | 34 | 15 | 🚧 In progress |
+| EPIC-03 | Control plane services | 34 | 20 | 🚧 In progress |
 | EPIC-04 | Public API surface | 21 | 0 | 🔲 Todo |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **70** | **21%** |
+| **Total** | | **337** | **75** | **22%** |
 
 ---
 
@@ -128,14 +128,14 @@ rule fails `mise run lint` in CI if any package outside `internal/provision`/`in
 cross-tenant endpoint matrix (A's credentials against B's IDs over every route, 404/403) plugs into this
 two-tenant fixture when EPIC-04 lands. ADR-0018; SPEC-01 §6/§9 and SPEC-09 §1 updated with the code.
 
-## EPIC-03 · Control plane services — 🚧 15/34 pts
+## EPIC-03 · Control plane services — 🚧 20/34 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-03.1 | User accounts and sessions | 5 | ✅ Done | FR-ACC-01, SPEC-09 §3 |
 | STORY-03.2 | OIDC login | 5 | ✅ Done | FR-ACC-01 |
 | STORY-03.3 | Tenant membership and roles | 5 | ✅ Done | FR-ACC-02/06, SPEC-02 §4 |
-| STORY-03.4 | API keys | 5 | 🔲 Todo | FR-ACC-04/05 |
+| STORY-03.4 | API keys | 5 | ✅ Done | FR-ACC-04/05 |
 | STORY-03.5 | Tenant settings with JSON-schema validation | 3 | 🔲 Todo | FR-TEN-08, SPEC-02 §5 |
 | STORY-03.6 | Audit log | 3 | 🔲 Todo | FR-ADM-05, SPEC-02 §6 |
 | STORY-03.7 | Usage counters | 3 | 🔲 Todo | FR-ADM-06, SPEC-10 §6 |
@@ -208,6 +208,30 @@ logic + last-owner invariant via a fake DB, and a table-driven role × permissio
 remove, last-owner removal AND demotion rejected, and the full role × route matrix through the real
 `RequireRole` middleware). The real Postgres run also caught an enum-vs-text cast bug the fake missed
 (guard comparisons now cast `$3::tenant_role`).
+
+**Delivered (STORY-03.4):** API keys in the same `internal/cp/auth` package (FR-ACC-04/05, SPEC-02 §3,
+SPEC-07 §2, SPEC-09 §3), control-plane-only (C-3). Scopes are a closed typed set — exactly `query`,
+`ingest`, `admin` (`scope.go`) — with `ParseScope`/`ParseScopes` rejecting any invented or empty scope so
+no capability-less or off-spec key can be minted or authenticate. The wire format (ADR-0021) is
+`Authorization: Bearer rk_<prefix>_<secret>`: an `rk_` scheme marker, an 8-char **hex** prefix stored in
+the clear (`key_prefix`, indexed lookup + display) — hex deliberately, because base64url includes the `_`
+separator and a base64url prefix could be truncated on parse (a real bug the format test caught) — and a
+32-byte base64url secret body. Only the sha256 of the FULL presented value is stored (`key_hash`, reusing
+the session-token `hashToken`); `Create` returns the plaintext once and it is never persisted or logged
+(FR-ACC-05, C-4). `APIKeyService` (Create/List/Revoke) writes/reads the existing `api_keys` table: List
+shows prefix, scopes, and last-used (never the secret); Revoke stamps `revoked_at`, scoped to the tenant,
+idempotent, `ErrKeyNotFound` for an unknown id. `APIKeyVerifier`/`RequireScope` authenticate a Bearer key
+by `(key_prefix, key_hash)` with `revoked_at is null` so revocation is immediate; unknown/tampered/revoked/
+malformed collapse to one opaque `ErrInvalidKey` (→ 401, no enumeration oracle), `expires_at` is checked in
+Go (`ErrKeyExpired`, → 401 at the edge), `last_used_at` is stamped at most once per minute (throttled,
+non-fatal), and the middleware injects the key's tenant into the request context (FR-ACC-03 — derived from
+the credential, never a client parameter) and 403s an out-of-scope route. No schema/migration change was
+needed (the `api_keys` table already matched the spec), so the drift guard stays green. Unit tests (scope
+parsing, secret format/uniqueness, verifier branch logic — malformed/unknown/tampered/expired/golden and the
+last-used throttle — and service validation via a fake DB + `httptest` middleware) + an e2e golden path over
+the real control-plane Postgres (create returns the secret once and it is not stored; authenticate stamps
+last-used and resolves the tenant; list shows prefix/scopes/last-used; revoke → immediately rejected and
+idempotent; expired key rejected; out-of-scope refused). Router wiring is STORY-04.1. ADR-0021.
 
 ## EPIC-04 · Public API surface — 🔲 0/21 pts
 
@@ -316,7 +340,7 @@ remove, last-owner removal AND demotion rejected, and the full role × route mat
 
 ---
 
-_Suggested next: STORY-03.4 (API keys) — create returns the secret once and stores only its hash, list
-shows prefix/scopes/last-used, and revoke takes effect immediately (FR-ACC-04/05). It builds on the
-`internal/cp/auth` package (users/sessions, OIDC, and now membership/roles) and the existing `api_keys`
-table; mounting the resulting handlers on the public router remains STORY-04.1 (EPIC-04)._
+_Suggested next: STORY-03.5 (Tenant settings with JSON-schema validation) — `GET/PATCH /v1/settings`, invalid
+documents rejected with field errors, `embedding.dim` immutable, and the change audited (FR-TEN-08, SPEC-02 §5).
+It builds on the `internal/cp/auth` control-plane services and the `tenants.settings` JSONB column; mounting the
+resulting handlers on the public router remains STORY-04.1 (EPIC-04)._

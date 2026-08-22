@@ -129,10 +129,10 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] tests per role × route
 
 ### STORY-03.4 — API keys (FR-ACC-04/05)
-- [ ] create returns secret once
-- [ ] list shows prefix, scopes, last used
-- [ ] revoke takes effect immediately
-- [ ] scope enforced; expiry honoured
+- [x] create returns secret once
+- [x] list shows prefix, scopes, last used
+- [x] revoke takes effect immediately
+- [x] scope enforced; expiry honoured
 
 ### STORY-03.5 — Tenant settings with JSON-schema validation (FR-TEN-08, SPEC-02 §5)
 - [ ] `GET/PATCH /v1/settings`

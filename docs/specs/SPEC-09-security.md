@@ -48,6 +48,21 @@ The per-attempt state/nonce/verifier travel in a short-lived HttpOnly cookie bet
 callback handlers; those handlers are unit-tested with `httptest` and mounted on the public router in
 STORY-04.1.
 
+API keys (STORY-03.4, FR-ACC-04/05, ADR-0021) are implemented in the same `internal/cp/auth`
+package over the existing `api_keys` table. The wire format is `Authorization: Bearer rk_<prefix>_<secret>`:
+`rk_` scheme marker, an 8-char hex prefix stored in the clear (`key_prefix`, indexed lookup + display),
+and a 32-byte base64url secret body. Only the sha256 of the FULL presented value is stored (`key_hash`,
+reusing the session-token `hashToken`); the plaintext is returned once from `Create` and never persisted
+or logged. `APIKeyVerifier` looks a key up by `(key_prefix, key_hash)` with `revoked_at is null`, so
+`Revoke` takes effect on the next request; unknown/tampered/revoked/malformed keys all collapse to one
+opaque `ErrInvalidKey` (→ 401, no enumeration oracle), and `expires_at` is checked in Go (`ErrKeyExpired`,
+also → 401 at the edge). `last_used_at` is stamped at most once per minute (throttled; a failed stamp is
+non-fatal). Scopes are exactly `query`, `ingest`, `admin` (SPEC-07 §2); a closed typed set rejects any
+other, and `RequireScope` middleware authenticates the Bearer key, enforces the scope (403 on a miss),
+and injects the key's tenant into the request context (FR-ACC-03 — derived from the credential, never a
+client parameter). The service and middleware are unit-tested (fake DB + `httptest`) and proven end to
+end against real Postgres; router wiring is STORY-04.1.
+
 ## 4. Crawler safety (SSRF)
 - Resolve DNS, reject RFC 1918, loopback, link-local, metadata IPs (169.254.169.254), and re-validate on each redirect hop.
 - Allowlist enforced on scheme+host+path prefix; max response size 20 MB; timeouts 30 s.

@@ -22,5 +22,6 @@
 | [0018](0018-isolation-suite-unsafe-lint-and-connect-lockdown.md) | Isolation suite — forbidigo-enforced Unsafe() ban and PUBLIC-CONNECT lockdown per tenant database | Accepted |
 | [0019](0019-password-auth-and-sessions.md) | Password authentication and server-side sessions — argon2id, hashed session tokens, double-submit CSRF | Accepted |
 | [0020](0020-oidc-login-identity-linking-and-pkce-state.md) | OIDC login — identity-linking model, PKCE/state/nonce handling, and JIT provisioning | Accepted |
+| [0021](0021-api-key-format-and-verification.md) | API key format, scopes, and verification — `rk_<hexprefix>_<secret>`, sha256-at-rest, SQL-side revocation | Accepted |
 
 Template for new ADRs: `NNNN-short-title.md` with sections Status, Context, Options, Decision, Consequences. Reference requirement IDs from the SRS.
