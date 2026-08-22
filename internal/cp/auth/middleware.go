@@ -24,6 +24,15 @@ func SessionFrom(ctx context.Context) (Session, bool) {
 	return s, ok
 }
 
+// ContextWithSession returns a context carrying the authenticated session. It is
+// the exported counterpart to SessionFrom: RequireSession uses the same key
+// internally, and downstream middleware (the RequireRole authorization layer)
+// and integration tests place or read a session through this pair rather than
+// reaching into the private context key.
+func ContextWithSession(ctx context.Context, s Session) context.Context {
+	return context.WithValue(ctx, sessionCtxKey, s)
+}
+
 // Handlers are the HTTP entry points for password auth (SPEC-02 §3). They are
 // unit-tested with httptest here; STORY-04.1 mounts them on the public router.
 // Secure controls the cookie Secure attribute (true in production over TLS,

@@ -32,6 +32,8 @@ func (r fakeRow) Scan(dest ...any) error {
 			}
 		case *int:
 			*d = r.vals[i].(int)
+		case *bool:
+			*d = r.vals[i].(bool)
 		case **time.Time:
 			if r.vals[i] == nil {
 				*d = nil

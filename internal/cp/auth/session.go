@@ -111,3 +111,12 @@ func (p poolDB) Exec(ctx context.Context, sql string, args ...any) (pgconnTag, e
 func (p poolDB) QueryRow(ctx context.Context, sql string, args ...any) Row {
 	return p.pool.QueryRow(ctx, sql, args...)
 }
+
+// Query adapts the pool's multi-row query to the membership Rows interface
+// (pgx.Rows already satisfies it).
+func (p poolDB) Query(ctx context.Context, sql string, args ...any) (Rows, error) {
+	return p.pool.Query(ctx, sql, args...)
+}
+
+// MembershipFromPool wraps a pgx pool as the membership service's DB.
+func MembershipFromPool(pool *pgxpool.Pool) MembershipDB { return poolDB{pool: pool} }

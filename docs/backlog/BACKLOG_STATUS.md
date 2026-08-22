@@ -15,7 +15,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 |---|---|--:|--:|---|
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
-| EPIC-03 | Control plane services | 34 | 10 | 🚧 In progress |
+| EPIC-03 | Control plane services | 34 | 15 | 🚧 In progress |
 | EPIC-04 | Public API surface | 21 | 0 | 🔲 Todo |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **65** | **19%** |
+| **Total** | | **337** | **70** | **21%** |
 
 ---
 
@@ -128,13 +128,13 @@ rule fails `mise run lint` in CI if any package outside `internal/provision`/`in
 cross-tenant endpoint matrix (A's credentials against B's IDs over every route, 404/403) plugs into this
 two-tenant fixture when EPIC-04 lands. ADR-0018; SPEC-01 §6/§9 and SPEC-09 §1 updated with the code.
 
-## EPIC-03 · Control plane services — 🚧 10/34 pts
+## EPIC-03 · Control plane services — 🚧 15/34 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-03.1 | User accounts and sessions | 5 | ✅ Done | FR-ACC-01, SPEC-09 §3 |
 | STORY-03.2 | OIDC login | 5 | ✅ Done | FR-ACC-01 |
-| STORY-03.3 | Tenant membership and roles | 5 | 🔲 Todo | FR-ACC-02/06, SPEC-02 §4 |
+| STORY-03.3 | Tenant membership and roles | 5 | ✅ Done | FR-ACC-02/06, SPEC-02 §4 |
 | STORY-03.4 | API keys | 5 | 🔲 Todo | FR-ACC-04/05 |
 | STORY-03.5 | Tenant settings with JSON-schema validation | 3 | 🔲 Todo | FR-TEN-08, SPEC-02 §5 |
 | STORY-03.6 | Audit log | 3 | 🔲 Todo | FR-ADM-05, SPEC-02 §6 |
@@ -185,6 +185,29 @@ provider verifying a signed id_token and rejecting a bad nonce against a stub Id
 golden path over the real control-plane Postgres with an in-process stub IdP (JIT creation on first login,
 link-by-verified-email on a subsequent login with no duplicate user, and state/nonce mismatch rejected
 without minting a session). ADR-0020.
+
+**Delivered (STORY-03.3):** tenant membership, roles, and the role matrix in the same `internal/cp/auth`
+package (FR-ACC-02/06, SPEC-02 §4), control-plane-only (C-3). The four spec roles (owner/admin/editor/
+viewer) and the six permissions of the SPEC-02 §4 table are encoded once in `roles.go` as a `roleMatrix`
+that fails closed (an unknown or zero role grants nothing; `ParseRole` rejects any invented role); a
+matrix-vs-spec unit test pins every cell. `MembershipService` (`membership.go`) does members CRUD against
+the existing `tenant_members` table — `AddMember` (invalid role and duplicate rejected), `ListMembers`
+(joined to `users.email`, ordered), `SetMemberRole`, `RemoveMember` — with the "owner cannot remove or
+demote the last owner" invariant enforced *atomically in one guarded SQL statement* per mutation (a
+correlated `count(*) ... where role='owner' <= 1` guard, so it holds under concurrency without a
+read-modify-write race); a zero-row result is disambiguated into `ErrNotMember` vs `ErrLastOwner`.
+`AuthzService.RequireRole(perm)` (`authz.go`) is a real `http.Handler` middleware keyed off the
+authenticated session user (STORY-03.1 `SessionFrom`) and the *resolved* tenant (`tenant.TenantIDFromCtx`,
+never a client parameter — FR-ACC-03): it looks up the member's role and the platform-admin flag in one
+query, 401s with no session/tenant, 403s a non-member or an under-privileged role, and lets platform
+admins act on any tenant (FR-ACC-07). No schema change was needed (`tenant_members`/`tenant_role` already
+existed) and no new design decision was made, so no migration and no ADR. Router wiring is deferred to
+STORY-04.1, which only attaches `RequireRole`. Unit tests (matrix-vs-spec, ParseRole, membership branch
+logic + last-owner invariant via a fake DB, and a table-driven role × permission middleware test with
+`httptest`) + an e2e golden path over the real control-plane Postgres (add each role, list, change a role,
+remove, last-owner removal AND demotion rejected, and the full role × route matrix through the real
+`RequireRole` middleware). The real Postgres run also caught an enum-vs-text cast bug the fake missed
+(guard comparisons now cast `$3::tenant_role`).
 
 ## EPIC-04 · Public API surface — 🔲 0/21 pts
 
@@ -293,8 +316,7 @@ without minting a session). ADR-0020.
 
 ---
 
-_Suggested next: STORY-03.3 (Tenant membership and roles) — members CRUD and the role matrix
-(owner/admin/editor/viewer) enforced by middleware on every route, with the "owner cannot remove the last
-owner" invariant and per-role × route tests (FR-ACC-02/06, SPEC-02 §4). It builds directly on the
-`internal/cp/auth` users/sessions and OIDC identities now in place; mounting the auth and membership
-handlers on the public router remains STORY-04.1 (EPIC-04)._
+_Suggested next: STORY-03.4 (API keys) — create returns the secret once and stores only its hash, list
+shows prefix/scopes/last-used, and revoke takes effect immediately (FR-ACC-04/05). It builds on the
+`internal/cp/auth` package (users/sessions, OIDC, and now membership/roles) and the existing `api_keys`
+table; mounting the resulting handlers on the public router remains STORY-04.1 (EPIC-04)._

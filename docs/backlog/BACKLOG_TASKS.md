@@ -123,10 +123,10 @@ breakdown, tasks are derived from the acceptance criteria.
 - [ ] existing user linked by verified email
 
 ### STORY-03.3 — Tenant membership and roles (FR-ACC-02/06, SPEC-02 §4)
-- [ ] members CRUD
-- [ ] role matrix enforced by middleware on every route
-- [ ] owner cannot remove last owner
-- [ ] tests per role × route
+- [x] members CRUD
+- [x] role matrix enforced by middleware on every route
+- [x] owner cannot remove last owner
+- [x] tests per role × route
 
 ### STORY-03.4 — API keys (FR-ACC-04/05)
 - [ ] create returns secret once
