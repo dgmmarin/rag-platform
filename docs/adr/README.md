@@ -16,5 +16,7 @@
 | [0012](0012-secret-envelope-encryption-and-kms.md) | Secret envelope encryption format and KMS providers | Accepted |
 | [0013](0013-observability-scaffolding.md) | Observability scaffolding — obs package, private registry, no-op-by-default tracing | Accepted |
 | [0014](0014-ci-drives-mise-tasks.md) | CI drives mise tasks; coverage gate in a shell lib, skips absent packages | Accepted |
+| [0015](0015-tenant-migration-runner.md) | Per-tenant migration runner — goose Provider, dimension placeholder, fail-closed version | Accepted |
+| [0016](0016-tenant-provisioning.md) | Tenant provisioning — privileged connection, idempotent handler, synchronous enroll until River | Accepted |
 
 Template for new ADRs: `NNNN-short-title.md` with sections Status, Context, Options, Decision, Consequences. Reference requirement IDs from the SRS.

@@ -181,3 +181,34 @@ begin new.updated_at = now(); return new; end $$;
 create trigger tenants_updated_at          before update on tenants          for each row execute function set_updated_at();
 create trigger tenant_databases_updated_at before update on tenant_databases for each row execute function set_updated_at();
 create trigger sources_updated_at          before update on sources          for each row execute function set_updated_at();
+
+-- ---------------------------------------------------------------------------
+-- tenant_changed LISTEN/NOTIFY (SPEC-01 §3)
+-- ---------------------------------------------------------------------------
+-- The resolver LISTENs on `tenant_changed`; this trigger publishes the tenant id
+-- on every registry change so a suspension or connection move invalidates the
+-- resolver's cache within ~1s instead of on the 30s TTL.
+
+create or replace function notify_tenant_changed() returns trigger language plpgsql as $$
+begin
+    perform pg_notify('tenant_changed', coalesce(new.id, old.id)::text);
+    return null;
+end $$;
+
+create trigger tenants_notify_changed
+    after insert or update or delete on tenants
+    for each row execute function notify_tenant_changed();
+
+-- ---------------------------------------------------------------------------
+-- Scheduled tenant deletion grace deadline (SPEC-01 §8, FR-TEN-05)
+-- ---------------------------------------------------------------------------
+-- delete_after records when a scheduled deletion becomes eligible for the
+-- irreversible drop: it is set (now + grace, default 7 days) when a tenant moves
+-- to 'deleting', cleared on cancellation, and gates the delete_tenant handler so
+-- the drop cannot run before the grace period elapses. A partial index lets the
+-- (future) scheduler cheaply find tenants past their grace window.
+
+alter table tenants add column if not exists delete_after timestamptz;
+
+create index if not exists tenants_delete_after_idx
+    on tenants (delete_after) where status = 'deleting';

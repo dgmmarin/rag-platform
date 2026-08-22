@@ -35,6 +35,7 @@ type CLI struct {
 	Work    WorkCmd    `cmd:"" help:"Start the job worker."`
 	Migrate MigrateCmd `cmd:"" help:"Apply database migrations."`
 	Enroll  EnrollCmd  `cmd:"" help:"Enrol a new tenant."`
+	Tenant  TenantCmd  `cmd:"" help:"Manage tenant lifecycle (suspend, resume, delete)."`
 }
 
 // New builds the Kong parser for the ragctl grammar, writing output to the
@@ -97,6 +98,10 @@ func Run(args []string, stdout, stderr io.Writer) error {
 
 	return ctx.Run(&Globals{
 		ControlPlaneURL: cli.ControlPlaneURL,
+		ProvisionURL:    cfg.ProvisionURL,
+		TenantDBHost:    cfg.TenantDBHost,
+		TenantDBPort:    cfg.TenantDBPort,
+		TenantDBSSLMode: cfg.TenantDBSSLMode,
 		Secrets:         startupSecretsFromConfig(cfg),
 		Obs:             obs,
 	})
@@ -106,6 +111,17 @@ func Run(args []string, stdout, stderr io.Writer) error {
 // Kong's typed bindings.
 type Globals struct {
 	ControlPlaneURL string
+	// ProvisionURL is the privileged (superuser) connection used by `enroll` to
+	// create the tenant role/database/extensions (STORY-02.3, SPEC-01 §6). Empty
+	// falls back to ControlPlaneURL.
+	ProvisionURL string
+	// TenantDBHost / TenantDBPort are recorded as a provisioned tenant's database
+	// location; empty/zero reuses the provisioning connection's target.
+	TenantDBHost string
+	TenantDBPort int
+	// TenantDBSSLMode is the sslmode recorded for a provisioned tenant's DB
+	// connection (default "require").
+	TenantDBSSLMode string
 	// Secrets carries the resolved KMS/DEK configuration for commands that must
 	// load the data-encryption key at startup (STORY-01.4).
 	Secrets StartupSecrets

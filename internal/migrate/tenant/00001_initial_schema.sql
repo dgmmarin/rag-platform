@@ -1,3 +1,4 @@
+-- +goose Up
 -- Tenant (data-plane) schema. One database per company, identical schema.
 -- Applied per tenant by `ragctl migrate tenants` via goose (SPEC-01 §7); the
 -- applied version is tracked in goose_db_version inside the tenant DB and
@@ -76,7 +77,7 @@ create table chunks (
     heading_path    text[] not null default '{}',       -- ["Install", "Linux"]
     content         text not null,
     token_count     int  not null,
-    embedding       vector(1536),                       -- dim replaced at provisioning
+    embedding       vector(EMBEDDING_DIM),              -- dim replaced at provisioning
     embedding_model text not null,
     tsv             tsvector generated always as (to_tsvector('simple', coalesce(content, ''))) stored,
     metadata        jsonb not null default '{}',
@@ -201,3 +202,18 @@ create table eval_results (
     latency_ms      int,
     primary key (run_id, case_id)
 );
+
+-- +goose Down
+drop table if exists eval_results;
+drop table if exists eval_runs;
+drop table if exists eval_cases;
+drop table if exists query_feedback;
+drop table if exists query_log;
+drop table if exists products;
+drop view if exists live_chunks;
+drop table if exists chunks;
+drop table if exists crawl_pages;
+alter table if exists documents drop constraint if exists documents_current_version_fk;
+drop table if exists document_versions;
+drop table if exists documents;
+drop type if exists document_status;

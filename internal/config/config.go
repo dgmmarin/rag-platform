@@ -34,6 +34,20 @@ type Config struct {
 	// it, and rotation increments it (SPEC-09 §2).
 	DEKKeyVersion uint16
 
+	// ProvisionURL is the privileged (superuser) Postgres connection used only
+	// for tenant provisioning: CREATE ROLE / CREATE DATABASE / CREATE EXTENSION
+	// and the control-plane registry writes (STORY-02.3, SPEC-01 §6). Empty means
+	// provisioning falls back to the control-plane URL. Never logged.
+	ProvisionURL string
+	// TenantDBHost / TenantDBPort are the host:port recorded for a provisioned
+	// tenant's database (how the resolver reaches it). Empty/zero means reuse the
+	// provisioning connection's target.
+	TenantDBHost string
+	TenantDBPort int
+	// TenantDBSSLMode is the sslmode recorded for a provisioned tenant's database
+	// connection (default "require"; use "disable" for a local no-TLS cluster).
+	TenantDBSSLMode string
+
 	// LogLevel is the textual slog level (debug, info, warn, error). Empty means
 	// info (STORY-01.6, SPEC-10 §1).
 	LogLevel string
@@ -82,6 +96,19 @@ func Load(filePath string) (Config, error) {
 			return Config{}, fmt.Errorf("config: invalid DEK_KEY_VERSION %q: %w", raw, err)
 		}
 		cfg.DEKKeyVersion = uint16(v)
+	}
+
+	// Provisioning (STORY-02.3, SPEC-01 §6). The privileged URL and tenant-facing
+	// DB host/port for newly provisioned tenants.
+	cfg.ProvisionURL = mustGet(get, "PROVISION_DB_URL")
+	cfg.TenantDBHost = mustGet(get, "TENANT_DB_HOST")
+	cfg.TenantDBSSLMode = mustGet(get, "TENANT_DB_SSLMODE")
+	if raw := mustGet(get, "TENANT_DB_PORT"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: invalid TENANT_DB_PORT %q: %w", raw, err)
+		}
+		cfg.TenantDBPort = v
 	}
 
 	// Observability (STORY-01.6, SPEC-10). The OTLP endpoint follows the standard

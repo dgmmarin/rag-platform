@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
+	"time"
 
 	"github.com/alecthomas/kong"
 
 	"github.com/rag-platform/ragctl/internal/migrate"
+	"github.com/rag-platform/ragctl/internal/provision"
 )
 
 // stub writes a recognisable "not implemented" line for a wired-but-unfinished
@@ -77,27 +80,253 @@ func (c *MigrateControlCmd) Run(k *kong.Context, g *Globals) error {
 	return nil
 }
 
-// MigrateTenantsCmd applies tenant migrations (STORY-02.2).
+// MigrateTenantsCmd applies tenant migrations (STORY-02.2, SPEC-01 §7).
 type MigrateTenantsCmd struct {
 	Parallel int    `help:"Number of tenants to migrate in parallel." default:"4"`
 	Tenant   string `help:"Restrict to a single tenant slug."`
 }
 
-// Run is a STORY-01.1 stub; STORY-02.2 wires the per-tenant runner.
-func (c *MigrateTenantsCmd) Run(k *kong.Context) error {
-	return stub(k.Stdout, "ragctl migrate tenants: tenant migrations")
+// Run applies pending tenant migrations to every eligible tenant in parallel,
+// recording each applied schema_version, continuing past per-tenant failures,
+// and exiting non-zero with the list of failed tenants so a rerun resumes only
+// those (STORY-02.2, FR-TEN-09, SPEC-01 §7). It loads the startup DEK so it can
+// decrypt each tenant's stored database password (SPEC-09 §2).
+func (c *MigrateTenantsCmd) Run(k *kong.Context, g *Globals) error {
+	if g.ControlPlaneURL == "" {
+		return fmt.Errorf("migrate tenants: no control-plane URL (set --control-plane-url or CONTROL_PLANE_URL)")
+	}
+	cipher, err := LoadStartupCipher(context.Background(), g.Secrets)
+	if err != nil {
+		return err
+	}
+
+	res, err := migrate.Tenants(context.Background(), g.ControlPlaneURL, migrate.TenantOptions{
+		Parallel:   c.Parallel,
+		Decrypter:  cipher,
+		OnlyTenant: c.Tenant,
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, o := range res.Migrated {
+		if _, werr := fmt.Fprintf(k.Stdout, "ragctl migrate tenants: %s ok (version %d)\n", o.Slug, o.Version); werr != nil {
+			return werr
+		}
+	}
+	for _, o := range res.Failed {
+		if _, werr := fmt.Fprintf(k.Stderr, "ragctl migrate tenants: %s FAILED: %v\n", o.Slug, o.Err); werr != nil {
+			return werr
+		}
+	}
+	if res.HasFailures() {
+		slugs := make([]string, 0, len(res.Failed))
+		for _, o := range res.Failed {
+			slugs = append(slugs, o.Slug)
+		}
+		return fmt.Errorf("migrate tenants: %d tenant(s) failed: %s", len(res.Failed), strings.Join(slugs, ", "))
+	}
+	if _, werr := fmt.Fprintf(k.Stdout, "ragctl migrate tenants: applied to %d tenant(s)\n", len(res.Migrated)); werr != nil {
+		return werr
+	}
+	return nil
 }
 
 // EnrollCmd enrols a new tenant (SPEC-02 §7:
 // `ragctl enroll --slug acme --name "Acme Inc" --region eu-central --db-host pg-1`).
 type EnrollCmd struct {
-	Slug   string `help:"Tenant slug." required:""`
-	Name   string `help:"Tenant display name." required:""`
-	Region string `help:"Deployment region."`
-	DBHost string `help:"Database host for the tenant." name:"db-host"`
+	Slug      string `help:"Tenant slug." required:""`
+	Name      string `help:"Tenant display name." required:""`
+	Region    string `help:"Deployment region."`
+	DBHost    string `help:"Database host to record for the tenant (overrides TENANT_DB_HOST)." name:"db-host"`
+	DBPort    int    `help:"Database port to record for the tenant (overrides TENANT_DB_PORT)." name:"db-port"`
+	DBSSLMode string `help:"sslmode recorded for the tenant DB (default require; use disable locally)." name:"db-ssl-mode"`
+	Dimension int    `help:"Embedding vector dimension for the tenant (default 1536)." name:"embedding-dim"`
 }
 
-// Run is a STORY-01.1 stub; STORY-02.3 enqueues provision_tenant.
-func (c *EnrollCmd) Run(k *kong.Context) error {
-	return stub(k.Stdout, "ragctl enroll: tenant %q (%s)", c.Slug, c.Name)
+// Run provisions the tenant synchronously (STORY-02.3, FR-TEN-01/02, SPEC-01 §6):
+// it creates the least-privilege role + database, installs the required
+// extensions on the privileged connection, encrypts and records the connection
+// details, applies the tenant migrations, and sets the tenant active. The
+// asynchronous `provision_tenant` job enqueue is deferred to EPIC-09 (River,
+// ADR-0005); until then enroll runs the same idempotent handler directly so a
+// retry is safe.
+//
+// The privileged connection comes from PROVISION_DB_URL, falling back to the
+// control-plane URL. The DEK is loaded at startup to encrypt the generated
+// password with the same Cipher the resolver decrypts with (SPEC-09 §2).
+func (c *EnrollCmd) Run(k *kong.Context, g *Globals) error {
+	privileged := g.ProvisionURL
+	if privileged == "" {
+		privileged = g.ControlPlaneURL
+	}
+	if privileged == "" {
+		return fmt.Errorf("enroll: no provisioning URL (set --control-plane-url/CONTROL_PLANE_URL or PROVISION_DB_URL)")
+	}
+
+	cipher, err := LoadStartupCipher(context.Background(), g.Secrets)
+	if err != nil {
+		return err
+	}
+
+	host := c.DBHost
+	if host == "" {
+		host = g.TenantDBHost
+	}
+	port := c.DBPort
+	if port == 0 {
+		port = g.TenantDBPort
+	}
+	sslMode := c.DBSSLMode
+	if sslMode == "" {
+		sslMode = g.TenantDBSSLMode
+	}
+
+	p := &provision.Provisioner{
+		PrivilegedURL: privileged,
+		Encrypter:     cipher,
+		Decrypter:     cipher,
+		TenantHost:    host,
+		TenantPort:    port,
+	}
+	res, err := p.Provision(context.Background(), provision.Params{
+		Slug:         c.Slug,
+		Name:         c.Name,
+		Region:       c.Region,
+		Host:         host,
+		Port:         port,
+		SSLMode:      sslMode,
+		EmbeddingDim: c.Dimension,
+	})
+	if err != nil {
+		return err
+	}
+	if _, werr := fmt.Fprintf(k.Stdout,
+		"ragctl enroll: tenant %q provisioned (id %s, database %s, schema version %d)\n",
+		res.Slug, res.TenantID, res.DatabaseName, res.SchemaVersion); werr != nil {
+		return werr
+	}
+	return nil
+}
+
+// TenantCmd groups tenant lifecycle subcommands (STORY-02.4, SPEC-01 §8).
+type TenantCmd struct {
+	Suspend TenantSuspendCmd `cmd:"" help:"Suspend a tenant (reads only; end-user query/ingest refused)."`
+	Resume  TenantResumeCmd  `cmd:"" help:"Resume a suspended tenant."`
+	Delete  TenantDeleteCmd  `cmd:"" help:"Schedule, cancel, or run a tenant deletion."`
+}
+
+// lifecycleForGlobals builds the Lifecycle service from resolved globals, applying
+// the same privileged-connection resolution as enroll (PROVISION_DB_URL, falling
+// back to the control-plane URL). It fails closed with an actionable error when
+// neither is set.
+func lifecycleForGlobals(g *Globals) (*provision.Lifecycle, error) {
+	privileged := g.ProvisionURL
+	if privileged == "" {
+		privileged = g.ControlPlaneURL
+	}
+	if privileged == "" {
+		return nil, fmt.Errorf("tenant: no provisioning URL (set --control-plane-url/CONTROL_PLANE_URL or PROVISION_DB_URL)")
+	}
+	return &provision.Lifecycle{PrivilegedURL: privileged}, nil
+}
+
+// TenantSuspendCmd suspends a tenant (FR-TEN-04).
+type TenantSuspendCmd struct {
+	Slug string `help:"Tenant slug." required:""`
+}
+
+// Run moves the tenant active -> suspended so viewers/API keys are refused while
+// admins can still read (FR-TEN-04, SPEC-01 §3/§8). The control-plane status
+// write fires tenant_changed so the resolver invalidates its cache within ~1s.
+func (c *TenantSuspendCmd) Run(k *kong.Context, g *Globals) error {
+	l, err := lifecycleForGlobals(g)
+	if err != nil {
+		return err
+	}
+	res, err := l.Suspend(context.Background(), c.Slug)
+	if err != nil {
+		return err
+	}
+	_, werr := fmt.Fprintf(k.Stdout, "ragctl tenant suspend: %q %s -> %s\n", res.Slug, res.FromStatus, res.ToStatus)
+	return werr
+}
+
+// TenantResumeCmd resumes a suspended tenant.
+type TenantResumeCmd struct {
+	Slug string `help:"Tenant slug." required:""`
+}
+
+// Run moves the tenant suspended -> active (SPEC-01 §8).
+func (c *TenantResumeCmd) Run(k *kong.Context, g *Globals) error {
+	l, err := lifecycleForGlobals(g)
+	if err != nil {
+		return err
+	}
+	res, err := l.Resume(context.Background(), c.Slug)
+	if err != nil {
+		return err
+	}
+	_, werr := fmt.Fprintf(k.Stdout, "ragctl tenant resume: %q %s -> %s\n", res.Slug, res.FromStatus, res.ToStatus)
+	return werr
+}
+
+// TenantDeleteCmd schedules a deletion (default), cancels a pending one
+// (--cancel), or performs the irreversible teardown once the grace period has
+// elapsed (--run) (FR-TEN-05, SPEC-01 §8).
+//
+// Async scheduling via a River `delete_tenant` job (ADR-0005) is deferred to
+// EPIC-09; until then --run invokes the same idempotent handler directly, exactly
+// as enroll does for provisioning (ADR-0016). The grace deadline is honoured
+// in-handler: --run refuses to drop before delete_after.
+type TenantDeleteCmd struct {
+	Slug    string        `help:"Tenant slug." required:""`
+	Grace   time.Duration `help:"Grace period before the deletion is irreversible (default 168h = 7 days)." default:"168h"`
+	Cancel  bool          `help:"Cancel a pending deletion during its grace period."`
+	Execute bool          `name:"run" help:"Run the irreversible teardown now (only after the grace period)."`
+}
+
+// Run dispatches to schedule / cancel / run based on the flags. --cancel and
+// --run are mutually exclusive.
+func (c *TenantDeleteCmd) Run(k *kong.Context, g *Globals) error {
+	if c.Cancel && c.Execute {
+		return fmt.Errorf("tenant delete: --cancel and --run are mutually exclusive")
+	}
+	l, err := lifecycleForGlobals(g)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+
+	switch {
+	case c.Cancel:
+		res, err := l.CancelDelete(ctx, c.Slug)
+		if err != nil {
+			return err
+		}
+		_, werr := fmt.Fprintf(k.Stdout, "ragctl tenant delete: cancelled %q (restored to %s)\n", res.Slug, res.ToStatus)
+		return werr
+	case c.Execute:
+		res, err := l.RunDelete(ctx, c.Slug)
+		if err != nil {
+			return err
+		}
+		if res.ObjectStoreDeferred {
+			if _, werr := fmt.Fprintf(k.Stderr,
+				"ragctl tenant delete: object-storage prefix removal deferred (no client configured; EPIC-06)\n"); werr != nil {
+				return werr
+			}
+		}
+		_, werr := fmt.Fprintf(k.Stdout, "ragctl tenant delete: teardown complete for %q (database and role dropped)\n", res.Slug)
+		return werr
+	default:
+		res, err := l.ScheduleDelete(ctx, c.Slug, c.Grace)
+		if err != nil {
+			return err
+		}
+		_, werr := fmt.Fprintf(k.Stdout,
+			"ragctl tenant delete: scheduled %q for deletion after %s (cancel with --cancel until then)\n",
+			res.Slug, res.DeleteAfter.UTC().Format(time.RFC3339))
+		return werr
+	}
 }

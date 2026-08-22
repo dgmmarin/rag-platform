@@ -152,3 +152,36 @@ func TestBadKeyVersionIsError(t *testing.T) {
 		t.Fatal("Load accepted a non-numeric DEK_KEY_VERSION")
 	}
 }
+
+// TestLoadProvisioningConfig proves the privileged provisioning connection and
+// the tenant-facing DB host/port are read from the environment (STORY-02.3,
+// SPEC-01 §6). The privileged URL is a superuser connection used only for
+// CREATE ROLE/DATABASE/EXTENSION; it is never logged.
+func TestLoadProvisioningConfig(t *testing.T) {
+	setEnv(t, map[string]string{
+		"PROVISION_DB_URL": "postgres://super:pw@dbhost:5432/postgres?sslmode=disable",
+		"TENANT_DB_HOST":   "pg-1.internal",
+		"TENANT_DB_PORT":   "6432",
+	})
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ProvisionURL != "postgres://super:pw@dbhost:5432/postgres?sslmode=disable" {
+		t.Fatalf("ProvisionURL = %q", cfg.ProvisionURL)
+	}
+	if cfg.TenantDBHost != "pg-1.internal" {
+		t.Fatalf("TenantDBHost = %q", cfg.TenantDBHost)
+	}
+	if cfg.TenantDBPort != 6432 {
+		t.Fatalf("TenantDBPort = %d, want 6432", cfg.TenantDBPort)
+	}
+}
+
+// TestBadTenantDBPortIsError proves a non-numeric TENANT_DB_PORT fails loudly.
+func TestBadTenantDBPortIsError(t *testing.T) {
+	t.Setenv("TENANT_DB_PORT", "not-a-port")
+	if _, err := Load(""); err == nil {
+		t.Fatal("Load accepted a non-numeric TENANT_DB_PORT")
+	}
+}

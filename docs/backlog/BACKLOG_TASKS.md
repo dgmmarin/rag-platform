@@ -58,36 +58,38 @@ breakdown, tasks are derived from the acceptance criteria.
 ## EPIC-02 · Tenancy core
 
 ### STORY-02.1 — Tenant registry and resolver (FR-TEN-03, FR-ACC-03, SPEC-01 §2–4, ADR-0003)
-- [ ] `tenant.DB` wrapper
-- [ ] pool cache with LRU (lazy create, idle eviction, capped)
-- [ ] registry loader (cached 30 s)
-- [ ] LISTEN/NOTIFY trigger on `tenants` for cache invalidation
-- [ ] `Resolver.Open`: rw for active, ro for suspended, error otherwise
-- [ ] unit + integration tests
+- [x] `tenant.DB` wrapper
+- [x] pool cache with LRU (lazy create, idle eviction, capped)
+- [x] registry loader (cached 30 s)
+- [x] LISTEN/NOTIFY trigger on `tenants` for cache invalidation — control migration
+  `00002` adds the `notify_tenant_changed` trigger; the resolver's `Listen` loop
+  LISTENs on `tenant_changed` and invalidates the cache within ~1s (e2e-verified).
+- [x] `Resolver.Open`: rw for active, ro for suspended, error otherwise (+ fail-closed schema check)
+- [x] unit + integration tests (unit in `internal/tenant`; e2e golden path in `test/e2e`)
 
-### STORY-02.2 — Tenant schema migrations (FR-TEN-09, SPEC-01 §7)
-- [ ] goose per-tenant runner (parallel, records `schema_version`)
-- [ ] `tenant.sql` as migration 0001 with dimension placeholder
-- [ ] row locking
-- [ ] continues past failures, exits non-zero with list, rerun resumes
-- [ ] `Open` fails closed on version mismatch
-- [ ] tests with a deliberately failing tenant
+### STORY-02.2 — Tenant schema migrations (FR-TEN-09, SPEC-01 §7, ADR-0015)
+- [x] goose per-tenant runner (parallel, one `Provider` per tenant, records `schema_version`) — `internal/migrate/tenant.go`
+- [x] `tenant.sql` as migration 0001 with dimension placeholder (`vector(EMBEDDING_DIM)` substituted per tenant; drift-guard test)
+- [x] row locking (`tenant_databases ... FOR UPDATE SKIP LOCKED`, in the same tx as the `schema_version` mirror)
+- [x] continues past failures, exits non-zero with list of failed slugs, rerun resumes only those behind
+- [x] `Open` fails closed on version mismatch — `expectedSchemaVersion` derived from embedded migrations (`migrate.ExpectedTenantVersion()`)
+- [x] tests with a deliberately failing tenant (unit: drift/placeholder/version/validation; e2e golden path incl. failing tenant + resuming rerun)
 
-### STORY-02.3 — Tenant provisioning job (FR-TEN-01/02, SPEC-01 §6)
-- [ ] privileged provisioning connection config
-- [ ] SQL for role/db creation (least privilege)
-- [ ] job handler (encrypt password, run migrations, set active; idempotent)
-- [ ] `POST /admin/tenants` / `ragctl enroll` enqueues `provision_tenant`
-- [ ] audit event
-- [ ] integration test on real Postgres
+### STORY-02.3 — Tenant provisioning job (FR-TEN-01/02, SPEC-01 §6) ✅ Done — ADR-0016
+- [x] privileged provisioning connection config (`PROVISION_DB_URL`, `TENANT_DB_HOST/PORT/SSLMODE`)
+- [x] SQL for role/db creation (least privilege), incl. `CREATE EXTENSION vector/pgcrypto/pg_trgm` as superuser
+- [x] job handler (encrypt password, create role+db, run migrations, set active; idempotent) — `internal/provision`
+- [x] `ragctl enroll` runs the provisioner synchronously; async `provision_tenant` enqueue + `POST /admin/tenants` deferred to EPIC-09 (River)
+- [x] audit event (`tenant.create` / `tenant.provision`; no password logged)
+- [x] integration test on real Postgres (role/db/extensions, migrations, active, password round-trip, idempotent re-run)
 
 ### STORY-02.4 — Tenant suspension, deletion and grace period (FR-TEN-04/05, SPEC-01 §8)
-- [ ] status transitions service
-- [ ] suspend → `tenant_unavailable` for viewers/API keys, admins can read
-- [ ] `delete_tenant` job with scheduled-at + grace timer
-- [ ] cancellation path
-- [ ] after grace: drop database + role, remove object-storage prefix
-- [ ] verification test that no rows remain
+- [x] status transitions service (`internal/provision/transitions.go` state machine)
+- [x] suspend → `tenant_unavailable` for viewers/API keys, admins can read
+- [x] `delete_tenant` scheduled-at + grace timer (`ragctl tenant delete`; async River enqueue deferred to EPIC-09)
+- [x] cancellation path (`--cancel` during grace)
+- [x] after grace: drop database + role (object-storage prefix removal deferred until a client exists — EPIC-06, per ADR-0017)
+- [x] verification test that no rows remain (e2e `TestTenantLifecycleGoldenPath`)
 
 ### STORY-02.5 — Tenant move (connection update) (FR-TEN-07)
 - [ ] `PATCH /admin/tenants/{id}` endpoint (evicts pool)

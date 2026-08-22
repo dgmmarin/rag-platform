@@ -65,8 +65,14 @@ func TestRagctlGoldenPath(t *testing.T) {
 		// it fails (exit 1) with the missing-URL error, not the exit-2 stub. Its
 		// real golden path against Postgres lives in TestMigrateControlAppliesSchema.
 		{name: "migrate control", args: []string{"migrate", "control"}, wantCode: 1, wantOut: "control-plane URL", clearControlURL: true},
-		{name: "migrate tenants", args: []string{"migrate", "tenants"}, wantCode: 2, wantOut: "migrate tenants"},
-		{name: "enroll", args: []string{"enroll", "--slug", "acme", "--name", "Acme Inc"}, wantCode: 2, wantOut: "enroll"},
+		// migrate tenants is implemented (STORY-02.2): with no CONTROL_PLANE_URL it
+		// fails closed (exit 1) with the missing-URL error, not the exit-2 stub. Its
+		// real golden path against Postgres lives in TestMigrateTenantsGoldenPath.
+		{name: "migrate tenants", args: []string{"migrate", "tenants"}, wantCode: 1, wantOut: "control-plane URL", clearControlURL: true},
+		// enroll is implemented (STORY-02.3): with no CONTROL_PLANE_URL / PROVISION_DB_URL
+		// it fails closed (exit 1) with the missing-URL error, not the exit-2 stub. Its
+		// real golden path against Postgres lives in TestEnrollProvisionsTenantGoldenPath.
+		{name: "enroll", args: []string{"enroll", "--slug", "acme", "--name", "Acme Inc"}, wantCode: 1, wantOut: "provisioning URL", clearControlURL: true},
 		{name: "help", args: []string{"--help"}, wantCode: 0, wantOut: "ragctl"},
 	}
 
@@ -74,7 +80,7 @@ func TestRagctlGoldenPath(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.Command(bin, tc.args...)
 			if tc.clearControlURL {
-				cmd.Env = withoutEnv(os.Environ(), "CONTROL_PLANE_URL")
+				cmd.Env = withoutEnv(withoutEnv(os.Environ(), "CONTROL_PLANE_URL"), "PROVISION_DB_URL")
 			}
 			out, err := cmd.CombinedOutput()
 			code := 0

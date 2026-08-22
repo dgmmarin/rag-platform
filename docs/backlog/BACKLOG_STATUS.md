@@ -6,6 +6,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 
 **Legend**
 - ✅ **Done** — implemented, unit + e2e tests green, lint clean. (EPIC-01 work is currently uncommitted, pending review.)
+- 🚧 **In progress** — some stories delivered, epic not yet complete.
 - 🔲 **Todo** — not started.
 
 ## Summary by epic
@@ -13,7 +14,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | Epic | Title | Points | Done pts | Status |
 |---|---|--:|--:|---|
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
-| EPIC-02 | Tenancy core | 34 | 0 | 🔲 Todo |
+| EPIC-02 | Tenancy core | 34 | 26 | 🚧 In progress |
 | EPIC-03 | Control plane services | 34 | 0 | 🔲 Todo |
 | EPIC-04 | Public API surface | 21 | 0 | 🔲 Todo |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
@@ -24,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **21** | **6%** |
+| **Total** | | **337** | **47** | **14%** |
 
 ---
 
@@ -44,16 +45,54 @@ stack + seed; goose control-plane migration with drift guard; AES-256-GCM envelo
 age/AWS KMS; slog/metrics/tracing scaffolding and `serve` HTTP skeleton; GitHub Actions CI driving
 mise tasks with a config-driven 70% coverage gate. ADRs 0010–0014.
 
-## EPIC-02 · Tenancy core — 🔲 0/34 pts
+## EPIC-02 · Tenancy core — 🚧 26/34 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
-| STORY-02.1 | Tenant registry and resolver | 8 | 🔲 Todo | FR-TEN-03, FR-ACC-03, SPEC-01 §2–4, ADR-0003 |
-| STORY-02.2 | Tenant schema migrations | 5 | 🔲 Todo | FR-TEN-09, SPEC-01 §7 |
-| STORY-02.3 | Tenant provisioning job | 8 | 🔲 Todo | FR-TEN-01/02, SPEC-01 §6 |
-| STORY-02.4 | Tenant suspension, deletion and grace period | 5 | 🔲 Todo | FR-TEN-04/05, SPEC-01 §8 |
+| STORY-02.1 | Tenant registry and resolver | 8 | ✅ Done | FR-TEN-03, FR-ACC-03, SPEC-01 §2–4, ADR-0003 |
+| STORY-02.2 | Tenant schema migrations | 5 | ✅ Done | FR-TEN-09, SPEC-01 §7, ADR-0015 |
+| STORY-02.3 | Tenant provisioning job | 8 | ✅ Done | FR-TEN-01/02, SPEC-01 §6, ADR-0016 |
+| STORY-02.4 | Tenant suspension, deletion and grace period | 5 | ✅ Done | FR-TEN-04/05, SPEC-01 §8, ADR-0017 |
 | STORY-02.5 | Tenant move (connection update) | 3 | 🔲 Todo | FR-TEN-07 |
 | STORY-02.6 | Isolation test suite | 5 | 🔲 Todo | NFR-SEC-01, SPEC-01 §9 |
+
+**Delivered (STORY-02.1):** `internal/tenant` — `DB` handle (the only tenant-SQL entry point, ADR-0003),
+`Resolver.Open` applying the SPEC-01 §3 status rules (rw active / ro suspended / errors otherwise) with
+fail-closed schema-version check, a 30s TTL-cached registry, and a lazy LRU pool cache with idle eviction
+(SPEC-01 §4). Cache invalidation is driven by a `tenant_changed` LISTEN/NOTIFY loop backed by a new control
+migration (`00002`) so suspension/move take effect within ~1s. Tenant identity in context is
+observability-only. Unit tests + e2e golden path over the real Postgres (per-tenant role/database,
+rw/ro/error resolution, and NOTIFY-driven invalidation). Coverage gate on `internal/tenant` met.
+
+**Delivered (STORY-02.2):** `ragctl migrate tenants` — a parallel per-tenant goose runner in
+`internal/migrate` (`tenant.go`, `tenant/00001_initial_schema.sql`) sharing the STORY-01.5 goose plumbing
+and drift guard. One goose `Provider` per tenant (safe for the parallel fan-out); each tenant handled in a
+single control-plane transaction that locks its `tenant_databases` row `FOR UPDATE SKIP LOCKED`, applies
+pending migrations with the per-tenant role, and mirrors the version into `schema_version`. The `vector(N)`
+dimension is a placeholder substituted per tenant from `settings.embedding_dim` via an in-memory FS; a
+non-positive dimension fails closed. Failures are recorded and non-fatal — the command exits non-zero
+listing failed slugs and a rerun resumes only those behind. The resolver's placeholder
+`expectedSchemaVersion` is now derived from the embedded migrations (`migrate.ExpectedTenantVersion()`), so
+`Open` fail-closed tracks what the runner applies. Extensions moved to provisioning (superuser) per SPEC-01
+§6, since tenant migrations run as the least-privilege role. Unit tests (drift guard, placeholder
+substitution, version derivation, input validation) + e2e golden path over the real Postgres including a
+deliberately-failing tenant and a resuming rerun. ADR-0015.
+
+**Delivered (STORY-02.3):** `internal/provision` — an idempotent tenant provisioner plus `ragctl enroll`.
+A privileged (superuser) connection (`PROVISION_DB_URL`, falling back to the control-plane URL) creates the
+least-privilege per-tenant role (`NOSUPERUSER NOCREATEDB NOCREATEROLE`) and its owned database, then installs
+the three required extensions (`vector`, `pgcrypto`, `pg_trgm`) inside the new database — the superuser-only
+step SPEC-01 §6/ADR-0015 assign to provisioning. The generated password is envelope-encrypted with the
+platform `crypto.Cipher` (same DEK the resolver decrypts with, SPEC-09 §2) and recorded in `tenant_databases`;
+migrations are applied via the STORY-02.2 runner (as the per-tenant role); the tenant is set active and a
+`tenant.create`/`tenant.provision` audit event written in one control-plane transaction (never logging the
+password). DDL identifiers are validated against a strict lowercase pattern and rejected if unsafe
+(injection-proof). Re-running is idempotent: existing row/role/database are reused (the password is not
+regenerated), so a retry — and the future River `provision_tenant` job (ADR-0005) — is safe. The async enqueue
+is deferred to EPIC-09; enroll runs the same handler synchronously until then. Unit tests (identifier quoting,
+password generation, SQL builders, validation/defaults, URL rewrite) + e2e golden path over the real Postgres
+asserting role/db/extensions exist, migrations applied at the configured embedding dimension, status active,
+password round-trip (decrypt + login as the role), and idempotent re-run. ADR-0016.
 
 ## EPIC-03 · Control plane services — 🔲 0/34 pts
 
@@ -176,6 +215,7 @@ mise tasks with a config-driven 70% coverage gate. ADRs 0010–0014.
 
 ---
 
-_Suggested next: EPIC-02 (Tenancy core). STORY-02.2 (tenant schema migrations) builds on the goose
-tooling from STORY-01.5; STORY-02.1 creates the `internal/tenant` package the CI coverage gate
-already targets._
+_Suggested next: STORY-02.5 (tenant move / connection update) — a `PATCH /admin/tenants/{id}` that updates a
+tenant's DB connection and evicts its pool via `Resolver.Close`, plus a move-tenant runbook (FR-TEN-07). The
+resolver's pool-cache eviction and LISTEN/NOTIFY invalidation from STORY-02.1 carry straight over. Then
+STORY-02.6 (isolation test suite) closes out EPIC-02._

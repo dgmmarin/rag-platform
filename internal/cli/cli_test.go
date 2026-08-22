@@ -19,10 +19,8 @@ func TestSubcommandsAreWiredAndReturnNotImplemented(t *testing.T) {
 		// serve is no longer a pure stub: it loads the DEK at startup and fails
 		// closed without one (STORY-01.4); see secrets_test.go for its contract.
 		{"work", []string{"work"}, "work"},
-		// migrate control is implemented (STORY-01.5); see
-		// TestMigrateControlRequiresURL below.
-		{"migrate tenants", []string{"migrate", "tenants"}, "migrate tenants"},
-		{"enroll", []string{"enroll", "--slug", "acme", "--name", "Acme Inc"}, "enroll"},
+		// migrate control (STORY-01.5), migrate tenants (STORY-02.2) and enroll
+		// (STORY-02.3) are implemented; see their *RequiresURL tests.
 	}
 
 	for _, tc := range cases {
@@ -53,6 +51,85 @@ func TestMigrateControlRequiresURL(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "control-plane URL") {
 		t.Fatalf("error %q should mention the missing control-plane URL", err.Error())
+	}
+}
+
+// migrate tenants is wired to the per-tenant goose runner (STORY-02.2,
+// SPEC-01 §7). Without a resolved control-plane URL it must fail with a clear,
+// actionable error rather than ErrNotImplemented — the fail-closed check runs
+// before any DEK load or database dial.
+func TestMigrateTenantsRequiresURL(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := Run([]string{"migrate", "tenants"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("want an error when control-plane URL is unset, got nil")
+	}
+	if errors.Is(err, ErrNotImplemented) {
+		t.Fatal("migrate tenants is implemented; must not return ErrNotImplemented")
+	}
+	if !strings.Contains(err.Error(), "control-plane URL") {
+		t.Fatalf("error %q should mention the missing control-plane URL", err.Error())
+	}
+}
+
+// enroll is wired to the provisioner (STORY-02.3, SPEC-01 §6). With no resolved
+// control-plane / provisioning URL it must fail with a clear, actionable error
+// rather than ErrNotImplemented — the fail-closed check runs before any DEK load
+// or database dial.
+func TestEnrollRequiresURL(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := Run([]string{"enroll", "--slug", "acme", "--name", "Acme Inc"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("want an error when no provisioning URL is set, got nil")
+	}
+	if errors.Is(err, ErrNotImplemented) {
+		t.Fatal("enroll is implemented; must not return ErrNotImplemented")
+	}
+	if !strings.Contains(err.Error(), "URL") {
+		t.Fatalf("error %q should mention the missing connection URL", err.Error())
+	}
+}
+
+// The tenant lifecycle commands (STORY-02.4, SPEC-01 §8) are wired to the
+// Lifecycle service. With no resolved provisioning/control-plane URL each must
+// fail with a clear, actionable error rather than ErrNotImplemented — the
+// fail-closed check runs before any database dial.
+func TestTenantLifecycleCommandsRequireURL(t *testing.T) {
+	cases := [][]string{
+		{"tenant", "suspend", "--slug", "acme"},
+		{"tenant", "resume", "--slug", "acme"},
+		{"tenant", "delete", "--slug", "acme"},
+		{"tenant", "delete", "--slug", "acme", "--cancel"},
+		{"tenant", "delete", "--slug", "acme", "--run"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := Run(args, &stdout, &stderr)
+			if err == nil {
+				t.Fatal("want an error when no provisioning URL is set, got nil")
+			}
+			if errors.Is(err, ErrNotImplemented) {
+				t.Fatal("tenant lifecycle commands are implemented; must not return ErrNotImplemented")
+			}
+			if !strings.Contains(err.Error(), "URL") {
+				t.Fatalf("error %q should mention the missing connection URL", err.Error())
+			}
+		})
+	}
+}
+
+// A scheduled delete and its cancellation are mutually exclusive; the grammar
+// must reject asking for both at once rather than silently picking one.
+func TestTenantDeleteRejectsCancelAndRunTogether(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := Run([]string{"--control-plane-url", "postgres://x", "tenant", "delete",
+		"--slug", "acme", "--cancel", "--run"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("want an error when --cancel and --run are both set, got nil")
+	}
+	if errors.Is(err, ErrNotImplemented) {
+		t.Fatal("must not resolve to ErrNotImplemented")
 	}
 }
 
