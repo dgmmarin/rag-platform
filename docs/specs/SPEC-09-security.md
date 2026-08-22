@@ -19,6 +19,19 @@
 - Sessions: 128-bit random ID, HttpOnly, Secure, SameSite=Lax, 12 h idle timeout; CSRF double-submit on mutating routes.
 - OIDC: PKCE, nonce, issuer allowlist per deployment.
 
+Implemented by `internal/cp/auth` (STORY-03.1, FR-ACC-01, ADR-0019): argon2id password
+hashing (PHC-encoded, per-hash random salt, constant-time verify) on `users.password_hash`;
+email/password signup and login with the lockout policy backed by `users.failed_login_count`
+/`users.locked_until` (a locked account is refused without checking the password, and the
+correct password is still refused inside the window). Sessions are server-side in the control
+plane (`sessions` table): the 128-bit cookie id is stored only as its sha256 (`token_hash`), so
+a leaked snapshot cannot be replayed; `idle_expires_at` enforces and slides the 12 h idle
+timeout; logout sets `revoked_at`. The cookie is HttpOnly + SameSite=Lax (Secure in production);
+CSRF is a double-submit token minted per session (`sessions.csrf_token`) and required on mutating
+methods. The breach-list check is a follow-up (a length floor is enforced now). The HTTP handlers
+and middleware are unit-tested with `net/http/httptest`; mounting them on the public router is
+STORY-04.1. OIDC (PKCE, nonce, issuer allowlist) is STORY-03.2.
+
 ## 4. Crawler safety (SSRF)
 - Resolve DNS, reject RFC 1918, loopback, link-local, metadata IPs (169.254.169.254), and re-validate on each redirect hop.
 - Allowlist enforced on scheme+host+path prefix; max response size 20 MB; timeouts 30 s.

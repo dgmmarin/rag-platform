@@ -15,7 +15,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 |---|---|--:|--:|---|
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
-| EPIC-03 | Control plane services | 34 | 0 | 🔲 Todo |
+| EPIC-03 | Control plane services | 34 | 5 | 🚧 In progress |
 | EPIC-04 | Public API surface | 21 | 0 | 🔲 Todo |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **55** | **16%** |
+| **Total** | | **337** | **60** | **18%** |
 
 ---
 
@@ -128,11 +128,11 @@ rule fails `mise run lint` in CI if any package outside `internal/provision`/`in
 cross-tenant endpoint matrix (A's credentials against B's IDs over every route, 404/403) plugs into this
 two-tenant fixture when EPIC-04 lands. ADR-0018; SPEC-01 §6/§9 and SPEC-09 §1 updated with the code.
 
-## EPIC-03 · Control plane services — 🔲 0/34 pts
+## EPIC-03 · Control plane services — 🚧 5/34 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
-| STORY-03.1 | User accounts and sessions | 5 | 🔲 Todo | FR-ACC-01, SPEC-09 §3 |
+| STORY-03.1 | User accounts and sessions | 5 | ✅ Done | FR-ACC-01, SPEC-09 §3 |
 | STORY-03.2 | OIDC login | 5 | 🔲 Todo | FR-ACC-01 |
 | STORY-03.3 | Tenant membership and roles | 5 | 🔲 Todo | FR-ACC-02/06, SPEC-02 §4 |
 | STORY-03.4 | API keys | 5 | 🔲 Todo | FR-ACC-04/05 |
@@ -141,6 +141,27 @@ two-tenant fixture when EPIC-04 lands. ADR-0018; SPEC-01 §6/§9 and SPEC-09 §1
 | STORY-03.7 | Usage counters | 3 | 🔲 Todo | FR-ADM-06, SPEC-10 §6 |
 | STORY-03.8 | Platform admin impersonation | 3 | 🔲 Todo | FR-ACC-07 |
 | STORY-03.9 | Rate limiting | 2 | 🔲 Todo | NFR-SEC-07, SPEC-07 §1 |
+
+**Delivered (STORY-03.1):** `internal/cp/auth` — control-plane-only email/password auth and server-side
+sessions (FR-ACC-01, SPEC-09 §3), touching no tenant data (C-3). Passwords are hashed with argon2id
+(t=3, m=64 MiB, p=4, per-hash random salt) in PHC-encoded form on `users.password_hash`, verified in
+constant time; the plaintext is never stored or logged and a length floor is enforced (the breach-list
+check is a follow-up hook). Signup rejects duplicate emails via the unique violation; Login collapses
+unknown-email and wrong-password into one opaque error, and the lockout policy (10 failures / 15 min,
+backed by `users.failed_login_count`/`locked_until`) refuses a locked account before the password is
+checked and still refuses the correct password inside the window. Sessions live in a new control-plane
+`sessions` table: the 128-bit cookie id is stored only as its sha256 (`token_hash`) so a leaked snapshot
+cannot be replayed, `idle_expires_at` enforces and slides the 12 h idle timeout, and logout sets
+`revoked_at`. The cookie is HttpOnly + SameSite=Lax (Secure in production) and the raw token is never
+returned in a body; CSRF is a per-session double-submit token (`sessions.csrf_token`) required on mutating
+methods and compared in constant time. `Handlers` (Signup/Login/Logout) and the `RequireSession`/`CSRF`
+middleware are real `http.Handler`s exercised with `net/http/httptest`; mounting them on the public router
+is STORY-04.1 (mirroring the EPIC-02 deferrals). Schema via goose control migration
+`00004_users_auth_and_sessions.sql` mirrored into `schemas/control_plane.sql` so the drift guard stays
+green. Unit tests (argon2id round-trip/salt uniqueness, token hashing/CSRF match, lockout policy, service
+branch logic via a fake DB, middleware cookie/CSRF flows) + e2e golden path over the real control-plane
+Postgres (signup → login → session lookup → logout, proving the stored hash is argon2id and the token is
+stored as its sha256) and the lockout-after-10-failures path. ADR-0019.
 
 ## EPIC-04 · Public API surface — 🔲 0/21 pts
 
@@ -249,7 +270,7 @@ two-tenant fixture when EPIC-04 lands. ADR-0018; SPEC-01 §6/§9 and SPEC-09 §1
 
 ---
 
-_Suggested next: STORY-03.1 (User accounts and sessions) — opens EPIC-03 (control plane services): signup/login
-with argon2id, session cookies, logout, lockout policy and CSRF on mutations (FR-ACC-01, SPEC-09 §3). EPIC-02
-is complete; the tenancy core (resolver, provisioning, lifecycle, move, isolation) is in place for the control-
-plane services to build on._
+_Suggested next: STORY-03.2 (OIDC login) — the second control-plane auth story (FR-ACC-01): OIDC with PKCE,
+nonce and a per-deployment issuer allowlist (SPEC-09 §3), layered onto the `internal/cp/auth` service and
+`sessions` table STORY-03.1 delivered. EPIC-02 is complete and the password/session foundation is in place;
+mounting the auth handlers on the public router remains STORY-04.1 (EPIC-04)._

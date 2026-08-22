@@ -109,12 +109,12 @@ breakdown, tasks are derived from the acceptance criteria.
 
 ## EPIC-03 · Control plane services
 
-### STORY-03.1 — User accounts and sessions (FR-ACC-01, SPEC-09 §3)
-- [ ] auth package (argon2id signup/login)
-- [ ] session store + cookie; logout
-- [ ] lockout policy
-- [ ] CSRF on mutations
-- [ ] middleware + tests
+### STORY-03.1 — User accounts and sessions (FR-ACC-01, SPEC-09 §3) ✅ Done — ADR-0019
+- [x] auth package (argon2id signup/login) — `internal/cp/auth`; PHC-encoded argon2id, constant-time verify; login collapses unknown-email/wrong-password to one error
+- [x] session store + cookie; logout — Postgres `sessions` table (control migration `00004`); 128-bit cookie id stored only as sha256; HttpOnly + SameSite=Lax cookie; 12 h sliding idle timeout; logout revokes
+- [x] lockout policy — 10 failures / 15 min on `users.failed_login_count`/`locked_until`; locked account refused before password check
+- [x] CSRF on mutations — per-session double-submit token (`X-CSRF-Token` vs `sessions.csrf_token`); safe methods exempt; constant-time compare
+- [x] middleware + tests — `RequireSession`/`CSRF`/handlers unit-tested with `httptest` (router wiring deferred to STORY-04.1); e2e signup→login→lookup→logout + lockout-after-10 against real control-plane Postgres
 
 ### STORY-03.2 — OIDC login (FR-ACC-01)
 - [ ] configurable OIDC provider
