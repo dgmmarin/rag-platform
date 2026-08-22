@@ -154,5 +154,31 @@ delete` invokes the same idempotent handler synchronously (`--` schedule /
 `--cancel` / `--run`), honouring the grace deadline in-handler, exactly as
 `ragctl enroll` does for provisioning (ADR-0016).
 
+**Move (FR-TEN-07).** `Move` updates a tenant's stored connection record in
+`tenant_databases` — any subset of host/port/database/username/ssl_mode, and
+optionally a rotated password — leaving the tenant's status unchanged. Only the
+supplied fields change (`COALESCE`); an all-empty request is rejected (a move
+that changes nothing is a caller error, not a silent no-op). A supplied password
+is envelope-encrypted with the platform `Cipher` before the write, symmetric with
+the resolver's decrypt (SPEC-09 §2), and is never logged; the audit event records
+the changed connection metadata and a `password_rotated` flag only (C-3). The
+whole update runs in one control-plane transaction that locks the tenant row, so
+it serialises against concurrent lifecycle operations on the same tenant.
+
+Because the write goes through the control plane, the `tenant_changed` trigger
+(§3) fires and the resolver evicts the tenant's pool and invalidates its cached
+record within ~1s; the next `Open` rebuilds against the new connection (§4).
+`Resolver.Close(id)` is the same eviction path, used directly when a caller wants
+immediate rebuild without waiting for the notification. A move only repoints the
+registry — it does not copy the tenant's data; the operator restores the tenant
+database to the new host out of band first (see `docs/runbooks/move-tenant.md`).
+
+The `PATCH /admin/tenants/{id}` HTTP route in the AC (FR-TEN-07) is deferred to
+EPIC-04 (STORY-04.6): the public router does not exist until STORY-04.1. Until
+then `ragctl tenant move --slug <slug> [--db-host …] [--db-name …] [--db-user …]
+[--db-port …] [--db-ssl-mode …] [--db-password …]` is the sole entry point,
+invoking the same `Lifecycle.Move` handler synchronously — exactly as
+enroll/suspend/delete defer their HTTP routes (ADR-0016/0017).
+
 ## 9. Isolation test suite
 Automated tests enrol two tenants and assert that every API endpoint, with credentials for tenant A, cannot read or write anything created under tenant B, including by guessing IDs. Runs in CI on every change to `internal/tenant`, `internal/api`, `internal/worker`.

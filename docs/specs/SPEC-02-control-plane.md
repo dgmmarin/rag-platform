@@ -124,7 +124,7 @@ Platform admin (`users.is_platform_admin`) may act on any tenant; every such act
 Validated against a JSON schema on write. `embedding.dim` is immutable after provisioning except through the reindex job.
 
 ## 6. Audit events (minimum set)
-tenant.create/suspend/resume/delete-request/delete-cancel/delete-done, member.add/remove/role-change, apikey.create/revoke, source.create/update/delete/sync-trigger, settings.update, job.cancel, admin.impersonate.
+tenant.create/suspend/resume/move/delete-request/delete-cancel/delete-done, member.add/remove/role-change, apikey.create/revoke, source.create/update/delete/sync-trigger, settings.update, job.cancel, admin.impersonate.
 
 ## 7. CLI (`ragctl`)
 Built with Kong (ADR-0009): each subcommand is a struct with a `Run(ctx)` method and typed flags. Global flags resolve flag → env → optional config file: `--config`, `--log-level` (`LOG_LEVEL`), `--control-plane-url` (`CONTROL_PLANE_URL`). Starting the platform is just running a command.

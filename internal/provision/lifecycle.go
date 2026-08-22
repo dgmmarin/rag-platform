@@ -30,6 +30,12 @@ type Lifecycle struct {
 	// DROP DATABASE / DROP ROLE teardown DDL.
 	PrivilegedURL string
 
+	// Encrypter seals a new tenant DB password during a Move (SPEC-09 §2, C-4).
+	// It must share a DEK/version with the resolver's Decrypter so the ciphertext
+	// it writes stays openable. Only Move needs it; the status transitions and
+	// teardown do not touch secrets, so it may be nil for those.
+	Encrypter Encrypter
+
 	// Now returns the current time; injectable so tests can drive the grace timer
 	// deterministically. Defaults to time.Now.
 	Now func() time.Time

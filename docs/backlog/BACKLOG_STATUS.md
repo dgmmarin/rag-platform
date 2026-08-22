@@ -14,7 +14,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | Epic | Title | Points | Done pts | Status |
 |---|---|--:|--:|---|
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
-| EPIC-02 | Tenancy core | 34 | 26 | 🚧 In progress |
+| EPIC-02 | Tenancy core | 34 | 29 | 🚧 In progress |
 | EPIC-03 | Control plane services | 34 | 0 | 🔲 Todo |
 | EPIC-04 | Public API surface | 21 | 0 | 🔲 Todo |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **47** | **14%** |
+| **Total** | | **337** | **50** | **15%** |
 
 ---
 
@@ -45,7 +45,7 @@ stack + seed; goose control-plane migration with drift guard; AES-256-GCM envelo
 age/AWS KMS; slog/metrics/tracing scaffolding and `serve` HTTP skeleton; GitHub Actions CI driving
 mise tasks with a config-driven 70% coverage gate. ADRs 0010–0014.
 
-## EPIC-02 · Tenancy core — 🚧 26/34 pts
+## EPIC-02 · Tenancy core — 🚧 29/34 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -53,7 +53,7 @@ mise tasks with a config-driven 70% coverage gate. ADRs 0010–0014.
 | STORY-02.2 | Tenant schema migrations | 5 | ✅ Done | FR-TEN-09, SPEC-01 §7, ADR-0015 |
 | STORY-02.3 | Tenant provisioning job | 8 | ✅ Done | FR-TEN-01/02, SPEC-01 §6, ADR-0016 |
 | STORY-02.4 | Tenant suspension, deletion and grace period | 5 | ✅ Done | FR-TEN-04/05, SPEC-01 §8, ADR-0017 |
-| STORY-02.5 | Tenant move (connection update) | 3 | 🔲 Todo | FR-TEN-07 |
+| STORY-02.5 | Tenant move (connection update) | 3 | ✅ Done | FR-TEN-07 |
 | STORY-02.6 | Isolation test suite | 5 | 🔲 Todo | NFR-SEC-01, SPEC-01 §9 |
 
 **Delivered (STORY-02.1):** `internal/tenant` — `DB` handle (the only tenant-SQL entry point, ADR-0003),
@@ -93,6 +93,24 @@ is deferred to EPIC-09; enroll runs the same handler synchronously until then. U
 password generation, SQL builders, validation/defaults, URL rewrite) + e2e golden path over the real Postgres
 asserting role/db/extensions exist, migrations applied at the configured embedding dimension, status active,
 password round-trip (decrypt + login as the role), and idempotent re-run. ADR-0016.
+
+**Delivered (STORY-02.5):** `Lifecycle.Move` (`internal/provision/move.go`) plus `ragctl tenant move` — a
+tenant move (connection update, FR-TEN-07, SPEC-01 §4). Move updates any subset of the
+`tenant_databases` connection record (host/port/database/username/ssl_mode, and optionally a rotated
+password) in one control-plane transaction that locks the tenant row and writes a `tenant.move` audit event
+(non-secret metadata + a `password_rotated` flag only, C-3). A supplied password is envelope-encrypted with the
+same platform Cipher the resolver decrypts with (SPEC-09 §2), so encrypt-on-write and decrypt-on-read stay
+symmetric; an all-empty move is rejected (fail closed). The write fires `tenant_changed`, so the resolver
+evicts the pool and invalidates its cached record within ~1s and the next `Open` rebuilds against the new
+connection — no new eviction code was needed: `Resolver.Close` from STORY-02.1 already fully evicts the pool
+and invalidates the registry cache. The `PATCH /admin/tenants/{id}` HTTP route (FR-TEN-07) is deferred to
+EPIC-04 (STORY-04.6) since the public router does not exist until STORY-04.1, mirroring the enroll/suspend/
+delete deferrals (ADR-0016/0017); `ragctl tenant move` is the sole entry point until then. Unit tests
+(validation: no privileged URL, blank slug, empty params, password-without-encrypter, negative port) + e2e
+golden path over the real Postgres asserting the resolver connects to the original database before the move,
+to the new database after, the rotated password round-trips (decrypt back to plaintext) and the new role logs
+in, and a `tenant.move` audit event is written. `docs/runbooks/move-tenant.md` documents the operator copy +
+repoint procedure. No ADR: reuses the STORY-02.4 lifecycle pattern and the STORY-02.1 resolver eviction path.
 
 ## EPIC-03 · Control plane services — 🔲 0/34 pts
 
@@ -215,7 +233,7 @@ password round-trip (decrypt + login as the role), and idempotent re-run. ADR-00
 
 ---
 
-_Suggested next: STORY-02.5 (tenant move / connection update) — a `PATCH /admin/tenants/{id}` that updates a
-tenant's DB connection and evicts its pool via `Resolver.Close`, plus a move-tenant runbook (FR-TEN-07). The
-resolver's pool-cache eviction and LISTEN/NOTIFY invalidation from STORY-02.1 carry straight over. Then
-STORY-02.6 (isolation test suite) closes out EPIC-02._
+_Suggested next: STORY-02.6 (isolation test suite) — a harness that enrols two tenants and exercises every
+tenant-scoped endpoint with tenant A's credentials against tenant B's IDs, asserting 404/403 and zero data
+leakage, plus a lint rule forbidding `Unsafe()` outside the allowed packages (NFR-SEC-01, SPEC-01 §9). It runs
+in CI and closes out EPIC-02._

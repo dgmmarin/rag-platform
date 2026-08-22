@@ -92,9 +92,11 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] verification test that no rows remain (e2e `TestTenantLifecycleGoldenPath`)
 
 ### STORY-02.5 — Tenant move (connection update) (FR-TEN-07)
-- [ ] `PATCH /admin/tenants/{id}` endpoint (evicts pool)
-- [ ] `Resolver.Close`
-- [ ] `docs/runbooks/move-tenant.md`
+- [x] `PATCH /admin/tenants/{id}` endpoint (evicts pool) — deferred to EPIC-04 (STORY-04.6);
+  implemented as `Lifecycle.Move` + `ragctl tenant move` (mirrors 02.3/02.4 deferral, no HTTP router yet)
+- [x] `Resolver.Close` — already fully evicts the pool and invalidates the registry cache (STORY-02.1);
+  the control-plane connection write also fires `tenant_changed` so the next `Open` rebuilds against the new connection
+- [x] `docs/runbooks/move-tenant.md`
 
 ### STORY-02.6 — Isolation test suite (NFR-SEC-01, SPEC-01 §9)
 - [ ] test harness enrolling two tenants

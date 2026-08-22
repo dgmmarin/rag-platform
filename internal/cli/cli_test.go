@@ -101,6 +101,7 @@ func TestTenantLifecycleCommandsRequireURL(t *testing.T) {
 		{"tenant", "delete", "--slug", "acme"},
 		{"tenant", "delete", "--slug", "acme", "--cancel"},
 		{"tenant", "delete", "--slug", "acme", "--run"},
+		{"tenant", "move", "--slug", "acme", "--db-host", "pg-2"},
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {

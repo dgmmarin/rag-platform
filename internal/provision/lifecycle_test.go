@@ -16,6 +16,7 @@ func TestLifecycleRequiresPrivilegedURL(t *testing.T) {
 		"ScheduleDelete": func() error { _, err := l.ScheduleDelete(context.Background(), "acme", 0); return err },
 		"CancelDelete":   func() error { _, err := l.CancelDelete(context.Background(), "acme"); return err },
 		"RunDelete":      func() error { _, err := l.RunDelete(context.Background(), "acme"); return err },
+		"Move":           func() error { _, err := l.Move(context.Background(), "acme", MoveParams{Host: "pg-2"}); return err },
 	}
 	for name, op := range ops {
 		if err := op(); err == nil {

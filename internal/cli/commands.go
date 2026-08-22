@@ -214,6 +214,7 @@ type TenantCmd struct {
 	Suspend TenantSuspendCmd `cmd:"" help:"Suspend a tenant (reads only; end-user query/ingest refused)."`
 	Resume  TenantResumeCmd  `cmd:"" help:"Resume a suspended tenant."`
 	Delete  TenantDeleteCmd  `cmd:"" help:"Schedule, cancel, or run a tenant deletion."`
+	Move    TenantMoveCmd    `cmd:"" help:"Update a tenant's database connection (tenant move)."`
 }
 
 // lifecycleForGlobals builds the Lifecycle service from resolved globals, applying
@@ -268,6 +269,58 @@ func (c *TenantResumeCmd) Run(k *kong.Context, g *Globals) error {
 		return err
 	}
 	_, werr := fmt.Fprintf(k.Stdout, "ragctl tenant resume: %q %s -> %s\n", res.Slug, res.FromStatus, res.ToStatus)
+	return werr
+}
+
+// TenantMoveCmd updates a tenant's database connection record (FR-TEN-07,
+// SPEC-01 §4). Only the flags supplied change; a new password is re-encrypted
+// with the platform DEK so it round-trips through the resolver's decrypt
+// (SPEC-09 §2). The control-plane write fires tenant_changed, so the resolver
+// evicts the pool and rebuilds against the new connection on the next Open —
+// this is the eviction the AC calls for (STORY-02.5).
+//
+// The HTTP `PATCH /admin/tenants/{id}` route in the AC is deferred to EPIC-04
+// (STORY-04.6): the public router does not exist yet (STORY-04.1). Until then
+// this command is the sole entry point, exactly as enroll/suspend/delete are for
+// their operations (ADR-0016/0017). A move only repoints the registry; the
+// operator copies the database out of band first (docs/runbooks/move-tenant.md).
+type TenantMoveCmd struct {
+	Slug       string `help:"Tenant slug." required:""`
+	DBHost     string `help:"New database host." name:"db-host"`
+	DBPort     int    `help:"New database port." name:"db-port"`
+	DBName     string `help:"New database name." name:"db-name"`
+	DBUser     string `help:"New per-tenant role/username." name:"db-user"`
+	DBSSLMode  string `help:"New sslmode (require, verify-full, disable)." name:"db-ssl-mode"`
+	DBPassword string `help:"New database password (re-encrypted before storage; prefer DB_PASSWORD env)." name:"db-password" env:"DB_PASSWORD"`
+}
+
+// Run loads the DEK (needed to seal a rotated password), builds the Lifecycle
+// with an Encrypter, and applies the connection update. It prints only non-secret
+// metadata; the password is never echoed.
+func (c *TenantMoveCmd) Run(k *kong.Context, g *Globals) error {
+	l, err := lifecycleForGlobals(g)
+	if err != nil {
+		return err
+	}
+	cipher, err := LoadStartupCipher(context.Background(), g.Secrets)
+	if err != nil {
+		return err
+	}
+	l.Encrypter = cipher
+
+	res, err := l.Move(context.Background(), c.Slug, provision.MoveParams{
+		Host:     c.DBHost,
+		Port:     c.DBPort,
+		Database: c.DBName,
+		Username: c.DBUser,
+		SSLMode:  c.DBSSLMode,
+		Password: c.DBPassword,
+	})
+	if err != nil {
+		return err
+	}
+	_, werr := fmt.Fprintf(k.Stdout,
+		"ragctl tenant move: %q connection updated (pool will rebuild on next request)\n", res.Slug)
 	return werr
 }
 
