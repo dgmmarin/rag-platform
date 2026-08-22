@@ -16,7 +16,25 @@ const (
 // ctxKey is the private context key type for the resolved session.
 type ctxKey int
 
-const sessionCtxKey ctxKey = iota
+const (
+	sessionCtxKey ctxKey = iota
+	keyIDCtxKey
+)
+
+// WithKeyID returns a context carrying the authenticated API key's id. The rate
+// limiter (STORY-03.9) reads it to key its per-key bucket off the credential
+// (FR-ACC-03), never a client parameter. It is an opaque control-plane id, not
+// tenant data (C-3).
+func WithKeyID(ctx context.Context, keyID string) context.Context {
+	return context.WithValue(ctx, keyIDCtxKey, keyID)
+}
+
+// KeyIDFromCtx returns the API key id placed by WithKeyID (set by RequireScope
+// after a Bearer key authenticates), if any.
+func KeyIDFromCtx(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(keyIDCtxKey).(string)
+	return id, ok
+}
 
 // SessionFrom returns the session resolved by RequireSession/Middleware, if any.
 func SessionFrom(ctx context.Context) (Session, bool) {

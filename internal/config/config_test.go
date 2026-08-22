@@ -88,6 +88,50 @@ func TestLoadObservabilitySettings(t *testing.T) {
 	}
 }
 
+// TestLoadRateLimitSettings proves the STORY-03.9 rate-limit knobs (SPEC-07 §1,
+// NFR-SEC-07) are read from the environment.
+func TestLoadRateLimitSettings(t *testing.T) {
+	setEnv(t, map[string]string{
+		"RATE_LIMIT_DEFAULT_QPS":  "5",
+		"RATE_LIMIT_KEY_BURST":    "2",
+		"RATE_LIMIT_TENANT_BURST": "8",
+	})
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RateLimitDefaultQPS != 5 {
+		t.Fatalf("RateLimitDefaultQPS = %d, want 5", cfg.RateLimitDefaultQPS)
+	}
+	if cfg.RateLimitKeyBurst != 2 {
+		t.Fatalf("RateLimitKeyBurst = %v, want 2", cfg.RateLimitKeyBurst)
+	}
+	if cfg.RateLimitTenantBurst != 8 {
+		t.Fatalf("RateLimitTenantBurst = %v, want 8", cfg.RateLimitTenantBurst)
+	}
+}
+
+// TestRateLimitDefaults proves sensible defaults when the knobs are unset: a qps
+// floor and burst multipliers so limiting is never accidentally disabled.
+func TestRateLimitDefaults(t *testing.T) {
+	for _, k := range []string{"RATE_LIMIT_DEFAULT_QPS", "RATE_LIMIT_KEY_BURST", "RATE_LIMIT_TENANT_BURST"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RateLimitDefaultQPS != 10 {
+		t.Fatalf("default RateLimitDefaultQPS = %d, want 10", cfg.RateLimitDefaultQPS)
+	}
+	if cfg.RateLimitKeyBurst != 1 {
+		t.Fatalf("default RateLimitKeyBurst = %v, want 1", cfg.RateLimitKeyBurst)
+	}
+	if cfg.RateLimitTenantBurst != 2 {
+		t.Fatalf("default RateLimitTenantBurst = %v, want 2", cfg.RateLimitTenantBurst)
+	}
+}
+
 func TestObservabilityDefaultsDisabled(t *testing.T) {
 	for _, k := range []string{"LOG_LEVEL", "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_INSECURE", "OTEL_TRACES_SAMPLER_RATIO"} {
 		t.Setenv(k, "")

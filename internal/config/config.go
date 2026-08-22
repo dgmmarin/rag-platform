@@ -71,6 +71,21 @@ type Config struct {
 	// OIDCJITProvisioning creates the user on first login when true; when false,
 	// only pre-existing users may sign in via OIDC.
 	OIDCJITProvisioning bool
+
+	// Rate limiting (STORY-03.9, NFR-SEC-07, SPEC-07 §1). The limiter is per API
+	// key and per tenant, using the tenant's settings.limits.qps. These knobs tune
+	// the fallback floor and the burst allowances (ADR-0026). Defaults keep
+	// limiting on even when unset.
+	//
+	// RateLimitDefaultQPS is the qps applied when a tenant's settings.limits.qps
+	// cannot be read (a floor, never "unlimited"). Default 10 (SPEC-02 §5 default).
+	RateLimitDefaultQPS int
+	// RateLimitKeyBurst is the per-API-key bucket capacity as a multiple of qps.
+	// Default 1 (burst == steady rate).
+	RateLimitKeyBurst float64
+	// RateLimitTenantBurst is the per-tenant bucket capacity as a multiple of qps;
+	// the aggregate ceiling is sized looser than a single key. Default 2.
+	RateLimitTenantBurst float64
 }
 
 // Load reads configuration, overlaying the optional config file (if filePath is
@@ -141,6 +156,32 @@ func Load(filePath string) (Config, error) {
 	cfg.OIDCClientSecret = mustGet(get, "OIDC_CLIENT_SECRET")
 	cfg.OIDCRedirectURL = mustGet(get, "OIDC_REDIRECT_URL")
 	cfg.OIDCJITProvisioning = mustGet(get, "OIDC_JIT_PROVISIONING") == "true"
+
+	// Rate limiting (STORY-03.9, SPEC-07 §1). Defaults keep limiting enabled.
+	cfg.RateLimitDefaultQPS = 10
+	if raw := mustGet(get, "RATE_LIMIT_DEFAULT_QPS"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: invalid RATE_LIMIT_DEFAULT_QPS %q: %w", raw, err)
+		}
+		cfg.RateLimitDefaultQPS = v
+	}
+	cfg.RateLimitKeyBurst = 1
+	if raw := mustGet(get, "RATE_LIMIT_KEY_BURST"); raw != "" {
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: invalid RATE_LIMIT_KEY_BURST %q: %w", raw, err)
+		}
+		cfg.RateLimitKeyBurst = v
+	}
+	cfg.RateLimitTenantBurst = 2
+	if raw := mustGet(get, "RATE_LIMIT_TENANT_BURST"); raw != "" {
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: invalid RATE_LIMIT_TENANT_BURST %q: %w", raw, err)
+		}
+		cfg.RateLimitTenantBurst = v
+	}
 
 	return cfg, nil
 }

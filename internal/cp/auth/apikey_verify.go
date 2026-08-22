@@ -169,6 +169,7 @@ func (v *APIKeyVerifier) RequireScope(scope Scope) func(http.Handler) http.Handl
 				return
 			}
 			ctx := tenant.WithTenantID(r.Context(), tenant.ID(tid))
+			ctx = WithKeyID(ctx, p.KeyID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

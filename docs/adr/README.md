@@ -24,5 +24,9 @@
 | [0020](0020-oidc-login-identity-linking-and-pkce-state.md) | OIDC login — identity-linking model, PKCE/state/nonce handling, and JIT provisioning | Accepted |
 | [0021](0021-api-key-format-and-verification.md) | API key format, scopes, and verification — `rk_<hexprefix>_<secret>`, sha256-at-rest, SQL-side revocation | Accepted |
 | [0022](0022-tenant-settings-schema-defaults-and-embedding-dim-immutability.md) | Tenant settings — embedded JSON Schema, defaults overlay, flat `embedding_dim` mirror for immutability | Accepted |
+| [0023](0023-audit-log-read-api-and-platform-admin-scope.md) | Audit log — sanctioned `audit.Record` writer, tenant-scoped read API, tenant-less `RequirePlatformAdmin` middleware | Accepted |
+| [0024](0024-usage-counters-in-memory-buffer-and-accumulating-upsert.md) | Usage counters — in-memory `usage.Counter`, 30 s accumulating-upsert flush, tenant-scoped `GET /v1/usage` | Accepted |
+| [0025](0025-platform-admin-impersonation-grants.md) | Platform admin impersonation — explicit `impersonation_sessions` grant recording real admin + impersonated user, time-bounded, revocable, audited | Accepted |
+| [0026](0026-rate-limiting-in-process-token-bucket.md) | Rate limiting — in-process token bucket per API key and per tenant, `settings.limits.qps`-driven, fail-closed `429` with `Retry-After`/`RateLimit-*` | Accepted |
 
 Template for new ADRs: `NNNN-short-title.md` with sections Status, Context, Options, Decision, Consequences. Reference requirement IDs from the SRS.

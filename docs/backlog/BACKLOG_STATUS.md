@@ -15,7 +15,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 |---|---|--:|--:|---|
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
-| EPIC-03 | Control plane services | 34 | 23 | 🚧 In progress |
+| EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
 | EPIC-04 | Public API surface | 21 | 0 | 🔲 Todo |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **78** | **23%** |
+| **Total** | | **337** | **89** | **26%** |
 
 ---
 
@@ -128,7 +128,7 @@ rule fails `mise run lint` in CI if any package outside `internal/provision`/`in
 cross-tenant endpoint matrix (A's credentials against B's IDs over every route, 404/403) plugs into this
 two-tenant fixture when EPIC-04 lands. ADR-0018; SPEC-01 §6/§9 and SPEC-09 §1 updated with the code.
 
-## EPIC-03 · Control plane services — 🚧 23/34 pts
+## EPIC-03 · Control plane services — ✅ 34/34 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -137,10 +137,10 @@ two-tenant fixture when EPIC-04 lands. ADR-0018; SPEC-01 §6/§9 and SPEC-09 §1
 | STORY-03.3 | Tenant membership and roles | 5 | ✅ Done | FR-ACC-02/06, SPEC-02 §4 |
 | STORY-03.4 | API keys | 5 | ✅ Done | FR-ACC-04/05 |
 | STORY-03.5 | Tenant settings with JSON-schema validation | 3 | ✅ Done | FR-TEN-08, SPEC-02 §5 |
-| STORY-03.6 | Audit log | 3 | 🔲 Todo | FR-ADM-05, SPEC-02 §6 |
-| STORY-03.7 | Usage counters | 3 | 🔲 Todo | FR-ADM-06, SPEC-10 §6 |
-| STORY-03.8 | Platform admin impersonation | 3 | 🔲 Todo | FR-ACC-07 |
-| STORY-03.9 | Rate limiting | 2 | 🔲 Todo | NFR-SEC-07, SPEC-07 §1 |
+| STORY-03.6 | Audit log | 3 | ✅ Done | FR-ADM-05, SPEC-02 §6 |
+| STORY-03.7 | Usage counters | 3 | ✅ Done | FR-ADM-06, SPEC-10 §6 |
+| STORY-03.8 | Platform admin impersonation | 3 | ✅ Done | FR-ACC-07 |
+| STORY-03.9 | Rate limiting | 2 | ✅ Done | NFR-SEC-07, SPEC-07 §1 |
 
 **Delivered (STORY-03.1):** `internal/cp/auth` — control-plane-only email/password auth and server-side
 sessions (FR-ACC-01, SPEC-09 §3), touching no tenant data (C-3). Passwords are hashed with argon2id
@@ -232,6 +232,109 @@ last-used throttle — and service validation via a fake DB + `httptest` middlew
 the real control-plane Postgres (create returns the secret once and it is not stored; authenticate stamps
 last-used and resolves the tenant; list shows prefix/scopes/last-used; revoke → immediately rejected and
 idempotent; expired key rejected; out-of-scope refused). Router wiring is STORY-04.1. ADR-0021.
+
+**Delivered (STORY-03.6):** the audit log subsystem — a new `internal/cp/audit` package (FR-ADM-05, SPEC-02
+§6), control-plane-only (C-3). `audit.Record` is the sanctioned append-only writer: one `insert into audit_log`
+carrying actor (user or API key), tenant, and target, defaulting nil details to `{}` and refusing an empty
+action; details hold non-secret metadata only. `Service.List` is the reader — always tenant-scoped (fails
+closed on an empty tenant so the whole log can never be fetched unscoped), newest-first by `id`, page size
+defaulting to 50 / capped at 200 with `before=<id>` keyset pagination. `Handlers.List` serves
+`GET /admin/audit?tenant=` (400 without a tenant param, malformed limit/before ignored). Because a platform
+admin reads *across* tenants (FR-ACC-07) the tenant is a query parameter, not the resolved-credential tenant,
+so the existing tenant-scoped `RequireRole` does not fit; STORY-03.6 adds a distinct tenant-less
+`AuthzService.RequirePlatformAdmin` middleware (401 no session, 403 non-admin/unknown user, else pass) that
+also gates STORY-03.8 impersonation and the platform-admin UI. No migration/schema change was needed
+(`audit_log` already exists) so the drift guard stays green, and the reader returns every row regardless of
+writer, so tenant.\* and settings.update history is already queryable. Per-action write wiring for the
+remaining SPEC-02 §6 events adopts `audit.Record` with each action's handler (member.\*/apikey.\* in
+STORY-04.1, source.\* in EPIC-04/06, job.cancel in EPIC-09, admin.impersonate in STORY-03.8), mirroring how
+tenant.\* is written at its orchestration layer; the existing direct inserts in `provision`/`tenants` converge
+onto `Record` as they are next touched (ADR-0022 anticipated this). Router wiring is STORY-04.1. Unit tests
+(Record validation/defaults/error propagation, reader tenant-required/ordering/limit-clamp, handler
+param-parsing, and the platform-admin middleware 401/403/200 matrix via `httptest`) + an e2e golden path over
+the real control-plane Postgres (a genuine settings.update writes a row; a platform admin reads it back with
+actor/tenant/target; a non-admin is 403, no session 401, and a missing tenant param 400). ADR-0023.
+
+**Delivered (STORY-03.7):** the usage accounting subsystem — a new `internal/cp/usage` package
+(FR-ADM-06, SPEC-10 §6, SPEC-02 §2), control-plane-only (C-3). `usage.Counter` is the sanctioned,
+non-blocking write surface other subsystems adopt (the usage analogue of `audit.Record`):
+`Add(tenantID, Delta{...})` merges a per-`(tenant, UTC-day)` `Delta` — queries, docs ingested, chunks
+embedded, embed tokens, LLM in/out tokens, the six `usage_daily` columns — under a mutex with no I/O, so
+it is safe on a request/job hot path. `Counter.Run` flushes every 30 s (SPEC-10 §6) and drains once more on
+shutdown so the last window is not lost; each `(tenant, day)` bucket is written with one **accumulating**
+upsert (`insert ... on conflict (tenant_id, day) do update set col = usage_daily.col + excluded.col`), so
+repeated flushes — and multiple API/worker replicas each with their own counter — sum rather than overwrite
+(a pinned-SQL unit test asserts every column accumulates). A failed flush merges the un-flushed buckets back
+into the buffer and retries on the next tick, so counts are at-least-once within a process lifetime; an
+empty tenant or zero delta is dropped (fail closed), never written to a blank row. `Service.List` is the
+tenant-scoped reader (fails closed on an empty tenant, defaults a range-less read to the last 30 days,
+rejects an inverted range), and `Handlers.List` serves `GET /v1/usage?from&to` (SPEC-07) taking the tenant
+from the resolved context (FR-ACC-03, never a parameter; 401 if unresolved, 400 on a malformed/inverted
+range), mirroring the settings handlers. No migration/schema change was needed (`usage_daily` already
+matches SPEC-02 §2) so the drift guard stays green. Per-producer wiring (queries in EPIC-08 retrieval,
+docs/chunks/embed tokens in EPIC-05 ingestion, LLM tokens in EPIC-08 answering) adopts `Counter.Add` with
+each producer, and the process-lifetime `Run` is wired into `ragctl serve`/`work` in EPIC-04/09 — mirroring
+how audit deferred its per-action write wiring. Router wiring is STORY-04.1. Unit tests (delta merge per
+tenant/day, day truncation, zero/empty-tenant drop, flush clears buffer / error retains counts, concurrent
+adds counted exactly once, the accumulating-upsert SQL contract, reader tenant-required/ordering/range
+defaulting, handler tenant-from-context / date parsing / 401 / 400, and the periodic-flush-then-final-drain
+loop) + an e2e golden path over the real control-plane Postgres (two flush cycles accumulate on one
+`usage_daily` row, `GET /v1/usage` returns the resolved tenant's rows, no-tenant refused 401). ADR-0024.
+
+**Delivered (STORY-03.8):** platform-admin impersonation in the `internal/cp/auth` package (FR-ACC-07,
+SPEC-02 §4/§6, SPEC-09 §3), control-plane-only (C-3). An impersonation is an explicit, audited **grant**,
+never a silent identity swap: `ImpersonationService.Start` writes an `impersonation_sessions` row recording
+BOTH the real admin actor (`admin_user_id`) AND the impersonated principal (`tenant_id` +
+`impersonated_user_id`), so every action taken under it stays attributable back to the admin (the whole point
+of FR-ACC-07's "audit-logged" clause). The grant is time-bounded (`expires_at`, a 1 h default) and revocable
+(`End` stamps `ended_at`); `Impersonation.Active(now)` is the single fail-closed predicate — an ended or
+expired grant is inactive — and missing arguments / unknown ids are refused (`ErrNoImpersonation` → 404).
+Only platform admins may start it: the `Start`/`End` handlers assume `RequireSession` +
+`RequirePlatformAdmin` (the tenant-less middleware STORY-03.6 introduced, reused not reinvented) and read the
+acting admin from the **session**, never a body field (FR-ACC-03), so a caller cannot forge the actor. Start
+writes an `admin.impersonate` audit event and End an `admin.impersonate.end` companion, both through the
+sanctioned `audit.Record` writer via an injected `AuditFunc` seam, carrying actor = the real admin, target =
+the impersonated user, tenant = the impersonated tenant, and `details.impersonation=true` (SPEC-02 §4) with
+non-secret ids only (C-3). New schema via goose control migration `00006_impersonation_sessions.sql`,
+mirrored into `schemas/control_plane.sql` so the drift guard stays green. Request-time application of a live
+grant (treating a request as the impersonated user, the UI banner) rides the same `RequirePlatformAdmin` gate
+in STORY-04.1/EPIC-11; this story delivers the grant + audit primitive. Router wiring is STORY-04.1. Unit
+tests (Start argument validation / grant carries both identities / time bound / audit event, End
+stamps+audits / unknown-grant fails closed, the `Active` expiry+ended matrix, and handler branches — session
+admin used not the body, 401/400/404/204 — via fakes + `httptest`) + an e2e golden path over the real
+control-plane Postgres (a non-admin refused 403 with no grant written, an admin's grant carrying both
+identities and persisted, an `admin.impersonate` row attributed to the admin with `details.impersonation`,
+and End stamping the grant + writing `admin.impersonate.end`). ADR-0025.
+
+**Delivered (STORY-03.9):** rate limiting — a new `internal/cp/ratelimit` package (NFR-SEC-07, SPEC-07 §1),
+control-plane-only (C-3). The SPEC-07 §1 shape is realised as a token bucket **per API key and per tenant**,
+both steady-rate at the tenant's `settings.limits.qps`: `bucket` is a lazily-refilled token bucket (refilled
+on demand from elapsed time against an **injected clock** — no per-bucket goroutine, deterministic tests with
+no real sleeps), `Limiter` holds one bucket per `key:<id>`/`tenant:<id>` in a mutexed map and sweeps idle
+buckets (`Run`/`idleTTL`, 10 min) so memory does not grow with ever-seen keys (a re-created bucket starts full,
+so eviction only reclaims memory, never tightens a limit). `Middleware.Handler` requires a request to pass
+**both** buckets — the per-tenant bucket is the aggregate ceiling (looser burst, `RATE_LIMIT_TENANT_BURST`
+default 2×) and the per-key bucket caps a single credential (`RATE_LIMIT_KEY_BURST` default 1×), which is what
+makes per-key isolation observable rather than the tenant bucket always biting first (ADR-0026). The limit key
+is derived from the resolved tenant + authenticated key id in context (FR-ACC-03, never a client parameter):
+`auth.RequireScope` now also injects the key id (`auth.WithKeyID`/`KeyIDFromCtx`); a session request carries no
+key and is limited by the tenant bucket only. On refusal the middleware sets `Retry-After` (whole seconds,
+rounded up) plus `RateLimit-Limit`/`RateLimit-Remaining`/`RateLimit-Reset`, writes the SPEC-07 §1 error envelope
+(`rate_limited`), and never reaches the inner handler. **Fail closed:** a settings-lookup error → 429 (limiting
+is never silently disabled by a backing-store hiccup), a missing/malformed qps → a configured floor
+(`RATE_LIMIT_DEFAULT_QPS`, default 10 = the SPEC-02 §5 default), a request with no resolved tenant → 401. The
+"metrics" AC is an optional `prometheus.Counter` (`Rejected`) incremented on each 429 (a nil counter is safe).
+No migration/schema change was needed (the limit is read from the existing `tenants.settings.limits.qps`,
+SPEC-02 §5), so the drift guard stays green. The store is **in-process** (the spec does not require a shared one):
+each replica keeps its own buckets, so the effective ceiling scales with replica count — accepted for
+abuse-protection limiting and documented in ADR-0026 as the single seam to swap for a distributed store if a
+hard global cap is ever required. Router wiring is STORY-04.1, which mounts this middleware into the chain
+(mirroring how the other 03.x middleware defer wiring). Unit tests (bucket burst/refill/cap, per-key/per-tenant
+isolation + ceiling, 429 headers, session-no-key, no-tenant/lookup-error fail-closed, settings qps extraction
+incl. float decode + default fallback, metric increment, eviction loop; config knobs + defaults) + an e2e
+golden path over the real control-plane Postgres driving the real `RequireScope` → rate-limit chain (a request
+over the per-key limit → 429 with `Retry-After`/`RateLimit-*`, and a second key of the same tenant unaffected —
+per-key isolation). ADR-0026.
 
 ## EPIC-04 · Public API surface — 🔲 0/21 pts
 
@@ -340,7 +443,8 @@ idempotent; expired key rejected; out-of-scope refused). Router wiring is STORY-
 
 ---
 
-_Suggested next: STORY-03.5 (Tenant settings with JSON-schema validation) — `GET/PATCH /v1/settings`, invalid
-documents rejected with field errors, `embedding.dim` immutable, and the change audited (FR-TEN-08, SPEC-02 §5).
-It builds on the `internal/cp/auth` control-plane services and the `tenants.settings` JSONB column; mounting the
-resulting handlers on the public router remains STORY-04.1 (EPIC-04)._
+_EPIC-03 (Control plane services) is now complete: all nine stories are delivered with unit + e2e tests and
+the router wiring uniformly deferred to STORY-04.1. Suggested next: STORY-04.1 (HTTP server, routing,
+middleware chain — SPEC-07 §1), which stands up the public router and mounts the accumulated EPIC-03
+middleware in order (request ID, auth/tenant resolution, rate limit, logging, recovery, CORS) plus every 03.x
+handler that has been built and unit/e2e-tested behind it._
