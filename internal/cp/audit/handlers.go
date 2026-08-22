@@ -55,6 +55,25 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func writeError(w http.ResponseWriter, code int, msg string) {
-	writeJSON(w, code, map[string]string{"error": msg})
+// writeError writes the SPEC-07 §1 error envelope so the router-mounted audit
+// handler speaks the one public error contract (ADR-0027).
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]any{
+		"error": map[string]string{"code": errorCodeForStatus(status), "message": msg},
+	})
+}
+
+func errorCodeForStatus(status int) string {
+	switch status {
+	case http.StatusUnauthorized:
+		return "unauthorized"
+	case http.StatusForbidden:
+		return "forbidden"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusBadRequest:
+		return "validation"
+	default:
+		return "internal"
+	}
 }

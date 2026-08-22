@@ -28,5 +28,6 @@
 | [0024](0024-usage-counters-in-memory-buffer-and-accumulating-upsert.md) | Usage counters — in-memory `usage.Counter`, 30 s accumulating-upsert flush, tenant-scoped `GET /v1/usage` | Accepted |
 | [0025](0025-platform-admin-impersonation-grants.md) | Platform admin impersonation — explicit `impersonation_sessions` grant recording real admin + impersonated user, time-bounded, revocable, audited | Accepted |
 | [0026](0026-rate-limiting-in-process-token-bucket.md) | Rate limiting — in-process token bucket per API key and per tenant, `settings.limits.qps`-driven, fail-closed `429` with `Retry-After`/`RateLimit-*` | Accepted |
+| [0027](0027-public-router-composition-and-error-envelope.md) | Public router — dependency-injected `internal/api` package, credential-keyed rate-limiter-after-auth chain, and one SPEC-07 §1 error envelope across router-mounted middleware/handlers | Accepted |
 
 Template for new ADRs: `NNNN-short-title.md` with sections Status, Context, Options, Decision, Consequences. Reference requirement IDs from the SRS.

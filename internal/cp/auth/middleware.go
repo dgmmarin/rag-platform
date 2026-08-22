@@ -206,8 +206,34 @@ func (h *Handlers) clearCookie() *http.Cookie {
 	}
 }
 
-func writeError(w http.ResponseWriter, code int, msg string) {
+// writeError writes the SPEC-07 §1 error envelope
+// ({"error":{"code","message"}}) with a status-derived code, so every
+// router-mounted auth middleware/handler speaks the one public error contract
+// (ADR-0027). The code vocabulary mirrors SPEC-07 §1.
+func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]string{"code": errorCodeForStatus(status), "message": msg},
+	})
+}
+
+// errorCodeForStatus maps an HTTP status to the SPEC-07 §1 error-code vocabulary.
+func errorCodeForStatus(status int) string {
+	switch status {
+	case http.StatusUnauthorized:
+		return "unauthorized"
+	case http.StatusForbidden:
+		return "forbidden"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusBadRequest:
+		return "validation"
+	case http.StatusConflict:
+		return "conflict"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	default:
+		return "internal"
+	}
 }

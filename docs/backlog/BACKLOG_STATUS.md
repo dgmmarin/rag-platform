@@ -16,7 +16,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
-| EPIC-04 | Public API surface | 21 | 0 | 🔲 Todo |
+| EPIC-04 | Public API surface | 21 | 5 | 🚧 In progress |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **89** | **26%** |
+| **Total** | | **337** | **94** | **28%** |
 
 ---
 
@@ -336,16 +336,46 @@ golden path over the real control-plane Postgres driving the real `RequireScope`
 over the per-key limit → 429 with `Retry-After`/`RateLimit-*`, and a second key of the same tenant unaffected —
 per-key isolation). ADR-0026.
 
-## EPIC-04 · Public API surface — 🔲 0/21 pts
+## EPIC-04 · Public API surface — 🚧 5/21 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
-| STORY-04.1 | HTTP server, routing, middleware chain | 5 | 🔲 Todo | SPEC-07 §1 |
+| STORY-04.1 | HTTP server, routing, middleware chain | 5 | ✅ Done | SPEC-07 §1, ADR-0027 |
 | STORY-04.2 | OpenAPI generation and contract tests | 5 | 🔲 Todo | SPEC-07 §3 |
 | STORY-04.3 | Sources endpoints | 3 | 🔲 Todo | FR-SRC-01/14 |
 | STORY-04.4 | Documents endpoints | 3 | 🔲 Todo | FR-SRC-02, FR-ADM-03 |
 | STORY-04.5 | Jobs endpoints | 2 | 🔲 Todo | FR-ADM-02 |
 | STORY-04.6 | Admin tenant endpoints | 3 | 🔲 Todo | FR-TEN-01/05/07 |
+
+**Delivered (STORY-04.1):** the public HTTP server — a new dependency-injected `internal/api` package plus its
+wiring in `internal/cli` (SPEC-07 §1, ADR-0027). `api.New(Deps)` assembles a Go 1.22 `net/http.ServeMux` (no
+new dependency): the operational endpoints open and unauthenticated (`GET /healthz`, `GET /readyz` with the
+control-plane ping probe, `GET /metrics`), the open auth routes (signup/login/logout, oidc start/callback), the
+platform-admin surface (`GET /admin/audit`, `POST`/`DELETE /admin/impersonations[/{id}]`) behind
+`RequireSession → RequirePlatformAdmin` with CSRF on the mutations, and the per-tenant surface (`GET /v1/usage`)
+behind `RequireScopeAdmin → RateLimit`. Middleware and handlers are injected as values so the whole chain is
+unit-testable with stubs and the single control-plane pool (never a tenant pool — C-3) is opened once in
+`cli.buildAPIServer`; a nil middleware is a pass-through and a nil handler is a not-implemented seam returning the
+`not_found` envelope, so a partially-wired server boots and fails closed. The global chain is, outer → inner,
+`obs.Middleware (request-id/logging/tracing/metrics) → Recover → CORS → [route]`: `obs.Middleware` is outermost so
+`X-Request-Id` stamps every response for log correlation, `Recover` turns any downstream panic into a `500`
+envelope (logged server-side with the request id, never leaking the panic value/stack). The credential-keyed rate
+limiter runs *inside* per-route auth (a deliberate, intent-preserving divergence from SPEC-07 §1's abstract "rate
+limit → auth", documented in ADR-0027) because the STORY-03.9 bucket keys off the resolved credential + tenant
+(FR-ACC-03). Every router-mounted middleware/handler was converged onto the one SPEC-07 §1 object envelope
+`{"error":{"code","message"}}` (fixing an anon `/admin/audit` bare-string body an e2e caught). `ragctl serve` is
+the sole entrypoint (ADR-0009): it builds the router, starts the rate-limiter idle sweep and the usage-counter
+flush loop on the signal-cancelled context, and shuts the HTTP server down gracefully. Sources/documents/jobs/
+settings/members/api-keys and the admin-tenant routes are intentionally unregistered **seams** (not stubs) that
+04.3–04.6 slot into; session-based `/v1` tenant resolution is likewise deferred (the only mounted tenant-scoped
+route derives its tenant from the API key, so no resolver is on the hot path). Unit tests (envelope shape +
+request id, `chain` order, `Recover` panic→500 and pass-through, healthz/readyz open, login reaches its handler,
+audit guarded by platform-admin with 403 + envelope, the usage `scope → rate-limit → handler` order, over-limit
+`429`, unauthenticated `401`, unknown route `404` envelope, seam groups `404`) + an e2e golden path over the real
+control-plane Postgres (`test/e2e/api_router_e2e_test.go`: the assembled router over a real listener — healthz/
+readyz open, anon `/admin/audit` `401` object envelope with `X-Request-Id`, seed a real `settings.update` row,
+login through the mounted route, platform admin reads the audit log through the full chain, non-admin `403`). No
+migration/schema change (this story only wires existing services) so the drift guard stays green. ADR-0027.
 
 ## EPIC-05 · Ingestion pipeline — 🔲 0/42 pts
 
@@ -443,8 +473,9 @@ per-key isolation). ADR-0026.
 
 ---
 
-_EPIC-03 (Control plane services) is now complete: all nine stories are delivered with unit + e2e tests and
-the router wiring uniformly deferred to STORY-04.1. Suggested next: STORY-04.1 (HTTP server, routing,
-middleware chain — SPEC-07 §1), which stands up the public router and mounts the accumulated EPIC-03
-middleware in order (request ID, auth/tenant resolution, rate limit, logging, recovery, CORS) plus every 03.x
-handler that has been built and unit/e2e-tested behind it._
+_EPIC-04 (Public API surface) is now under way: STORY-04.1 stands up the public router and mounts the accumulated
+EPIC-03 middleware in the SPEC-07 §1 order (request ID/logging → recovery → CORS globally, with auth →
+credential-keyed rate limit per route) plus every 03.x handler built behind it — the router-wiring seam every
+EPIC-02/03 story deferred to. Suggested next: STORY-04.2 (OpenAPI generation and contract tests — SPEC-07 §3),
+then the resource endpoints (04.3 sources, 04.4 documents, 04.5 jobs, 04.6 admin tenants) that slot into the
+`not_found` route seams STORY-04.1 left in place._

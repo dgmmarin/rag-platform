@@ -83,7 +83,11 @@ func TestServeObservabilityGoldenPath(t *testing.T) {
 		"DEK_WRAPPED_PATH="+blob,
 		"DEK_KEY_VERSION=1",
 		"LOG_LEVEL=info",
-		// No OTLP endpoint: tracing is disabled, nothing external required.
+		// serve mounts the SPEC-07 §1 control-plane router (STORY-04.1), which needs
+		// a control-plane pool; point it at the running local stack. The observability
+		// assertions below still hold — the router carries the obs middleware and the
+		// health/readiness/metrics endpoints. No OTLP endpoint: tracing stays disabled.
+		"CONTROL_PLANE_URL="+controlPlaneURL(),
 	)
 	logs := &captureWriter{}
 	cmd.Stdout = logs

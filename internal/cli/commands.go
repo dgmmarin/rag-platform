@@ -25,24 +25,36 @@ func stub(w io.Writer, format string, args ...any) error {
 
 // ServeCmd starts the HTTP API (SPEC-02 §7: `ragctl serve --addr :8080`).
 type ServeCmd struct {
-	Addr string `help:"Listen address for the HTTP API." env:"RAGCTL_ADDR" default:":8080"`
+	Addr          string `help:"Listen address for the HTTP API." env:"RAGCTL_ADDR" default:":8080"`
+	SecureCookies bool   `help:"Set the Secure attribute on session/CSRF cookies (production over TLS)." env:"RAGCTL_SECURE_COOKIES"`
 }
 
-// Run loads the data-encryption key at startup and fails closed if it is
-// missing or cannot be unwrapped (STORY-01.4, SPEC-09 §2), then starts the
-// scaffolding HTTP server: /healthz, /readyz and /metrics behind the obs
-// middleware, with the OTel tracer configured by env (STORY-01.6, SPEC-10). It
-// blocks until SIGINT/SIGTERM triggers a graceful shutdown. STORY-04.1 replaces
-// the minimal server with the full router/middleware chain.
+// Run loads the data-encryption key at startup and fails closed if it is missing
+// or cannot be unwrapped (STORY-01.4, SPEC-09 §2), then builds and serves the
+// SPEC-07 §1 public router: the request-id/logging/recovery/CORS chain, the
+// health/readiness/metrics endpoints, the open auth routes, the platform-admin
+// surface (audit read, impersonation) behind RequireSession + RequirePlatformAdmin,
+// and the per-tenant surface (usage) behind API-key scope + rate limiting. The
+// rate-limiter idle sweep and the usage-counter flush loop run for the process
+// lifetime. It blocks until SIGINT/SIGTERM triggers a graceful shutdown
+// (STORY-04.1).
 //
 // Structured logs go to stderr so they never intermix with a command's stdout
-// output. The DEK the cipher holds will encrypt/decrypt tenant secrets the
-// server later handles.
+// output. The DEK the cipher holds encrypts/decrypts tenant secrets the server
+// handles.
 func (c *ServeCmd) Run(k *kong.Context, g *Globals) error {
-	if _, err := LoadStartupCipher(context.Background(), g.Secrets); err != nil {
+	cipher, err := LoadStartupCipher(context.Background(), g.Secrets)
+	if err != nil {
 		return err
 	}
-	return runServer(context.Background(), c.Addr, g.Obs, k.Stderr)
+	return runAPIServer(context.Background(), serveConfig{
+		Addr:       c.Addr,
+		Obs:        g.Obs,
+		Cfg:        g.Config,
+		ControlURL: g.ControlPlaneURL,
+		Cipher:     cipher,
+		Secure:     c.SecureCookies,
+	}, k.Stderr)
 }
 
 // WorkCmd starts the job worker (SPEC-02 §7:

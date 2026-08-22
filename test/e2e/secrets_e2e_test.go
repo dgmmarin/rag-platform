@@ -106,6 +106,10 @@ func TestServeStartsWithValidLocalDEK(t *testing.T) {
 		"AGE_SECRET_KEY="+ageKey,
 		"DEK_WRAPPED_PATH="+blob,
 		"DEK_KEY_VERSION=1",
+		// serve mounts the SPEC-07 §1 control-plane router (STORY-04.1), which needs a
+		// control-plane pool; point it at the running local stack so serve starts. This
+		// test still asserts DEK loading + graceful serve + no secret leak.
+		"CONTROL_PLANE_URL="+controlPlaneURL(),
 	)
 	var out bytes.Buffer
 	cmd.Stdout = &out

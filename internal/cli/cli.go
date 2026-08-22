@@ -104,6 +104,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		TenantDBSSLMode: cfg.TenantDBSSLMode,
 		Secrets:         startupSecretsFromConfig(cfg),
 		Obs:             obs,
+		Config:          cfg,
 	})
 }
 
@@ -128,4 +129,8 @@ type Globals struct {
 	// Obs carries the resolved observability settings (log level, tracing) for
 	// long-running commands that serve traffic (STORY-01.6, SPEC-10).
 	Obs ObsSettings
+	// Config is the fully resolved platform configuration. `serve` (STORY-04.1)
+	// reads OIDC and rate-limit settings from it to build the public router; other
+	// commands continue to use the flat fields above.
+	Config config.Config
 }
