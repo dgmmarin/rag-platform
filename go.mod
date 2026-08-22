@@ -7,6 +7,8 @@ require (
 	github.com/alecthomas/kong v1.16.1
 	github.com/aws/aws-sdk-go-v2/config v1.29.14
 	github.com/aws/aws-sdk-go-v2/service/kms v1.38.3
+	github.com/coreos/go-oidc/v3 v3.11.0
+	github.com/go-jose/go-jose/v4 v4.0.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/pressly/goose/v3 v3.24.1
@@ -14,6 +16,7 @@ require (
 	go.opentelemetry.io/otel v1.31.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.31.0
 	go.opentelemetry.io/otel/sdk v1.31.0
+	golang.org/x/oauth2 v0.24.0
 )
 
 require (

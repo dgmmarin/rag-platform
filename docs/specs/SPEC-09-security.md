@@ -30,7 +30,23 @@ timeout; logout sets `revoked_at`. The cookie is HttpOnly + SameSite=Lax (Secure
 CSRF is a double-submit token minted per session (`sessions.csrf_token`) and required on mutating
 methods. The breach-list check is a follow-up (a length floor is enforced now). The HTTP handlers
 and middleware are unit-tested with `net/http/httptest`; mounting them on the public router is
-STORY-04.1. OIDC (PKCE, nonce, issuer allowlist) is STORY-03.2.
+STORY-04.1.
+
+OIDC login (STORY-03.2, FR-ACC-01, ADR-0020) is implemented in the same `internal/cp/auth`
+package. A configurable provider (`OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET`/
+`OIDC_REDIRECT_URL` via `internal/config`) drives the authorization-code + PKCE flow: `AuthCodeURL`
+mints a per-attempt state, nonce, and PKCE verifier and returns the provider URL carrying the S256
+code challenge; `Callback` compares `state` in constant time before any token exchange, verifies the
+id_token (signature via JWKS, issuer, audience, expiry, and nonce) using `github.com/coreos/go-oidc/v3`
++ `golang.org/x/oauth2`, and refuses an unverified email. The single configured issuer is the
+per-deployment allowlist (the verifier rejects any other `iss`). On success it mints a session through
+the SAME session store as password login (no fork). External identities are linked in a
+`user_identities` table keyed by `(issuer, subject)`; resolution order is existing-identity →
+existing-user-by-verified-email (account linking) → JIT create (when `OIDC_JIT_PROVISIONING=true`,
+otherwise refuse). JIT users are password-less. The client secret and all tokens are never logged.
+The per-attempt state/nonce/verifier travel in a short-lived HttpOnly cookie between the start and
+callback handlers; those handlers are unit-tested with `httptest` and mounted on the public router in
+STORY-04.1.
 
 ## 4. Crawler safety (SSRF)
 - Resolve DNS, reject RFC 1918, loopback, link-local, metadata IPs (169.254.169.254), and re-validate on each redirect hop.

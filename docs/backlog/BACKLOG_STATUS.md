@@ -15,7 +15,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 |---|---|--:|--:|---|
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
-| EPIC-03 | Control plane services | 34 | 5 | 🚧 In progress |
+| EPIC-03 | Control plane services | 34 | 10 | 🚧 In progress |
 | EPIC-04 | Public API surface | 21 | 0 | 🔲 Todo |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **60** | **18%** |
+| **Total** | | **337** | **65** | **19%** |
 
 ---
 
@@ -128,12 +128,12 @@ rule fails `mise run lint` in CI if any package outside `internal/provision`/`in
 cross-tenant endpoint matrix (A's credentials against B's IDs over every route, 404/403) plugs into this
 two-tenant fixture when EPIC-04 lands. ADR-0018; SPEC-01 §6/§9 and SPEC-09 §1 updated with the code.
 
-## EPIC-03 · Control plane services — 🚧 5/34 pts
+## EPIC-03 · Control plane services — 🚧 10/34 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-03.1 | User accounts and sessions | 5 | ✅ Done | FR-ACC-01, SPEC-09 §3 |
-| STORY-03.2 | OIDC login | 5 | 🔲 Todo | FR-ACC-01 |
+| STORY-03.2 | OIDC login | 5 | ✅ Done | FR-ACC-01 |
 | STORY-03.3 | Tenant membership and roles | 5 | 🔲 Todo | FR-ACC-02/06, SPEC-02 §4 |
 | STORY-03.4 | API keys | 5 | 🔲 Todo | FR-ACC-04/05 |
 | STORY-03.5 | Tenant settings with JSON-schema validation | 3 | 🔲 Todo | FR-TEN-08, SPEC-02 §5 |
@@ -162,6 +162,29 @@ green. Unit tests (argon2id round-trip/salt uniqueness, token hashing/CSRF match
 branch logic via a fake DB, middleware cookie/CSRF flows) + e2e golden path over the real control-plane
 Postgres (signup → login → session lookup → logout, proving the stored hash is argon2id and the token is
 stored as its sha256) and the lockout-after-10-failures path. ADR-0019.
+
+**Delivered (STORY-03.2):** OIDC login in the same `internal/cp/auth` package (FR-ACC-01, SPEC-02 §3,
+SPEC-09 §3), control-plane-only (C-3). A configurable provider (`OIDC_ISSUER`/`OIDC_CLIENT_ID`/
+`OIDC_CLIENT_SECRET`/`OIDC_REDIRECT_URL`/`OIDC_JIT_PROVISIONING` via `internal/config`) drives the
+authorization-code + PKCE flow: `AuthCodeURL` mints a per-attempt state, nonce, and PKCE verifier and
+returns the provider URL with the S256 challenge; `Callback` compares `state` in constant time *before*
+any token exchange, then verifies the id_token (signature via JWKS, issuer, audience, expiry, nonce) with
+`github.com/coreos/go-oidc/v3` + `golang.org/x/oauth2` (the only file touching those libraries is
+`oidc_provider.go`, behind `Exchanger`/`Verifier` interfaces, so the flow logic is stubbable — NFR-MNT-01).
+Link/JIT act only on a provider-`email_verified` claim: an unverified email is refused. Resolution order is
+existing `(issuer, subject)` identity → existing user by verified email (linked into a new `user_identities`
+row) → JIT create when enabled, else refuse. JIT users are password-less (`password_hash` null), reachable
+only via OIDC. On success a session is minted through the SAME store as password login (no fork), setting
+the identical session cookie + CSRF response. New schema via goose control migration
+`00005_oidc_identities.sql` (a `user_identities` table keyed by `(issuer, subject)` and a
+`users.email_verified` column), mirrored into `schemas/control_plane.sql` so the drift guard stays green.
+`OIDCHandlers` (Start/Callback) are real `http.Handler`s carrying the per-attempt state in a short-lived
+HttpOnly cookie, unit-tested with `httptest`; router wiring is STORY-04.1. Unit tests (AuthCodeURL
+PKCE/state/nonce, callback state/nonce/verified-email/JIT/link branches via a fake DB, the go-oidc
+provider verifying a signed id_token and rejecting a bad nonce against a stub IdP, config, handlers) + e2e
+golden path over the real control-plane Postgres with an in-process stub IdP (JIT creation on first login,
+link-by-verified-email on a subsequent login with no duplicate user, and state/nonce mismatch rejected
+without minting a session). ADR-0020.
 
 ## EPIC-04 · Public API surface — 🔲 0/21 pts
 
@@ -270,7 +293,8 @@ stored as its sha256) and the lockout-after-10-failures path. ADR-0019.
 
 ---
 
-_Suggested next: STORY-03.2 (OIDC login) — the second control-plane auth story (FR-ACC-01): OIDC with PKCE,
-nonce and a per-deployment issuer allowlist (SPEC-09 §3), layered onto the `internal/cp/auth` service and
-`sessions` table STORY-03.1 delivered. EPIC-02 is complete and the password/session foundation is in place;
-mounting the auth handlers on the public router remains STORY-04.1 (EPIC-04)._
+_Suggested next: STORY-03.3 (Tenant membership and roles) — members CRUD and the role matrix
+(owner/admin/editor/viewer) enforced by middleware on every route, with the "owner cannot remove the last
+owner" invariant and per-role × route tests (FR-ACC-02/06, SPEC-02 §4). It builds directly on the
+`internal/cp/auth` users/sessions and OIDC identities now in place; mounting the auth and membership
+handlers on the public router remains STORY-04.1 (EPIC-04)._

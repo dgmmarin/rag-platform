@@ -178,6 +178,55 @@ func TestLoadProvisioningConfig(t *testing.T) {
 	}
 }
 
+// TestLoadOIDCConfig proves the OIDC provider settings (STORY-03.2, FR-ACC-01,
+// SPEC-09 §3) are read from the environment, including the JIT-provisioning flag.
+func TestLoadOIDCConfig(t *testing.T) {
+	setEnv(t, map[string]string{
+		"OIDC_ISSUER":           "https://idp.example.com",
+		"OIDC_CLIENT_ID":        "rag-admin",
+		"OIDC_CLIENT_SECRET":    "s3cr3t",
+		"OIDC_REDIRECT_URL":     "https://app.example.com/auth/oidc/callback",
+		"OIDC_JIT_PROVISIONING": "true",
+	})
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.OIDCIssuer != "https://idp.example.com" {
+		t.Fatalf("OIDCIssuer = %q", cfg.OIDCIssuer)
+	}
+	if cfg.OIDCClientID != "rag-admin" {
+		t.Fatalf("OIDCClientID = %q", cfg.OIDCClientID)
+	}
+	if cfg.OIDCClientSecret != "s3cr3t" {
+		t.Fatalf("OIDCClientSecret = %q", cfg.OIDCClientSecret)
+	}
+	if cfg.OIDCRedirectURL != "https://app.example.com/auth/oidc/callback" {
+		t.Fatalf("OIDCRedirectURL = %q", cfg.OIDCRedirectURL)
+	}
+	if !cfg.OIDCJITProvisioning {
+		t.Fatal("OIDCJITProvisioning should be true")
+	}
+}
+
+// TestOIDCDefaultsDisabled proves OIDC is off (empty issuer) and JIT defaults to
+// false when nothing is configured, so a deployment without OIDC needs no env.
+func TestOIDCDefaultsDisabled(t *testing.T) {
+	for _, k := range []string{"OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_REDIRECT_URL", "OIDC_JIT_PROVISIONING"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.OIDCIssuer != "" {
+		t.Fatalf("OIDCIssuer should default empty (OIDC disabled), got %q", cfg.OIDCIssuer)
+	}
+	if cfg.OIDCJITProvisioning {
+		t.Fatal("OIDCJITProvisioning should default false")
+	}
+}
+
 // TestBadTenantDBPortIsError proves a non-numeric TENANT_DB_PORT fails loudly.
 func TestBadTenantDBPortIsError(t *testing.T) {
 	t.Setenv("TENANT_DB_PORT", "not-a-port")

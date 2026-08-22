@@ -60,6 +60,17 @@ type Config struct {
 	// TraceSamplerRatio is the parent-based ratio sampler fraction (0..1) applied
 	// when an endpoint is configured; <=0 falls back to always-sample.
 	TraceSamplerRatio float64
+
+	// OIDC login (STORY-03.2, FR-ACC-01, SPEC-09 §3). An empty OIDCIssuer leaves
+	// OIDC disabled, so a deployment that only uses email/password needs none of
+	// these. OIDCClientSecret is confidential and never logged.
+	OIDCIssuer       string
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCRedirectURL  string
+	// OIDCJITProvisioning creates the user on first login when true; when false,
+	// only pre-existing users may sign in via OIDC.
+	OIDCJITProvisioning bool
 }
 
 // Load reads configuration, overlaying the optional config file (if filePath is
@@ -123,6 +134,13 @@ func Load(filePath string) (Config, error) {
 		}
 		cfg.TraceSamplerRatio = v
 	}
+
+	// OIDC login (STORY-03.2, SPEC-09 §3). Empty issuer leaves OIDC disabled.
+	cfg.OIDCIssuer = mustGet(get, "OIDC_ISSUER")
+	cfg.OIDCClientID = mustGet(get, "OIDC_CLIENT_ID")
+	cfg.OIDCClientSecret = mustGet(get, "OIDC_CLIENT_SECRET")
+	cfg.OIDCRedirectURL = mustGet(get, "OIDC_REDIRECT_URL")
+	cfg.OIDCJITProvisioning = mustGet(get, "OIDC_JIT_PROVISIONING") == "true"
 
 	return cfg, nil
 }

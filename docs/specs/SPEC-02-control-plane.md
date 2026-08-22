@@ -93,7 +93,7 @@ erDiagram
 ## 3. Authentication
 - Session auth for the admin UI: cookie with server-side session (Postgres table or Redis), CSRF token.
 - API key auth: `Authorization: Bearer rk_<prefix>_<secret>`. Lookup by prefix, constant-time compare of sha256. Key row yields tenant ID and scopes.
-- OIDC: standard code flow; `users.external_id` = issuer subject. JIT user creation configurable.
+- OIDC: authorization-code + PKCE flow with state and nonce validation (STORY-03.2, ADR-0020). External identities are stored in a `user_identities` table keyed by `(issuer, subject)` (a user may hold several); `users.external_id` is retained as an informational copy of the most-recent subject. JIT user creation is configurable (`OIDC_JIT_PROVISIONING`); an existing user is linked to a new identity when the provider's `email_verified` claim matches its email. On success a session is minted through the same store as password login.
 
 ## 4. Authorisation
 Role matrix (tenant scope):

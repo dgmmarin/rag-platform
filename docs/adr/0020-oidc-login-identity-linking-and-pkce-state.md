@@ -1,0 +1,30 @@
+# ADR-0020: OIDC login — identity-linking model, PKCE/state/nonce handling, and JIT provisioning
+
+**Status:** Accepted · **Date:** 2026-08-22 · **Requirements:** FR-ACC-01, SPEC-02 §3, SPEC-09 §3, C-3 · **Decisions build on:** ADR-0019
+
+## Context
+STORY-03.2 adds OIDC login alongside the STORY-03.1 email/password flow (FR-ACC-01): a configurable provider, the authorization-code + PKCE flow with state and nonce validation, a just-in-time (JIT) user-creation flag, and linking an OIDC identity to an existing user by verified email. SPEC-02 §3 says "standard code flow; `users.external_id` = issuer subject; JIT user creation configurable"; SPEC-09 §3 says "OIDC: PKCE, nonce, issuer allowlist per deployment." The public HTTP router is still STORY-04.1, so — mirroring ADR-0019 — the flow is implemented as testable services/handlers and the router wiring is deferred.
+
+Open sub-decisions:
+1. **Identity model.** Is a single `users.external_id` column enough, or is a separate identity table needed?
+2. **PKCE/state/nonce lifecycle** across the redirect, given there is no router/session-for-anonymous-users yet.
+3. **Verified-email link rule** — when may an OIDC login attach to (or reuse) an existing account?
+4. **How to reuse STORY-03.1 sessions** without forking session logic.
+5. **Library choice.**
+
+## Decision
+- **A new `user_identities` table (`issuer`, `subject`) → `user_id`, unique on `(issuer, subject)`**, instead of relying on the single `users.external_id` column. A user may authenticate through more than one issuer over a deployment's life (provider migration, a second IdP), and `external_id` alone cannot represent the issuer, cannot enforce uniqueness of the pair, and cannot index the lookup. `users.external_id` is kept as an informational copy of the most-recent subject (SPEC-02 §3 still holds; the table is the authoritative link). This keeps OIDC entirely in the control plane (C-3).
+- **Resolution order at callback:** (1) existing `(issuer, subject)` identity → that user; (2) else an existing user whose email matches the **verified** claim → link a new identity row to it (account linking); (3) else JIT-create the user + identity when provisioning is enabled, otherwise refuse with `ErrOIDCUserNotProvisioned`.
+- **Link/JIT only ever act on a provider-`email_verified` claim.** An unverified email is refused (`ErrOIDCEmailUnverified`) before any user lookup, so a rogue IdP account with an unverified address can never take over an existing user. A new `users.email_verified` column records the control-plane verification state.
+- **PKCE + state + nonce are minted per attempt** (`AuthCodeURL`) as 256-bit random values: the PKCE verifier's S256 challenge goes in the authorization request (RFC 7636); `state` is the CSRF guard; `nonce` is bound into the id_token and re-checked by the verifier. `Callback` compares `state` in constant time and rejects a mismatch **before** any token exchange.
+- **The per-attempt `AuthState` (state, nonce, verifier) is carried in a short-lived, HttpOnly, SameSite=Lax cookie** set by `Start` and read by `Callback`, then cleared. There is no server-side row because the user is not yet authenticated (no session to hang it on) and the values are single-use secrets scoped to one 5-minute attempt. The security property is that a cross-site attacker can neither read nor set this HttpOnly cookie, so the returned `state` query parameter cannot be forged to match it; tampering only breaks the tamperer's own attempt. A signed/encrypted state cookie is a possible later hardening but is unnecessary for the CSRF/replay guarantees here (recorded so it is a conscious choice, not an oversight).
+- **Sessions are minted through the STORY-03.1 store, not a fork.** On a successful callback, `OIDCService.Callback` calls the same `Service.createSession` used by password login, and `OIDCHandlers.Callback` sets the identical session cookie + CSRF response shape as `Handlers.Login`. JIT users are created password-less (`password_hash` stays null) so the account is reachable only via OIDC (password login already refuses a null hash, ADR-0019).
+- **Library: `github.com/coreos/go-oidc/v3` + `golang.org/x/oauth2`.** No OIDC/OAuth2 library was previously pinned; these are the de-facto Go choices. All concrete library use is isolated in `oidc_provider.go` behind the package's `Exchanger`/`Verifier` interfaces, so the flow logic in `oidc.go` is unit-tested with stubs and swapping the IdP needs no change outside that file (NFR-MNT-01). The client secret and all tokens are never logged (C-4, SPEC-09 §2).
+- **Configuration via `internal/config`** (`OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URL`, `OIDC_JIT_PROVISIONING`). An empty issuer leaves OIDC disabled, so a password-only deployment needs no new env.
+- **Handlers unit-tested with `httptest`; router wiring deferred to STORY-04.1**, mirroring ADR-0019. Schema change ships as goose migration `00005_oidc_identities.sql` mirrored into `schemas/control_plane.sql` (drift guard stays green).
+
+## Consequences
+- OIDC is a self-contained control-plane capability the EPIC-04 router mounts (`/auth/oidc/start`, `/auth/oidc/callback`) with no changes to `internal/tenant` (ADR-0003) and no new session logic.
+- New table `user_identities` and a `users.email_verified` column; `users.external_id` is retained. `github.com/coreos/go-oidc/v3`, `golang.org/x/oauth2`, and `github.com/go-jose/go-jose/v4` (a go-oidc dependency, used directly only in tests to sign stub id_tokens) enter the module.
+- The issuer allowlist named in SPEC-09 §3 is realised as the single configured issuer per deployment (the verifier rejects any other `iss`); multi-issuer allowlisting can extend `user_identities.issuer` later without a schema change.
+- The flow logic (AuthCodeURL PKCE/state/nonce, callback state/nonce/verified-email/JIT/link branches) is unit-tested with a stubbed IdP and fake DB; the JIT-then-link-by-verified-email golden path and the state/nonce-mismatch rejections are proven end to end against the real control-plane Postgres with an in-process stub IdP (the DB is real, not mocked).
