@@ -107,6 +107,174 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /admin/tenants:
+    get:
+      summary: List tenants (registry view; no connection secrets).
+      operationId: adminTenantList
+      tags:
+        - platform
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: limit
+          in: query
+          description: Page size (default 50, max 200).
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          description: Opaque pagination cursor from a prior next_cursor.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: a page of tenants ({items, next_cursor})
+        "400":
+          description: invalid limit or cursor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "401":
+          description: no session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: not a platform admin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    post:
+      summary: Enrol a tenant (provisions its database; returns the tenant + provision job id).
+      operationId: adminTenantCreate
+      tags:
+        - platform
+      security:
+        - sessionCookie: []
+      responses:
+        "201":
+          description: tenant provisioned
+        "400":
+          description: invalid tenant body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "401":
+          description: no session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: not a platform admin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /admin/tenants/{id}:
+    patch:
+      summary: 'Update a tenant: status (suspend/resume), db connection (move), and/or settings.'
+      operationId: adminTenantUpdate
+      tags:
+        - platform
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Tenant id.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: the updated tenant
+        "400":
+          description: invalid patch body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "401":
+          description: no session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: not a platform admin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "404":
+          description: no such tenant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "409":
+          description: illegal status transition or immutable settings change
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    delete:
+      summary: Schedule a tenant's deletion with a grace period (?grace, default 7 days).
+      operationId: adminTenantDelete
+      tags:
+        - platform
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Tenant id.
+          schema:
+            type: string
+        - name: grace
+          in: query
+          description: Grace period before the deletion is irreversible (Go duration, e.g. 168h; default 7 days).
+          schema:
+            type: string
+      responses:
+        "202":
+          description: deletion scheduled
+        "400":
+          description: invalid grace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "401":
+          description: no session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: not a platform admin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "404":
+          description: no such tenant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "409":
+          description: tenant is not in a deletable state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /healthz:
     get:
       summary: Liveness probe.

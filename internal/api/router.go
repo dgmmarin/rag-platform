@@ -39,6 +39,16 @@ type Deps struct {
 	ImpersonationStart http.Handler
 	ImpersonationEnd   http.Handler
 
+	// Platform-admin tenant handlers (STORY-04.6, FR-TEN-01/05/07). These sit
+	// under /admin behind RequireSession -> RequirePlatformAdmin, with CSRF on the
+	// mutations (like impersonations). They operate on the control-plane pool and
+	// are NOT tenant-scoped (a platform admin acts across tenants). A nil handler
+	// is the not-implemented seam (handlerOr).
+	TenantCreate http.Handler // POST /admin/tenants
+	TenantList   http.Handler // GET /admin/tenants
+	TenantUpdate http.Handler // PATCH /admin/tenants/{id}
+	TenantDelete http.Handler // DELETE /admin/tenants/{id}
+
 	// Sources resource handlers (STORY-04.3, FR-SRC-01/14). All are `admin`
 	// scope; a nil handler is the not-implemented seam (handlerOr).
 	SourceList   http.Handler // GET /v1/sources
@@ -101,6 +111,15 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /admin/impersonations", platformAdmin(mustCSRF(d, d.ImpersonationStart)))
 	mux.Handle("DELETE /admin/impersonations/{id}", platformAdmin(mustCSRF(d, d.ImpersonationEnd)))
 
+	// Admin tenant lifecycle (STORY-04.6, FR-TEN-01/05/07, SPEC-07 §2). Session +
+	// platform-admin gate; the mutations carry CSRF like impersonations. These are
+	// deliberately NOT under /v1 and carry no tenant_id-derived scope: the platform
+	// admin acts across tenants (FR-ACC-03 governs the tenant-scoped /v1 surface).
+	mux.Handle("POST /admin/tenants", platformAdmin(mustCSRF(d, d.TenantCreate)))
+	mux.Handle("GET /admin/tenants", platformAdmin(d.TenantList))
+	mux.Handle("PATCH /admin/tenants/{id}", platformAdmin(mustCSRF(d, d.TenantUpdate)))
+	mux.Handle("DELETE /admin/tenants/{id}", platformAdmin(mustCSRF(d, d.TenantDelete)))
+
 	// --- Per-tenant authenticated surface: API-key scope then rate limit. ---
 	// The tenant is derived from the key by the scope middleware (FR-ACC-03), so
 	// the rate limiter and handler read it from context. Auth precedes the rate
@@ -139,10 +158,10 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /v1/jobs/{id}", tenantScoped(d.RequireScopeAdmin, d.JobGet))
 	mux.Handle("POST /v1/jobs/{id}/cancel", tenantScoped(d.RequireScopeAdmin, d.JobCancel))
 
-	// Settings/members/api-keys and the admin tenant routes are later EPIC-04
-	// story 04.6. They are intentionally NOT registered here: an unregistered path
-	// yields the not_found envelope below, which is the seam their handlers slot
-	// into.
+	// Settings/members/api-keys routes are later EPIC-04 work. They are
+	// intentionally NOT registered here: an unregistered path yields the not_found
+	// envelope below, which is the seam their handlers slot into. (The admin tenant
+	// routes landed in STORY-04.6, above.)
 
 	// Global chain (outer -> inner), SPEC-07 §1 order with the credential-keyed
 	// rate limiter moved inside per-route auth (ADR-0027):

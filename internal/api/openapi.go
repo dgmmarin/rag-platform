@@ -183,6 +183,30 @@ func liveRoutes() []route {
 			success:  "grant ended",
 			okStatus: "204"},
 
+		// Admin tenant lifecycle (STORY-04.6, FR-TEN-01/05/07). Platform scope: not
+		// tenant-derived; the tenant is a route/body value (SPEC-07 §2).
+		{method: "POST", path: "/admin/tenants", tag: "platform", summary: "Enrol a tenant (provisions its database; returns the tenant + provision job id).", operationID: "adminTenantCreate", auth: authPlatformAdmin,
+			success: "tenant provisioned", okStatus: "201",
+			extra: []errResp{{"400", "invalid tenant body"}}},
+		{method: "GET", path: "/admin/tenants", tag: "platform", summary: "List tenants (registry view; no connection secrets).", operationID: "adminTenantList", auth: authPlatformAdmin,
+			params: []Parameter{
+				{Name: "limit", In: "query", Description: "Page size (default 50, max 200).", Schema: map[string]any{"type": "integer"}},
+				{Name: "cursor", In: "query", Description: "Opaque pagination cursor from a prior next_cursor.", Schema: strSchema()},
+			},
+			success: "a page of tenants ({items, next_cursor})",
+			extra:   []errResp{{"400", "invalid limit or cursor"}}},
+		{method: "PATCH", path: "/admin/tenants/{id}", tag: "platform", summary: "Update a tenant: status (suspend/resume), db connection (move), and/or settings.", operationID: "adminTenantUpdate", auth: authPlatformAdmin,
+			params:  []Parameter{tenantIDParam()},
+			success: "the updated tenant",
+			extra:   []errResp{{"400", "invalid patch body"}, {"404", "no such tenant"}, {"409", "illegal status transition or immutable settings change"}}},
+		{method: "DELETE", path: "/admin/tenants/{id}", tag: "platform", summary: "Schedule a tenant's deletion with a grace period (?grace, default 7 days).", operationID: "adminTenantDelete", auth: authPlatformAdmin,
+			params: []Parameter{
+				tenantIDParam(),
+				{Name: "grace", In: "query", Description: "Grace period before the deletion is irreversible (Go duration, e.g. 168h; default 7 days).", Schema: strSchema()},
+			},
+			success: "deletion scheduled", okStatus: "202",
+			extra: []errResp{{"400", "invalid grace"}, {"404", "no such tenant"}, {"409", "tenant is not in a deletable state"}}},
+
 		{method: "GET", path: "/v1/usage", tag: "usage", summary: "Daily usage rows for the authenticated tenant.", operationID: "usageList", auth: authScopeAdmin,
 			params: []Parameter{
 				{Name: "from", In: "query", Description: "Inclusive start date (YYYY-MM-DD).", Schema: strSchema()},
@@ -283,6 +307,11 @@ func liveRoutes() []route {
 // jobIDParam is the shared {id} path parameter for the job subresource routes.
 func jobIDParam() Parameter {
 	return Parameter{Name: "id", In: "path", Required: true, Description: "Job id.", Schema: strSchema()}
+}
+
+// tenantIDParam is the shared {id} path parameter for the admin tenant routes.
+func tenantIDParam() Parameter {
+	return Parameter{Name: "id", In: "path", Required: true, Description: "Tenant id.", Schema: strSchema()}
 }
 
 // documentIDParam is the shared {id} path parameter for the document subresource routes.

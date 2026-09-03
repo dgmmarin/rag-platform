@@ -115,6 +115,46 @@ timing, and a computed `duration_ms` for finished jobs (FR-ADM-02).
 No mirror column is added for the running cancel signal — it belongs in River, not
 the mirror. See ADR-0031.
 
+### 2d. Admin tenants (STORY-04.6 realisation)
+The four `/admin/tenants` routes are served by `internal/cp/tenants`
+(`AdminService`/`AdminHandlers`) over the control-plane pool. They are the
+**platform** scope (§2): mounted under `/admin` behind
+`RequireSession → RequirePlatformAdmin` with CSRF on the mutations — the same
+guard the audit and impersonation routes use (STORY-04.1). Unlike the `/v1`
+surface they are deliberately **not** tenant-scoped: a platform admin operates
+across tenants, so the tenant is a route/body value here (FR-ACC-03 governs the
+tenant-scoped `/v1` routes, not the platform surface). The tenant view returned
+never carries connection details or secrets (C-4).
+
+This is a thin HTTP layer over the tenant lifecycle that already exists
+(STORY-02.3/02.4/02.5, ADR-0016/0017): each route routes to the existing service
+that owns it, adding no duplicate audit (each of those already audits its own
+action):
+
+- `POST /admin/tenants` runs `provision.Provisioner.Provision` and records a
+  `provision_tenant` mirror row, returning `{tenant, job_id}` (SPEC-07 §2). The
+  async River `provision_tenant` job is EPIC-09 (ADR-0005); until then, exactly
+  as `ragctl enroll` established (STORY-02.3, ADR-0016), provisioning runs
+  synchronously and the tenant is active before the response returns — so the
+  mirror row is a truthful `succeeded` record (the jobs table is the
+  history/mirror view, ADR-0005), not a perpetually-queued placeholder.
+- `GET /admin/tenants` (`?limit&cursor` → `{items,next_cursor}` keyset pagination
+  on `(created_at, id)`) lists the registry.
+- `PATCH /admin/tenants/{id}` routes each present sub-change: `settings` →
+  `SettingsService.Patch` (FR-TEN-08, JSON-schema validated, embedding.dim
+  immutable), `connection` → `Lifecycle.Move` (FR-TEN-07, password re-encrypted,
+  C-4), `status` → `Lifecycle.Suspend`/`Resume` (FR-TEN-04). An unknown id is
+  `404` before any write; an illegal status transition or an immutable-settings
+  change is `409`.
+- `DELETE /admin/tenants/{id}` (`?grace`, default 7 days) calls
+  `Lifecycle.ScheduleDelete` (FR-TEN-05): status → `deleting`, `delete_after`
+  recorded, `202`. The irreversible teardown after the grace window is the
+  EPIC-09 River `delete_tenant` job (ADR-0005); scheduling is the complete, real
+  action today.
+
+The one genuine seam is the async River provision/delete **execution** (EPIC-09);
+everything the four routes need exists. See ADR-0032.
+
 ## 3. OpenAPI
 Generated from Go into `api/openapi.yaml`; served at `/v1/openapi.json`. Contract tests in CI validate responses against it.
 

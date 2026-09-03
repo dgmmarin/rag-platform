@@ -16,7 +16,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
-| EPIC-04 | Public API surface | 21 | 18 | 🚧 In progress |
+| EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **102** | **30%** |
+| **Total** | | **337** | **105** | **31%** |
 
 ---
 
@@ -336,7 +336,7 @@ golden path over the real control-plane Postgres driving the real `RequireScope`
 over the per-key limit → 429 with `Retry-After`/`RateLimit-*`, and a second key of the same tenant unaffected —
 per-key isolation). ADR-0026.
 
-## EPIC-04 · Public API surface — 🚧 18/21 pts
+## EPIC-04 · Public API surface — ✅ 21/21 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -345,7 +345,7 @@ per-key isolation). ADR-0026.
 | STORY-04.3 | Sources endpoints | 3 | ✅ Done | FR-SRC-01/14 |
 | STORY-04.4 | Documents endpoints | 3 | ✅ Done | FR-SRC-02, FR-ADM-03 |
 | STORY-04.5 | Jobs endpoints | 2 | ✅ Done | FR-ADM-02 |
-| STORY-04.6 | Admin tenant endpoints | 3 | 🔲 Todo | FR-TEN-01/05/07 |
+| STORY-04.6 | Admin tenant endpoints | 3 | ✅ Done | FR-TEN-01/05/07 |
 
 **Delivered (STORY-04.1):** the public HTTP server — a new dependency-injected `internal/api` package plus its
 wiring in `internal/cli` (SPEC-07 §1, ADR-0027). `api.New(Deps)` assembles a Go 1.22 `net/http.ServeMux` (no
@@ -508,6 +508,49 @@ isolation — a second tenant's job is neither listed nor gettable). `TestOpenAP
 unrelated to this story: `test/e2e/audit_e2e_test.go` trips one `revive` lint finding and the `internal/cli` mise
 coverage run leaks env; both pre-date this change and no gated package was touched.)_
 
+**Delivered (STORY-04.6):** the platform-admin tenant API — a thin HTTP layer in `internal/cp/tenants`
+(`AdminService`/`AdminHandlers`/`AdminPoolStore`) plus its four routes wired into `internal/api` (`New` +
+`liveRoutes()`) behind the existing `RequireSession → RequirePlatformAdmin` gate with CSRF on the mutations
+(FR-TEN-01/05/07, SPEC-07 §2/§2d, ADR-0032). **This completes EPIC-04 (21/21).** The KEY move: the backend
+already existed (STORY-02.3/02.4/02.5), so this **wires, it does not rebuild** — each route routes to the service
+that owns it and adds no duplicate audit. `POST /admin/tenants` runs `provision.Provisioner.Provision`
+**synchronously** (exactly the ADR-0016 precedent `ragctl enroll` set — the async River `provision_tenant`
+*execution* is the one EPIC-09 seam) and records a `provision_tenant` mirror row, returning `{tenant, job_id}`
+(`201`); because the tenant is active before the response returns, the mirror row is a truthful `succeeded`
+record (ADR-0005 history view), **not** a perpetually-`queued` placeholder — a fake that was deliberately
+rejected (AGENTS.md Integrity). `GET /admin/tenants` (`?limit&cursor` → `{items,next_cursor}` keyset pagination
+on `(created_at, id)`) lists the registry over the control-plane pool (C-3); the view carries no connection
+secrets (C-4). `PATCH /admin/tenants/{id}` fans out each present sub-change to the existing owner — `settings` →
+`SettingsService.Patch` (FR-TEN-08, JSON-schema validated, embedding.dim immutable), `connection` →
+`Lifecycle.Move` (FR-TEN-07, password re-encrypted, C-4), `status` → `Lifecycle.Suspend`/`Resume` (FR-TEN-04) —
+resolving the tenant by id first (unknown → `404` before any write; illegal transition / immutable settings →
+`409`). `DELETE /admin/tenants/{id}?grace` (default 7 days) calls `Lifecycle.ScheduleDelete` (FR-TEN-05: status →
+`deleting`, `delete_after` recorded, `202`); the irreversible teardown after the grace window is the EPIC-09 River
+`delete_tenant` job (ADR-0005), so `DELETE` does not enqueue one prematurely. These are the **platform** scope,
+deliberately **not** tenant-scoped (a platform admin acts across tenants; FR-ACC-03 governs the `/v1` surface).
+Errors speak the SPEC-07 §1 envelope (ADR-0027); `provision.ErrValidation`/`ErrIllegalTransition` were exported
+(additive, no behaviour change) so the handlers map failures to 400 vs 409 with `errors.Is`. The `AdminService`
+threads a configurable `SSLMode` (from `TENANT_DB_SSLMODE`, mirroring `ragctl enroll --db-ssl-mode`) so a local
+non-TLS cluster provisions with `disable` while production defaults to `require`. No schema/migration change (the
+`tenants`/`tenant_databases`/`jobs` tables, the `provision_tenant`/`delete_tenant` `job_kind` values and
+`delete_after` already existed), so the drift guard stays green; `api/openapi.yaml` regenerated via
+`mise run openapi` so the served spec, the drift guard and the contract tests grow with the four routes
+(ADR-0028). TDD throughout (service + handler unit tests watched red before the code existed). Unit tests
+(`internal/cp/tenants`: create-provisions-records-returns, missing-slug/name-400, provision-error-propagation,
+patch status/connection/settings routing, empty-patch-400, unknown-status-400, unknown-tenant-404, delete
+schedule-with-grace + unknown-404, list pagination; handler branches via `httptest` incl. envelope shape and
+CSRF-mapped statuses) + an e2e golden path over the real control-plane Postgres
+(`test/e2e/admin_tenants_e2e_test.go`: provision a **real** tenant DB + role through the mounted router,
+CSRF-less-mutation-403 → create-201(+DB row + provision_tenant job) → list → PATCH suspend+settings (DB status +
+`tenant.suspend`/`settings.update` audit rows verified) → PATCH resume → PATCH-unknown-404 → DELETE
+schedule-with-grace-202(status→deleting, delete_after set) → non-admin-session-403). `TestOpenAPIContractGoldenPath`,
+`TestAPIRouterGoldenPath`, `TestSettingsGoldenPath`, `TestJobsGoldenPath`, `TestSourcesGoldenPath`,
+`TestTenantLifecycleGoldenPath`, `TestTenantMoveGoldenPath` and `TestTenantIsolationSuite` (SPEC-01 §9, re-run
+because `internal/api` changed) all stay green. ADR-0032; ISSUE-0005. _(Pre-existing, unrelated to this story:
+`internal/cp/audit/pool.go` and `test/e2e/audit_e2e_test.go` each trip one `revive` lint finding, and
+`mise run test` leaks `CONTROL_PLANE_URL`/`PROVISION_DB_URL` into the `internal/cli` "RequireURL" tests (they
+pass in a clean env); both pre-date this change and no gated package was touched.)_
+
 ## EPIC-05 · Ingestion pipeline — 🔲 0/42 pts
 
 | Key | Story | Pts | Status | Traces |
@@ -604,7 +647,7 @@ coverage run leaks env; both pre-date this change and no gated package was touch
 
 ---
 
-_EPIC-04 (Public API surface) is now under way: STORY-04.1 stands up the public router and mounts the accumulated
+_EPIC-04 (Public API surface) is **complete (21/21)**: STORY-04.1 stands up the public router and mounts the accumulated
 EPIC-03 middleware in the SPEC-07 §1 order (request ID/logging → recovery → CORS globally, with auth →
 credential-keyed rate limit per route) plus every 03.x handler built behind it — the router-wiring seam every
 EPIC-02/03 story deferred to. STORY-04.2 then generates the OpenAPI 3.1 spec from that router's route table,
@@ -614,6 +657,8 @@ endpoints (`internal/cp/sources`) over the control-plane pool, with the connecto
 injected seams for EPIC-06/09 (ADR-0029). STORY-04.4 adds the documents endpoints (`internal/documents`) — the
 first request path to reach tenant content, through a `tenant.DB` from the resolver (ADR-0030). STORY-04.5 adds
 the jobs endpoints (`internal/cp/jobs`) over the control-plane pool, with queued-job cancellation effective now
-and running-job cancellation as the EPIC-09 River `Canceller` seam (ADR-0031). Suggested next: STORY-04.6 (admin
-tenant endpoints) — the last EPIC-04 resource group — slotting into the `not_found` route seams STORY-04.1 left in
-place; it appends its routes to `liveRoutes()` so the spec grows with them._
+and running-job cancellation as the EPIC-09 River `Canceller` seam (ADR-0031). STORY-04.6 adds the admin tenant
+endpoints (`internal/cp/tenants`) — the platform-admin lifecycle surface over the existing provisioner/lifecycle,
+with the async River provision/delete *execution* as the one EPIC-09 seam (ADR-0032) — closing out the epic.
+Suggested next: EPIC-05 (Ingestion pipeline), the first epic to consume the documents/jobs request paths
+04.4/04.5 stood up._

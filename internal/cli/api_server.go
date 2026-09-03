@@ -20,6 +20,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/crypto"
 	"github.com/rag-platform/ragctl/internal/documents"
 	"github.com/rag-platform/ragctl/internal/obs"
+	"github.com/rag-platform/ragctl/internal/provision"
 	"github.com/rag-platform/ragctl/internal/tenant"
 )
 
@@ -120,6 +121,34 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	// --- Rate limiting (per key + per tenant, credential-keyed). ---
 	limiter := ratelimit.New(nil)
 	settingsSvc := tenants.NewSettingsService(tenants.SettingsFromPool(pool))
+
+	// --- Admin tenant lifecycle (platform scope, STORY-04.6, FR-TEN-01/05/07). It
+	// orchestrates the existing provisioner (enrol) and lifecycle (suspend/resume/
+	// move/schedule-delete) plus the settings service. Provisioning/lifecycle use a
+	// privileged (superuser) connection — PROVISION_DB_URL, falling back to the
+	// control-plane URL, exactly as `ragctl enroll`/`tenant` resolve it (STORY-02.3/
+	// 02.4/02.5). The cipher seals the generated/rotated tenant DB password
+	// (SPEC-09 §2, C-4). Registry reads use the control-plane pool (C-3). Async
+	// River provision_tenant/delete_tenant execution is EPIC-09; provisioning runs
+	// synchronously today (ADR-0016). ---
+	privilegedURL := cfg.ProvisionURL
+	if privilegedURL == "" {
+		privilegedURL = controlURL
+	}
+	adminSvc := &tenants.AdminService{
+		Store: tenants.AdminStoreFromPool(pool),
+		Prov: &provision.Provisioner{
+			PrivilegedURL: privilegedURL,
+			Encrypter:     cipher,
+			Decrypter:     cipher,
+			TenantHost:    cfg.TenantDBHost,
+			TenantPort:    cfg.TenantDBPort,
+		},
+		Life:     &provision.Lifecycle{PrivilegedURL: privilegedURL, Encrypter: cipher},
+		Settings: settingsSvc,
+		SSLMode:  cfg.TenantDBSSLMode,
+	}
+	tenantHandlers := tenants.NewAdminHandlers(adminSvc)
 	rl := &ratelimit.Middleware{
 		Limiter:     limiter,
 		Limit:       ratelimit.LimitFromSettings(settingsSvc, cfg.RateLimitDefaultQPS),
@@ -150,6 +179,11 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		UsageList:          http.HandlerFunc(usageHandlers.List),
 		ImpersonationStart: http.HandlerFunc(impHandlers.Start),
 		ImpersonationEnd:   http.HandlerFunc(impHandlers.End),
+
+		TenantCreate: http.HandlerFunc(tenantHandlers.Create),
+		TenantList:   http.HandlerFunc(tenantHandlers.List),
+		TenantUpdate: http.HandlerFunc(tenantHandlers.Update),
+		TenantDelete: http.HandlerFunc(tenantHandlers.Delete),
 
 		SourceList:   http.HandlerFunc(sourceHandlers.List),
 		SourceCreate: http.HandlerFunc(sourceHandlers.Create),
