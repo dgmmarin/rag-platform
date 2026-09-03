@@ -17,7 +17,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
-| EPIC-05 | Ingestion pipeline | 42 | 35 | 🚧 In progress |
+| EPIC-05 | Ingestion pipeline | 42 | 40 | 🚧 In progress |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **117** | **35%** |
+| **Total** | | **337** | **122** | **36%** |
 
 ---
 
@@ -551,7 +551,7 @@ because `internal/api` changed) all stay green. ADR-0032; ISSUE-0005. _(Pre-exis
 `mise run test` leaks `CONTROL_PLANE_URL`/`PROVISION_DB_URL` into the `internal/cli` "RequireURL" tests (they
 pass in a clean env); both pre-date this change and no gated package was touched.)_
 
-## EPIC-05 · Ingestion pipeline — 🚧 35/42 pts
+## EPIC-05 · Ingestion pipeline — 🚧 40/42 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -562,7 +562,7 @@ pass in a clean env); both pre-date this change and no gated package was touched
 | STORY-05.5 | Embedding provider interface and implementations | 5 | ✅ Done | FR-ING-05, NFR-MNT-02 |
 | STORY-05.6 | Sink implementation and commit semantics | 5 | ✅ Done | FR-ING-07, NFR-REL-02, SPEC-05 §5 |
 | STORY-05.7 | Job stats and error capture | 2 | ✅ Done | FR-ING-10, SPEC-05 §6 |
-| STORY-05.8 | Reindex job with table swap | 5 | 🔲 Todo | FR-ING-09, SPEC-03 §5, SPEC-05 §7 |
+| STORY-05.8 | Reindex job with table swap | 5 | ✅ Done | FR-ING-09, SPEC-03 §5, SPEC-05 §7 |
 | STORY-05.9 | Garbage collection job | 2 | 🔲 Todo | SPEC-03 §4 |
 
 **Delivered (STORY-05.1):** `TenantStore.Put` (`internal/documents/put.go`) — the WRITE half of the tenant
@@ -739,6 +739,45 @@ marshals `errors` as an empty list (`[]`), never `null`. TDD (`sink_test.go`): `
 (the cap + list-shape realise the SPEC-05 §6 contract and the ADR-0038 upgrade path, not a new decision); no
 schema/migration/OpenAPI change. Coverage: `internal/ingest/sink` under `internal/ingest` (gate SKIP). ISSUE-0012.
 EPIC-05 → 35/42.
+
+**Delivered (STORY-05.8):** the **resumable reindex operation** — migrate a tenant's live chunks to a new
+embedding model and/or dimension while retrieval keeps serving from the current `chunks` table, with an atomic
+swap and the old table dropped only after a coverage verification (FR-ING-09, SPEC-05 §7, SPEC-03 §5). Two pieces,
+both reached ONLY through `*tenant.DB` (ADR-0003, C-1, C-3), no raw pool (`Unsafe()` ban intact): the tenant-side
+DDL/DML on `documents.TenantStore` (`internal/documents/reindex.go`: `CreateChunksNew`, `LiveVersionsAfter`,
+`VersionChunks`, `InsertChunksNew`, `VerifyCoverage`, `SwapChunks`, `DropChunksOld` — kept OFF the `documents.Store`
+interface, so the documents Service/handlers keep a minimal surface; the reindex declares its own narrow port
+satisfied structurally, the ADR-0038 sink precedent) and the orchestration `internal/ingest/reindex` (owns no SQL;
+composes the store + chunker + `Embedder`). **Off the hot path:** `Prepare` builds an empty `chunks_new` at the new
+`vector(N)` (`LIKE chunks` + `ALTER … TYPE vector(N)` on the empty column + explicit PK/unique/**cascade FKs**/
+btree/GIN/HNSW; the dimension is an interpolated positive-int since a typmod cannot bind, exactly as the migration
+runner substitutes `EMBEDDING_DIM`), and `live_chunks` keeps reading the old `chunks` — **queries are undisturbed
+during the build**. **Resumable:** `Step(cursor)` re-embeds one batch of live versions (active docs' `current_version`)
+after a `document_id` cursor in id order and returns the advanced cursor the worker persists; `InsertChunksNew` is
+**atomic + idempotent per version** (delete-then-insert in one tx), so a crash/retry **resumes rather than restarts
+or duplicates**. **Verify-before-swap/drop:** `VerifyCoverage(table)` counts live versions represented in a target
+table; `Swap` refuses (`ErrNotVerified`) unless `chunks_new` covers every live version, and `DropOld` re-checks the
+now-live `chunks` table before dropping `chunks_old` — a durable-state check that holds across a crash between swap
+and drop. **Atomic swap:** `SwapChunks` runs SPEC-03 §5 in ONE DDL transaction (drop `live_chunks`, rename
+`chunks`→`chunks_old` and `chunks_new`→`chunks`, recreate `live_chunks`), so no query sees a half-swapped state.
+**Dimension change vs ADR-0022:** the reindex is the *sanctioned* path the `embedding_dim` immutability points at —
+the physical `vector(N)` moves in the swap; the driving worker (STORY-09.1) moves the control-plane
+`settings.embedding_dim` mirror and configured model as the job's finalize step, so the mirror never desyncs from the
+live column (ADR-0039). Re-chunk (settings changed) re-parses the stored normalised markdown; the default
+model/dimension reindex re-embeds the existing chunk text verbatim (exported `chunk.WithContext` reconstructs the
+SPEC-05 §3 embed context line). **TDD**: `reindex_test.go` over a fake store + fake embedder — the verify-before-swap
+and verify-before-drop gates watched **red** (guard disabled ⇒ both refusal tests fail) then **green**; plus
+Step batching/cursor, resume-not-restart, reuse embed-text reconstruction, re-chunk branch, preconditions. **e2e**
+(`test/e2e/reindex_e2e_test.go`, real enrolled tenant, dim 768 → 384): live_chunks keeps serving the old `vector(768)`
+table during a partial build, a **refused swap** at 1/3 covered, **resume-from-cursor** completing the remaining 2
+docs, the **atomic swap** flipping `live_chunks` to `vector(384)` with the new model, and `chunks_old` dropped only
+after post-swap verification — **green in ~76 s**. `gofmt -l`/`go vet` clean; `go test ./internal/ingest/...
+./internal/documents/...` green; pinned `golangci-lint v2.13.1` **0 issues**. No schema/migration/OpenAPI change
+(`chunks_new`/`chunks_old` are transient; drift guard green). `TestTenantIsolationSuite` could not run here — its
+every assertion goes through `docker compose exec`, which is currently wedged in this environment (a bare
+`docker compose exec postgres psql -c 'select 1'` did not return within 120 s) while the DB is healthy; the
+`Unsafe()` ban it protects is lint-enforced (green) and the per-tenant role's create/swap/drop is proven by the
+reindex e2e over the direct pool. ADR-0039; ISSUE-0013. EPIC-05 → 40/42.
 
 ## EPIC-06 · Connector framework and upload connector — 🔲 0/13 pts
 

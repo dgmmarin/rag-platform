@@ -235,6 +235,15 @@ func (s *splitter) emit(content string) {
 	s.pos++
 }
 
+// WithContext prepends the SPEC-05 §3 context line "{title} > {heading path}" to
+// content, exactly as Document builds Chunk.EmbedText. The reindex reuse path
+// (STORY-05.8, internal/ingest/reindex) reconstructs a chunk's embed text from the
+// stored heading_path/content without re-chunking, so its re-embedded vectors use
+// the same context line the sink embedded originally.
+func WithContext(title string, path []string, content string) string {
+	return withContext(title, path, content)
+}
+
 // withContext prepends the SPEC-05 §3 context line "{title} > {heading path}" to
 // the text that will be embedded. Empty title/path segments are dropped; with
 // neither, the content is embedded as-is.

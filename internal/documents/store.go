@@ -38,6 +38,13 @@ type Store interface {
 	// SoftDeleteUnseen marks documents of a source not re-seen since startedAt
 	// 'deleted' (full-sync Sink.Complete, SPEC-05 §5). See sync.go.
 	SoftDeleteUnseen(ctx context.Context, db *tenant.DB, sourceID string, startedAt time.Time) (int, error)
+
+	// NOTE: the reindex table-swap methods (CreateChunksNew, LiveVersionsAfter,
+	// VersionChunks, InsertChunksNew, VerifyCoverage, SwapChunks, DropChunksOld;
+	// STORY-05.8, reindex.go) are deliberately NOT on this interface. Like the sink
+	// (ADR-0038), the reindex orchestration (internal/ingest/reindex) defines its own
+	// narrow port satisfied structurally by TenantStore, so the documents Service and
+	// its handlers — which never reindex — keep a minimal Store surface (ISP).
 }
 
 // TenantStore is the production Store over a tenant database.

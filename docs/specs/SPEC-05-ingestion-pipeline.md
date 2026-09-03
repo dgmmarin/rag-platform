@@ -71,6 +71,8 @@ Realised by the ingestion **sink** (`internal/ingest/sink`, STORY-05.6, ADR-0038
 ## 7. Reindex job
 Iterates live versions in `document_id` order, re-chunks if chunking settings changed, embeds with the new model into `chunks_new`, then performs the swap from SPEC-03 §5. Resumable via a cursor stored in job payload.
 
+Realised (STORY-05.8, ADR-0039) as the operation `internal/ingest/reindex` driving the tenant-side steps `documents.TenantStore.{CreateChunksNew, LiveVersionsAfter, VersionChunks, InsertChunksNew, VerifyCoverage, SwapChunks, DropChunksOld}` — all through a `*tenant.DB` (ADR-0003), owning no raw pool. `Prepare` builds the empty `chunks_new` at the new `vector(N)` (queries keep serving the old `chunks`); `Step(cursor)` re-embeds one batch of live versions with the new model and returns the advanced `document_id` cursor the caller persists (each version's insert is atomic + idempotent, so a crash resumes rather than restarts or duplicates); `Verify`/`Swap`/`DropOld` gate the SPEC-03 §5 swap and the drop of `chunks_old` on a coverage check (every live version present in the target table) — **the old table is dropped only after that verification passes on the now-live table**. A dimension change is the sanctioned path around the ADR-0022 `embedding_dim` immutability: the physical `vector(N)` column moves via the swap, and the driving worker (STORY-09.1) moves the control-plane `settings.embedding_dim` mirror (and the configured model) as the job's finalize step, so the mirror never desyncs from the live column. Re-chunk (settings changed) re-parses the stored normalised markdown; the default model/dimension reindex re-embeds the existing chunk text verbatim.
+
 ## 8. Failure modes and handling
 | Failure | Handling |
 |---|---|

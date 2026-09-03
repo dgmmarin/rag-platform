@@ -114,3 +114,5 @@ erDiagram
 2. Reindex job embeds every live version into `chunks_new`.
 3. In one transaction: rename `chunks`→`chunks_old`, `chunks_new`→`chunks`, recreate `live_chunks`; update tenant setting.
 4. Drop `chunks_old` after verification. Queries keep working on the old table throughout.
+
+Realised (STORY-05.8, ADR-0039): steps 1–4 are `documents.TenantStore.{CreateChunksNew, SwapChunks, DropChunksOld}` (+ `VerifyCoverage`) reached only through `*tenant.DB`. The swap (step 3) is one Postgres DDL transaction (drop `live_chunks`, rename, recreate `live_chunks`) so no query sees a half-swapped state. "Update tenant setting" is the control-plane `settings.embedding_dim` mirror (ADR-0022), moved by the driving worker (STORY-09.1) as the finalize step — it is not a tenant-DB object, so it is out of the swap transaction's reach (C-3); the physical `vector(N2)` column moves inside the swap. "After verification" (step 4) is a coverage re-check against the now-live table: every live version must be represented before `chunks_old` is dropped.
