@@ -256,7 +256,33 @@ func liveRoutes() []route {
 			},
 			success: "a page of chunks ({items, next_cursor})",
 			extra:   []errResp{{"404", "no such document"}, {"503", "tenant is not available"}}},
+
+		// Jobs (STORY-04.5, FR-ADM-02). Control-plane tracking rows; tenant derived
+		// from the API key (FR-ACC-03). All admin scope (SPEC-07 §2).
+		{method: "GET", path: "/v1/jobs", tag: "jobs", summary: "List the tenant's jobs (filter by status, kind, source).", operationID: "jobList", auth: authScopeAdmin,
+			params: []Parameter{
+				{Name: "status", In: "query", Description: "Filter by status (queued, running, succeeded, failed, cancelled).", Schema: strSchema()},
+				{Name: "kind", In: "query", Description: "Filter by job kind (e.g. sync_source, ingest_document).", Schema: strSchema()},
+				{Name: "source", In: "query", Description: "Filter by source id.", Schema: strSchema()},
+				{Name: "limit", In: "query", Description: "Page size (default 50, max 200).", Schema: map[string]any{"type": "integer"}},
+				{Name: "cursor", In: "query", Description: "Opaque pagination cursor from a prior next_cursor.", Schema: strSchema()},
+			},
+			success: "a page of jobs ({items, next_cursor})",
+			extra:   []errResp{{"400", "invalid filter, limit or cursor"}}},
+		{method: "GET", path: "/v1/jobs/{id}", tag: "jobs", summary: "Get one job with status, timing and statistics.", operationID: "jobGet", auth: authScopeAdmin,
+			params:  []Parameter{jobIDParam()},
+			success: "the job",
+			extra:   []errResp{{"404", "no such job"}}},
+		{method: "POST", path: "/v1/jobs/{id}/cancel", tag: "jobs", summary: "Cancel a queued job now, or request cooperative cancellation of a running job (202; SPEC-08 §4).", operationID: "jobCancel", auth: authScopeAdmin,
+			params:  []Parameter{jobIDParam()},
+			success: "job cancelled", okStatus: "200",
+			extra: []errResp{{"404", "no such job, or running-job cancellation is not available yet"}, {"409", "job is not in a cancellable state"}}},
 	}
+}
+
+// jobIDParam is the shared {id} path parameter for the job subresource routes.
+func jobIDParam() Parameter {
+	return Parameter{Name: "id", In: "path", Required: true, Description: "Job id.", Schema: strSchema()}
 }
 
 // documentIDParam is the shared {id} path parameter for the document subresource routes.
@@ -286,6 +312,7 @@ func Document() *OpenAPI {
 			{Name: "usage", Description: "Tenant-scoped usage accounting."},
 			{Name: "sources", Description: "Tenant content sources (create/update/delete, sync, test)."},
 			{Name: "documents", Description: "Tenant documents: upload, list, get, delete, and chunk debugging."},
+			{Name: "jobs", Description: "Tenant jobs: list, get, and cancel (the control-plane history/mirror view)."},
 		},
 		Paths: map[string]PathItem{},
 		Components: Components{

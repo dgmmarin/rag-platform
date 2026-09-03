@@ -57,6 +57,13 @@ type Deps struct {
 	DocumentGet    http.Handler // GET /v1/documents/{id} (query scope)
 	DocumentDelete http.Handler // DELETE /v1/documents/{id} (ingest scope)
 	DocumentChunks http.Handler // GET /v1/documents/{id}/chunks (admin scope)
+
+	// Jobs resource handlers (STORY-04.5, FR-ADM-02). Jobs are control-plane
+	// tracking rows (the history/mirror view, C-3); a nil handler is the
+	// not-implemented seam (handlerOr). All are `admin` scope (SPEC-07 §2).
+	JobList   http.Handler // GET /v1/jobs
+	JobGet    http.Handler // GET /v1/jobs/{id}
+	JobCancel http.Handler // POST /v1/jobs/{id}/cancel
 }
 
 // New assembles the public HTTP handler: the global middleware chain in the
@@ -125,10 +132,17 @@ func New(d Deps) http.Handler {
 	mux.Handle("DELETE /v1/documents/{id}", tenantScoped(d.RequireScopeIngest, d.DocumentDelete))
 	mux.Handle("GET /v1/documents/{id}/chunks", tenantScoped(d.RequireScopeAdmin, d.DocumentChunks))
 
-	// Jobs/settings/members/api-keys and the admin tenant routes are later EPIC-04
-	// stories (04.5–04.6). They are intentionally NOT registered here: an
-	// unregistered path yields the not_found envelope below, which is the seam
-	// their handlers slot into.
+	// Jobs (STORY-04.5, FR-ADM-02, SPEC-07 §2). Jobs are control-plane tracking
+	// rows (the history/mirror view, C-3); the tenant is derived from the API key
+	// (FR-ACC-03). All admin scope. Bearer-authenticated, so no CSRF applies.
+	mux.Handle("GET /v1/jobs", tenantScoped(d.RequireScopeAdmin, d.JobList))
+	mux.Handle("GET /v1/jobs/{id}", tenantScoped(d.RequireScopeAdmin, d.JobGet))
+	mux.Handle("POST /v1/jobs/{id}/cancel", tenantScoped(d.RequireScopeAdmin, d.JobCancel))
+
+	// Settings/members/api-keys and the admin tenant routes are later EPIC-04
+	// story 04.6. They are intentionally NOT registered here: an unregistered path
+	// yields the not_found envelope below, which is the seam their handlers slot
+	// into.
 
 	// Global chain (outer -> inner), SPEC-07 §1 order with the credential-keyed
 	// rate limiter moved inside per-route auth (ADR-0027):

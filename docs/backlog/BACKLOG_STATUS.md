@@ -16,7 +16,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
-| EPIC-04 | Public API surface | 21 | 16 | 🚧 In progress |
+| EPIC-04 | Public API surface | 21 | 18 | 🚧 In progress |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
@@ -336,7 +336,7 @@ golden path over the real control-plane Postgres driving the real `RequireScope`
 over the per-key limit → 429 with `Retry-After`/`RateLimit-*`, and a second key of the same tenant unaffected —
 per-key isolation). ADR-0026.
 
-## EPIC-04 · Public API surface — 🚧 16/21 pts
+## EPIC-04 · Public API surface — 🚧 18/21 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -344,7 +344,7 @@ per-key isolation). ADR-0026.
 | STORY-04.2 | OpenAPI generation and contract tests | 5 | ✅ Done | SPEC-07 §3, ADR-0028 |
 | STORY-04.3 | Sources endpoints | 3 | ✅ Done | FR-SRC-01/14 |
 | STORY-04.4 | Documents endpoints | 3 | ✅ Done | FR-SRC-02, FR-ADM-03 |
-| STORY-04.5 | Jobs endpoints | 2 | 🔲 Todo | FR-ADM-02 |
+| STORY-04.5 | Jobs endpoints | 2 | ✅ Done | FR-ADM-02 |
 | STORY-04.6 | Admin tenant endpoints | 3 | 🔲 Todo | FR-TEN-01/05/07 |
 
 **Delivered (STORY-04.1):** the public HTTP server — a new dependency-injected `internal/api` package plus its
@@ -471,6 +471,43 @@ environment for a golangci-lint/Go-toolchain drift on two EPIC-03 audit files an
 tests under mise's `.env` injection — the latter pass once the leaked `CONTROL_PLANE_URL`/age-key env is cleared;
 no gated package was touched.)_
 
+**Delivered (STORY-04.5):** the jobs API — a new `internal/cp/jobs` package (FR-ADM-02, SPEC-07 §2/§2c, SPEC-08
+§3/§4, ADR-0031) plus its three routes wired into `internal/api` (`New` + `liveRoutes()`) behind
+`RequireScopeAdmin → RateLimit`. Jobs are the control-plane history/mirror view of the queue (ADR-0005), a
+control-plane table (C-3), so — like sources (STORY-04.3), not documents — the package operates on the
+control-plane pool via a `Store`/PoolDB and never opens a tenant database (ADR-0003); every operation is scoped
+to the tenant resolved from the API key (FR-ACC-03, no `tenant_id` parameter). `GET /v1/jobs`
+(`?status&kind&source&limit&cursor` → `{items,next_cursor}` keyset pagination on `(queued_at, id)`; status/kind
+filters validated against the enums) and `GET /v1/jobs/{id}` return status, `attempt`, `stats`, timing and a
+computed `duration_ms` for finished jobs (FR-ADM-02). **`POST /v1/jobs/{id}/cancel` realises SPEC-08 §4 against
+what exists today** (there is no worker yet — EPIC-09): a **queued** job is cancelled *immediately and fully* —
+the mirror row is flipped `queued`→`cancelled` in one guarded SQL statement (`… where status='queued'`, race-safe;
+`finished_at` stamped), HTTP `200`, which satisfies FR-ADM-02's "cancel a queued job" literally because a queued
+mirror row has no worker holding it and the mirror is authoritative. A **running** job's cancel is *cooperative*
+(the worker observes `ctx.Done()` between documents and exits `cancelled`, committing nothing partial, SPEC-08
+§4) — that is a River operation and River is EPIC-09, so it is an **injected `Canceller` seam**: nil today →
+the `not_found` seam envelope (mirroring STORY-04.3 `/test` and STORY-04.4 upload); once wired it returns `202`
+(cancellation requested) and the **worker middleware** writes the `running`→`cancelled` transition (SPEC-08 §3).
+Flipping a running row in the API was **deliberately rejected** as a fake (it would race the real worker and
+falsely claim the job stopped — AGENTS.md Integrity). A **terminal** job (succeeded/failed) → `409 conflict`; an
+already-cancelled job is an idempotent `200`. No mirror column was added for the running-cancel signal (it belongs
+in River, not the mirror). No migration/schema change (the `jobs` table, its `job_status`/`job_kind` enums, and
+the `(tenant_id, queued_at desc)` index already existed), so the drift guard stays green; `api/openapi.yaml`
+regenerated via `mise run openapi` so the served spec, the drift guard and the contract tests grow with the three
+routes (ADR-0028). Auditing the cancel action (FR-ADM-05) rides EPIC-09 with the rest of the job lifecycle,
+consistent with the STORY-03.6 plan. TDD throughout (unit tests watched red before the service/handlers existed).
+Unit tests (`internal/cp/jobs`: tenant-required/scoped list+get, filter validation, cursor pagination, duration
+computation, and the full cancel state machine — queued-effective-now, running-seam vs running-with-canceller,
+terminal-409, already-cancelled-idempotent, unknown-404; handler branches via `httptest`) + an e2e golden path
+over the real control-plane Postgres (`test/e2e/jobs_e2e_test.go`: seed queued/running/succeeded rows, then
+list→status-filter→invalid-filter-400→get→get-missing-404→cancel-queued-200(+DB flip)→cancel-terminal-409→
+cancel-running-404-seam(+running row unchanged) through the assembled API-key chain, plus FR-ACC-03 cross-tenant
+isolation — a second tenant's job is neither listed nor gettable). `TestOpenAPIContractGoldenPath`,
+`TestAPIRouterGoldenPath`, `TestSourcesGoldenPath`, `TestDocumentsGoldenPath` and `TestTenantIsolationSuite`
+(SPEC-01 §9, re-run because `internal/api` changed) all stay green. ADR-0031; ISSUE-0004. _(Pre-existing,
+unrelated to this story: `test/e2e/audit_e2e_test.go` trips one `revive` lint finding and the `internal/cli` mise
+coverage run leaks env; both pre-date this change and no gated package was touched.)_
+
 ## EPIC-05 · Ingestion pipeline — 🔲 0/42 pts
 
 | Key | Story | Pts | Status | Traces |
@@ -574,6 +611,9 @@ EPIC-02/03 story deferred to. STORY-04.2 then generates the OpenAPI 3.1 spec fro
 serves it at `/v1/openapi.json`, and adds the drift-guard + jsonschema contract tests (SPEC-07 §3, ADR-0028).
 STORY-04.3 then adds the sources
 endpoints (`internal/cp/sources`) over the control-plane pool, with the connector framework and the job worker as
-injected seams for EPIC-06/09 (ADR-0029). Suggested next: the remaining resource endpoints (04.4 documents, 04.5
-jobs, 04.6 admin tenants) that slot into the `not_found` route seams STORY-04.1 left in place — each appends its
-routes to `liveRoutes()` so the spec grows with them._
+injected seams for EPIC-06/09 (ADR-0029). STORY-04.4 adds the documents endpoints (`internal/documents`) — the
+first request path to reach tenant content, through a `tenant.DB` from the resolver (ADR-0030). STORY-04.5 adds
+the jobs endpoints (`internal/cp/jobs`) over the control-plane pool, with queued-job cancellation effective now
+and running-job cancellation as the EPIC-09 River `Canceller` seam (ADR-0031). Suggested next: STORY-04.6 (admin
+tenant endpoints) — the last EPIC-04 resource group — slotting into the `not_found` route seams STORY-04.1 left in
+place; it appends its routes to `liveRoutes()` so the spec grows with them._

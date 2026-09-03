@@ -12,6 +12,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/config"
 	"github.com/rag-platform/ragctl/internal/cp/audit"
 	"github.com/rag-platform/ragctl/internal/cp/auth"
+	"github.com/rag-platform/ragctl/internal/cp/jobs"
 	"github.com/rag-platform/ragctl/internal/cp/ratelimit"
 	"github.com/rag-platform/ragctl/internal/cp/sources"
 	"github.com/rag-platform/ragctl/internal/cp/tenants"
@@ -108,6 +109,14 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	docSvc.MaxBytes = cfg.MaxUploadBytes
 	docHandlers := documents.NewHandlers(docSvc)
 
+	// --- Jobs (tenant-scoped list/get/cancel over the control-plane jobs table,
+	// STORY-04.5). Jobs are the control-plane history/mirror view (C-3), so this
+	// uses the control-plane pool — never a tenant pool. Cancelling a QUEUED job is
+	// fully effective now; cancelling a RUNNING job needs the River worker
+	// (EPIC-09), left as the nil Canceller seam (returns the not_found seam
+	// envelope until wired). See ADR-0031. ---
+	jobHandlers := jobs.NewHandlers(jobs.NewService(jobs.FromPool(pool)))
+
 	// --- Rate limiting (per key + per tenant, credential-keyed). ---
 	limiter := ratelimit.New(nil)
 	settingsSvc := tenants.NewSettingsService(tenants.SettingsFromPool(pool))
@@ -155,6 +164,10 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		DocumentGet:    http.HandlerFunc(docHandlers.Get),
 		DocumentDelete: http.HandlerFunc(docHandlers.Delete),
 		DocumentChunks: http.HandlerFunc(docHandlers.Chunks),
+
+		JobList:   http.HandlerFunc(jobHandlers.List),
+		JobGet:    http.HandlerFunc(jobHandlers.Get),
+		JobCancel: http.HandlerFunc(jobHandlers.Cancel),
 	}
 
 	return &apiServer{

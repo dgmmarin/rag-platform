@@ -32,5 +32,6 @@
 | [0028](0028-openapi-generated-from-go-and-jsonschema-contract-tests.md) | OpenAPI spec built from a Go route table (no codegen toolchain), served at `/v1/openapi.json`, kept honest by a drift guard and a jsonschema contract test | Accepted |
 | [0029](0029-sources-endpoints-control-plane-store-and-connector-job-seams.md) | Sources endpoints — control-plane store, `409`-by-index concurrent-sync guard, and connector/worker seams | Accepted |
 | [0030](0030-documents-endpoints-tenant-content-via-resolver-and-storage-ingest-seams.md) | Documents endpoints — tenant content reached through the resolver, with object-storage and document-store/ingest-worker seams (upload enqueues `ingest_document`; no partial document row) | Accepted |
+| [0031](0031-jobs-endpoints-cancel-semantics-and-river-canceller-seam.md) | Jobs endpoints — queued-job cancel is effective now (guarded mirror-row flip); running-job cancel is a fail-closed River `Canceller` seam (EPIC-09); terminal → 409 | Accepted |
 
 Template for new ADRs: `NNNN-short-title.md` with sections Status, Context, Options, Decision, Consequences. Reference requirement IDs from the SRS.

@@ -87,6 +87,34 @@ version are built together by the ingest worker/document store (STORY-05.1,
 ADR-0008); the `202` response carries the queued job as the client's handle. See
 ADR-0030.
 
+### 2c. Jobs (STORY-04.5 realisation)
+The jobs routes are served by `internal/cp/jobs` over the control-plane pool —
+the `jobs` table is the history/mirror view of the queue (ADR-0005), a
+control-plane table (C-3); this path never opens a tenant database (ADR-0003),
+mirroring sources (§2a), not documents. The tenant is taken only from the
+authenticated API key (FR-ACC-03). All three routes are the `admin` scope.
+
+`GET /v1/jobs` (`?status&kind&source&limit&cursor` → `{items,next_cursor}` keyset
+pagination on `(queued_at, id)`; the status/kind filters are validated against the
+enums) and `GET /v1/jobs/{id}` return the job with status, `attempt`, `stats`,
+timing, and a computed `duration_ms` for finished jobs (FR-ADM-02).
+
+`POST /v1/jobs/{id}/cancel` implements SPEC-08 §4 against what exists today:
+- a **queued** job is cancelled immediately — the mirror row is flipped
+  `queued`→`cancelled` in one guarded statement (effective now; no worker holds a
+  queued row), HTTP `200`;
+- a **running** job's cancel is cooperative (the worker observes `ctx.Done()`
+  between documents and exits `cancelled`, committing nothing partial). That is a
+  River operation and River lands in EPIC-09, so it is an injected `Canceller`
+  seam: nil today → the not_found seam envelope (mirroring §2a `/test` and §2b
+  upload); once wired, HTTP `202` (cancellation requested) with the worker
+  middleware writing the `running`→`cancelled` transition (SPEC-08 §3);
+- a **terminal** job (succeeded/failed) → `409 conflict`; an already-cancelled
+  job is an idempotent `200`.
+
+No mirror column is added for the running cancel signal — it belongs in River, not
+the mirror. See ADR-0031.
+
 ## 3. OpenAPI
 Generated from Go into `api/openapi.yaml`; served at `/v1/openapi.json`. Contract tests in CI validate responses against it.
 
