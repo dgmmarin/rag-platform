@@ -17,7 +17,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
-| EPIC-05 | Ingestion pipeline | 42 | 40 | 🚧 In progress |
+| EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **122** | **36%** |
+| **Total** | | **337** | **124** | **37%** |
 
 ---
 
@@ -551,7 +551,7 @@ because `internal/api` changed) all stay green. ADR-0032; ISSUE-0005. _(Pre-exis
 `mise run test` leaks `CONTROL_PLANE_URL`/`PROVISION_DB_URL` into the `internal/cli` "RequireURL" tests (they
 pass in a clean env); both pre-date this change and no gated package was touched.)_
 
-## EPIC-05 · Ingestion pipeline — 🚧 40/42 pts
+## EPIC-05 · Ingestion pipeline — ✅ 42/42 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -563,7 +563,7 @@ pass in a clean env); both pre-date this change and no gated package was touched
 | STORY-05.6 | Sink implementation and commit semantics | 5 | ✅ Done | FR-ING-07, NFR-REL-02, SPEC-05 §5 |
 | STORY-05.7 | Job stats and error capture | 2 | ✅ Done | FR-ING-10, SPEC-05 §6 |
 | STORY-05.8 | Reindex job with table swap | 5 | ✅ Done | FR-ING-09, SPEC-03 §5, SPEC-05 §7 |
-| STORY-05.9 | Garbage collection job | 2 | 🔲 Todo | SPEC-03 §4 |
+| STORY-05.9 | Garbage collection job | 2 | ✅ Done | SPEC-03 §4 |
 
 **Delivered (STORY-05.1):** `TenantStore.Put` (`internal/documents/put.go`) — the WRITE half of the tenant
 document store, the persistence step of the ingestion sink (ADR-0008, SPEC-05 §5). It lives beside the STORY-04.4
@@ -778,6 +778,33 @@ every assertion goes through `docker compose exec`, which is currently wedged in
 `docker compose exec postgres psql -c 'select 1'` did not return within 120 s) while the DB is healthy; the
 `Unsafe()` ban it protects is lint-enforced (green) and the per-tenant role's create/swap/drop is proven by the
 reindex e2e over the direct pool. ADR-0039; ISSUE-0013. EPIC-05 → 40/42.
+
+**Delivered (STORY-05.9):** the **retention garbage-collection sweep** — `documents.TenantStore.CollectGarbage`
+(`internal/documents/gc.go`), the operation the SPEC-08 `gc_tenant` daily job (STORY-09.1, out of scope) drives
+per tenant (SPEC-03 §4). All four SPEC-03 §4 classes are collected through ONE resolver `*tenant.DB` (ADR-0003,
+C-1, C-3), no raw pool (`Unsafe()` ban intact): **non-current `document_versions`** older than the window (chunks
+removed by the `version_id` cascade; a *current* version is never a victim, so invariant 2.1 holds),
+**`status='deleted'` documents** past grace (their versions + chunks cascade on `document_id`), **`query_log`**
+past retention (feedback cascades), and **stale `crawl_pages`**. Windows come from a `GCPolicy` whose zero fields
+fall back to the SPEC day-defaults (30/30/90 d); `BatchSize` (default 1000) **bounds every delete** to a
+keyset-limited CTE so a huge backlog is drained in many small transactions instead of one table-locking delete,
+and the sweep is **idempotent** (a second run over the same `now` removes nothing). `GCMetrics` returns
+**rows removed per class** (plus cascaded `Chunks`, informational) for the worker to emit (SPEC-10). **Crawl-page
+caveat (ponytail, kept OFF the `documents.Store` interface, ISP/ADR-0038):** SPEC-03 §4 phrases the rule as "not
+seen in 3 successful syncs" — a generation count the tenant schema does not record (no per-source sync counter;
+the crawler is EPIC-06/07). GC approximates it as "not fetched within `CrawlPageStale`" (the worker supplies
+3×cadence); a **zero window skips** the crawl sweep rather than inventing a threshold, and null-`last_fetched_at`
+pending pages are left alone. Upgrade path (noted in `gc.go`): add `crawl_pages.last_seen_sync` + a per-source
+counter when the crawler lands and switch to a generation delta. **TDD**: `gc_test.go` pins the pure policy/metrics
+logic (defaults incl. negative-batch clamp and crawl-skip; `Total` excludes chunks) — watched **red** (undefined
+symbols) then **green**. **e2e** (`test/e2e/gc_e2e_test.go`, real enrolled tenant at dim 4): seeds each class with a
+collectible *and* a retained row plus live data, then proves each collectible row **and its cascade** is gone, the
+current version / live_chunks / within-grace doc / recent log / fresh+pending crawl pages survive, the per-class
+counts are exact (`{2,1,2,1, chunks 4}`), and a second run is all-zero — **green in ~9 s** (`BatchSize=1` exercises
+the drain loop). `gofmt -l`/`go vet` clean; `go test ./internal/ingest/... ./internal/documents/...` green; pinned
+`golangci-lint v2.13.1` **0 issues** on `internal/documents/...`. No schema/migration/OpenAPI change — GC reuses
+existing `created_at`/`deleted_at`/`last_fetched_at` columns and the schema's FK cascades, so the drift guard stays
+green (no ADR needed; references SPEC-03 §4, ADR-0008/0017). ISSUE-0014. **EPIC-05 → 42/42 ✅.**
 
 ## EPIC-06 · Connector framework and upload connector — 🔲 0/13 pts
 
