@@ -1,0 +1,27 @@
+{
+  "title": "Why RAG Works — Company Knowledge Blog",
+  "blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "text": "Why Retrieval Augmented Generation Works"
+    },
+    {
+      "type": "paragraph",
+      "text": "Retrieval augmented generation improves answer quality by **grounding** a model's output in retrieved passages rather than its parametric memory."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Grounding and citations"
+    },
+    {
+      "type": "paragraph",
+      "text": "Because every answer cites the chunk it came from, readers can verify the claim. See the [grounding docs](/docs/grounding) for details."
+    },
+    {
+      "type": "list",
+      "text": "- Fewer hallucinations\n- Traceable citations"
+    }
+  ]
+}

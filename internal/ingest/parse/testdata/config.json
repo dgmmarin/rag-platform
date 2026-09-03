@@ -1,0 +1,10 @@
+{
+  "service": "rag-platform",
+  "database": {
+    "host": "db.internal",
+    "port": 5432,
+    "sslmode": "require"
+  },
+  "features": ["search", "answering", "reindex"],
+  "debug": false
+}

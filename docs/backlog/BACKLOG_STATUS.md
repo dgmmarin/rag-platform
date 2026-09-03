@@ -17,7 +17,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
-| EPIC-05 | Ingestion pipeline | 42 | 5 | 🚧 In progress |
+| EPIC-05 | Ingestion pipeline | 42 | 10 | 🚧 In progress |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
@@ -551,12 +551,12 @@ because `internal/api` changed) all stay green. ADR-0032; ISSUE-0005. _(Pre-exis
 `mise run test` leaks `CONTROL_PLANE_URL`/`PROVISION_DB_URL` into the `internal/cli` "RequireURL" tests (they
 pass in a clean env); both pre-date this change and no gated package was touched.)_
 
-## EPIC-05 · Ingestion pipeline — 🚧 5/42 pts
+## EPIC-05 · Ingestion pipeline — 🚧 10/42 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-05.1 | Document and version store | 5 | ✅ Done | FR-ING-02, ADR-0008, SPEC-03 |
-| STORY-05.2 | Go parsers: HTML, Markdown, text, CSV, JSON | 5 | 🔲 Todo | FR-ING-01, SPEC-05 §2 |
+| STORY-05.2 | Go parsers: HTML, Markdown, text, CSV, JSON | 5 | ✅ Done | FR-ING-01, SPEC-05 §2 |
 | STORY-05.3 | Parsing sidecar (Python) and Go client | 8 | 🔲 Todo | FR-ING-11, ADR-0006 |
 | STORY-05.4 | Structure-aware chunker | 5 | 🔲 Todo | FR-ING-03/04, SPEC-05 §3 |
 | STORY-05.5 | Embedding provider interface and implementations | 5 | 🔲 Todo | FR-ING-05, NFR-MNT-02 |
@@ -585,6 +585,28 @@ first); e2e golden path (`test/e2e/document_store_e2e_test.go` over a real enrol
 acceptance bullets plus rollback and the non-current-leak guard); `TestTenantIsolationSuite` (SPEC-01 §9) and
 `TestDocumentsGoldenPath` re-run green. Coverage gate green (`internal/tenant` 70.7%; `internal/ingest` not
 created ⇒ SKIP). Lint clean on the touched package. ADR-0033; ISSUE-0006. Starts EPIC-05 (5/42).
+
+**Delivered (STORY-05.2):** `internal/ingest/parse` — the native-Go half of the parse stage (SPEC-05 §2,
+FR-ING-01). A `Registry` maps a canonical MIME type to a pure, stateless `Parser` and dispatches on the
+upload-allowlist MIME (parsers never sniff; charset/params stripped before lookup); `Default()` wires the five
+Go formats and deliberately omits the sidecar formats (PDF/DOCX/PPTX/XLSX, STORY-05.3). Every parser emits the
+**same `Normalised{Title, Blocks}`** the sidecar returns — a closed block set (`heading`/`paragraph`/`table`/
+`list`/`code`) with tables carried as both structured `rows` and GFM markdown — so a Go parser and the sidecar
+feed the chunker (STORY-05.4) interchangeably. **HTML** (`golang.org/x/net/html`, no external readability/
+markdown dependency): picks the `<main>`/`<article>`/`<body>` content root, skips chrome subtrees (nav/aside/
+header/footer/script/form + a class/id/role boilerplate heuristic, ADR-0034), preserves heading levels, renders
+inline links/emphasis/code to markdown and tables to GFM, and falls back to the whole `<body>` if chrome removal
+empties the doc (extra paragraphs is the documented ceiling — never data loss). **Markdown/text** is a line
+scanner (ATX headings, fenced code, pipe tables, lists; text → blank-line-delimited paragraphs). **CSV** → one
+markdown table; **JSON** → a table for a uniform array of flat objects (sorted-union columns for determinism),
+else a flattened `key.path[i]: value` code block. `Normalised.Markdown()` re-renders the blocks to the
+normalised text SPEC-05 §1 hashes. **Fixed a heading-case infinite loop** in the markdown scanner (the ATX-heading
+branch never advanced the line cursor, so any `#`-led document — e.g. the changelog fixture — spun forever). TDD
+golden-file suite: 11 representative fixtures (>=10 AC) parsed to `testdata/golden/*.json`, plus targeted tests
+for boilerplate removal, heading preservation, table→markdown, JSON records/nested, CSV, text paragraphs and
+registry dispatch/unsupported-MIME. `go test ./internal/ingest/parse` green; module suite otherwise unchanged
+(the pre-existing env-sensitive `internal/cli` `*RequiresURL` failures under mise `.env` injection are the
+documented ISSUE-0003 noise). Lint/gofmt clean. ISSUE-0007. EPIC-05 → 10/42.
 
 ## EPIC-06 · Connector framework and upload connector — 🔲 0/13 pts
 

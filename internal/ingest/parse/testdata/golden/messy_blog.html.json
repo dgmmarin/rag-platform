@@ -1,0 +1,32 @@
+{
+  "title": "Multi-tenant isolation — Notes",
+  "blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "text": "How database-per-tenant isolation works"
+    },
+    {
+      "type": "paragraph",
+      "text": "Each tenant gets a dedicated Postgres database; the database boundary is the tenant boundary, so no row ever needs a tenant_id column."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Why not a shared schema?"
+    },
+    {
+      "type": "paragraph",
+      "text": "A shared schema leaks isolation into every query and every index. A dedicated database makes isolation the default."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "text": "Comments"
+    },
+    {
+      "type": "paragraph",
+      "text": "Great post! — a reader"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "title": "Ingestion Pipeline Reference",
+  "blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "text": "Ingestion Pipeline"
+    },
+    {
+      "type": "paragraph",
+      "text": "The pipeline turns source documents into retrievable chunks."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Parsing"
+    },
+    {
+      "type": "paragraph",
+      "text": "Native Go parsers handle HTML, Markdown, text, CSV and JSON."
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "text": "HTML extraction"
+    },
+    {
+      "type": "paragraph",
+      "text": "Boilerplate is stripped before the DOM is walked into blocks."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Chunking"
+    },
+    {
+      "type": "paragraph",
+      "text": "Chunks preserve the heading path for better retrieval."
+    }
+  ]
+}

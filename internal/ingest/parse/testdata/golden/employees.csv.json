@@ -1,0 +1,31 @@
+{
+  "title": "",
+  "blocks": [
+    {
+      "type": "table",
+      "text": "| name | team | role |\n| --- | --- | --- |\n| Ada Lovelace | Platform | Staff Engineer |\n| Alan Turing | Retrieval | Principal Engineer |\n| Grace Hopper | Ingestion | Engineering Manager |",
+      "rows": [
+        [
+          "name",
+          "team",
+          "role"
+        ],
+        [
+          "Ada Lovelace",
+          "Platform",
+          "Staff Engineer"
+        ],
+        [
+          "Alan Turing",
+          "Retrieval",
+          "Principal Engineer"
+        ],
+        [
+          "Grace Hopper",
+          "Ingestion",
+          "Engineering Manager"
+        ]
+      ]
+    }
+  ]
+}

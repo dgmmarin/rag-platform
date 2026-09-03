@@ -1,0 +1,8 @@
+Retrieval grounding keeps answers honest. If no chunk clears the minimum
+score, the platform refuses to answer rather than guessing.
+
+The refusal path never calls the LLM, which saves both cost and latency
+on out-of-scope questions.
+
+Every returned answer carries citations back to the source chunks so a
+reader can verify each claim.

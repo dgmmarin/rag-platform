@@ -1,0 +1,32 @@
+{
+  "title": "Changelog",
+  "blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "text": "Changelog"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "v0.5.0"
+    },
+    {
+      "type": "paragraph",
+      "text": "Added the native-Go parser stage for the ingestion pipeline."
+    },
+    {
+      "type": "list",
+      "text": "- HTML boilerplate removal\n- Tables rendered as markdown\n- CSV and JSON normalisation"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "v0.4.0"
+    },
+    {
+      "type": "list",
+      "text": "- Public HTTP API and middleware chain\n- Rate limiting"
+    }
+  ]
+}

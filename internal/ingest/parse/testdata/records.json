@@ -1,0 +1,5 @@
+[
+  {"id": 1, "name": "acme", "active": true},
+  {"id": 2, "name": "globex", "active": false},
+  {"id": 3, "name": "initech", "active": true}
+]

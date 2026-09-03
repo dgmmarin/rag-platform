@@ -1,0 +1,22 @@
+{
+  "title": "Quickstart",
+  "blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "text": "Quickstart"
+    },
+    {
+      "type": "paragraph",
+      "text": "Get the platform running locally in three steps."
+    },
+    {
+      "type": "list",
+      "text": "1. Start infra with `mise run up`\n2. Run migrations\n  - control plane\n  - tenant\n3. Launch the API"
+    },
+    {
+      "type": "code",
+      "text": "mise run dev\nragctl serve --config ./ragctl.toml"
+    }
+  ]
+}

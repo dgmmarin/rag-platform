@@ -1,0 +1,40 @@
+{
+  "title": "Embedding Providers",
+  "blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "text": "Supported embedding providers"
+    },
+    {
+      "type": "paragraph",
+      "text": "Each tenant selects one provider at provisioning time."
+    },
+    {
+      "type": "table",
+      "text": "| Provider | Model | Dimensions |\n| --- | --- | --- |\n| OpenAI | text-embedding-3-small | 1536 |\n| Voyage | voyage-3 | 1024 |\n| Cohere | embed-english-v3 | 1024 |",
+      "rows": [
+        [
+          "Provider",
+          "Model",
+          "Dimensions"
+        ],
+        [
+          "OpenAI",
+          "text-embedding-3-small",
+          "1536"
+        ],
+        [
+          "Voyage",
+          "voyage-3",
+          "1024"
+        ],
+        [
+          "Cohere",
+          "embed-english-v3",
+          "1024"
+        ]
+      ]
+    }
+  ]
+}

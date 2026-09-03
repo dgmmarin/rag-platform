@@ -1,0 +1,9 @@
+{
+  "title": "",
+  "blocks": [
+    {
+      "type": "code",
+      "text": "database.host: db.internal\ndatabase.port: 5432\ndatabase.sslmode: require\ndebug: false\nfeatures[0]: search\nfeatures[1]: answering\nfeatures[2]: reindex\nservice: rag-platform"
+    }
+  ]
+}

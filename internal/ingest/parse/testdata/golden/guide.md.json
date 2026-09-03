@@ -1,0 +1,66 @@
+{
+  "title": "Deployment Guide",
+  "blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "text": "Deployment Guide"
+    },
+    {
+      "type": "paragraph",
+      "text": "This guide covers a single-region, per-tenant deployment."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Prerequisites"
+    },
+    {
+      "type": "list",
+      "text": "- A Postgres 16 instance with the pgvector extension\n- Object storage (S3 or MinIO)\n- A KMS key for envelope encryption"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Provisioning a tenant"
+    },
+    {
+      "type": "paragraph",
+      "text": "Run the control-plane command:"
+    },
+    {
+      "type": "code",
+      "text": "ragctl tenants create --name acme --region eu-west-1"
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Settings"
+    },
+    {
+      "type": "table",
+      "text": "| Setting | Default | Notes |\n| --- | --- | --- |\n| target_tokens | 512 | chunk size |\n| overlap_tokens | 64 | chunk overlap |",
+      "rows": [
+        [
+          "Setting",
+          "Default",
+          "Notes"
+        ],
+        [
+          "target_tokens",
+          "512",
+          "chunk size"
+        ],
+        [
+          "overlap_tokens",
+          "64",
+          "chunk overlap"
+        ]
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "That is all you need to get started."
+    }
+  ]
+}
