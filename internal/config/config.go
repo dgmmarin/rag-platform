@@ -91,6 +91,12 @@ type Config struct {
 	// configurable, default 50 MB). It bounds the multipart body so an oversize
 	// upload cannot exhaust memory.
 	MaxUploadBytes int64
+
+	// ParserURL is the base URL of the Python parsing sidecar (ADR-0006, SPEC-05
+	// §2) the ingest worker calls for PDF/DOCX/PPTX/XLSX. Empty means no sidecar is
+	// configured, so those formats are skipped (the Go parsers still handle
+	// HTML/Markdown/text/CSV/JSON). Compose sets it to http://parser:8081.
+	ParserURL string
 }
 
 // Load reads configuration, overlaying the optional config file (if filePath is
@@ -197,6 +203,9 @@ func Load(filePath string) (Config, error) {
 		}
 		cfg.MaxUploadBytes = v
 	}
+
+	// Parsing sidecar (STORY-05.3, ADR-0006). Empty leaves the sidecar unconfigured.
+	cfg.ParserURL = mustGet(get, "PARSER_URL")
 
 	return cfg, nil
 }

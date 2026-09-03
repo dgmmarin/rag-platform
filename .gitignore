@@ -12,3 +12,9 @@
 # Local wrapped DEK (dev bootstrap; unwrapped by AGE_SECRET_KEY in .env)
 local-dek.age
 
+# Python parsing-sidecar local venv + caches (mise run test-parser)
+services/parser/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+

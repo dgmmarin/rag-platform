@@ -1,0 +1,9 @@
+# Parsing sidecar runtime deps (ADR-0006, STORY-05.3). Focused per-format
+# libraries rather than one mega-extractor (Unstructured): smaller image, clearer
+# failure modes. PyMuPDF ships manylinux wheels, so no system build deps.
+Flask==3.0.3
+gunicorn==23.0.0
+PyMuPDF==1.24.14
+python-docx==1.1.2
+python-pptx==1.0.2
+openpyxl==3.1.5

@@ -1,51 +1,71 @@
-"""Parsing sidecar stub (STORY-01.2).
+"""Parsing sidecar HTTP service (ADR-0006, SPEC-05 §2, STORY-05.3).
 
-A minimal, dependency-free HTTP service that stands in for the real Python
-parser (ADR-0006, SPEC-05 §3). For this story it only needs a health endpoint
-so the local stack can come up and be probed. STORY-05.3 replaces this with the
-real `POST /parse` (Docling/Unstructured) implementation.
+A stateless service that turns PDF/DOCX/PPTX/XLSX bytes into the normalised
+``{title, blocks:[...]}`` representation the Go ingestion worker consumes. The Go
+worker parses HTML/Markdown/text/CSV/JSON itself and calls this only for the heavy
+formats (``internal/ingest/sidecar`` is the client).
 
-Kept on the standard library on purpose: no framework, no ML deps, tiny image.
+Endpoints:
+  GET  /healthz  -> 200 {"status":"ok"}          (liveness; used by compose)
+  POST /parse    -> 200 {"title","blocks":[...]} (multipart: file=<bytes>, mime=<type>)
+
+Errors are shaped so the worker can react per SPEC-05 §2/§8:
+  415 unsupported mime  -> not a sidecar format (worker should not have called us)
+  422 parse failure     -> the worker records metadata.parse_error, skips the doc
+  413 payload too large -> body exceeded MAX_PARSE_BYTES
+
+Flask handles multipart parsing and body-size limits (input validation at the
+trust boundary); gunicorn serves it (see Dockerfile). Kept sync + per-worker
+because extraction is CPU-bound — scale by process/replica, not async.
 """
 
-import json
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from __future__ import annotations
 
-PORT = 8081
+import os
 
+from flask import Flask, jsonify, request
 
-class Handler(BaseHTTPRequestHandler):
-    def _send(self, code: int, body: dict) -> None:
-        payload = json.dumps(body).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+import parsers
 
-    def do_GET(self) -> None:  # noqa: N802 (http.server API)
-        if self.path == "/healthz":
-            self._send(200, {"status": "ok"})
-            return
-        self._send(404, {"error": "not found"})
+# Body ceiling; defaults to the platform's 50 MB upload limit (FR-SRC-02). Flask
+# rejects an oversize multipart body with 413 before it reaches a parser.
+MAX_PARSE_BYTES = int(os.environ.get("MAX_PARSE_BYTES", str(50 * 1024 * 1024)))
 
-    def do_POST(self) -> None:  # noqa: N802 (http.server API)
-        if self.path == "/parse":
-            # STORY-05.3 implements the real contract:
-            #   multipart file + mime -> {title, blocks:[...]}.
-            self._send(501, {"error": "parse not implemented (stub)"})
-            return
-        self._send(404, {"error": "not found"})
-
-    def log_message(self, *_args) -> None:  # silence per-request stderr noise
-        pass
+app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_PARSE_BYTES
 
 
-def main() -> None:
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"parser sidecar stub listening on :{PORT}", flush=True)
-    server.serve_forever()
+@app.get("/healthz")
+def healthz():
+    return jsonify(status="ok")
+
+
+@app.post("/parse")
+def parse():
+    mime = (request.form.get("mime") or "").strip().lower()
+    upload = request.files.get("file")
+    if upload is None:
+        return jsonify(error="missing 'file' part"), 400
+    if not mime:
+        return jsonify(error="missing 'mime' field"), 400
+
+    extractor = parsers.DISPATCH.get(mime)
+    if extractor is None:
+        return jsonify(error=f"unsupported mime {mime!r}"), 415
+
+    data = upload.read()
+    try:
+        result = extractor(data)
+    except Exception as exc:  # noqa: BLE001 - any parse failure is a 422, not a 500.
+        return jsonify(error=f"parse failed: {exc}"), 422
+    return jsonify(result)
+
+
+@app.errorhandler(413)
+def too_large(_err):
+    return jsonify(error="payload too large"), 413
 
 
 if __name__ == "__main__":
-    main()
+    # Dev fallback only; production runs under gunicorn (see Dockerfile).
+    app.run(host="0.0.0.0", port=int(os.environ.get("PARSER_PORT", "8081")))

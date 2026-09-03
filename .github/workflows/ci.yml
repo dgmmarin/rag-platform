@@ -50,6 +50,15 @@ jobs:
           path: coverage/
           if-no-files-found: warn
 
+  parser:
+    # Python parsing-sidecar tests (STORY-05.3, ADR-0006). Same `mise run` task a
+    # developer runs; mise provides the pinned Python from mise.toml.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: mise run test-parser
+
   integration:
     # "integration tests against a Postgres service" (AC) = the //go:build e2e
     # suite against the real compose stack (Postgres+pgvector, MinIO, parser

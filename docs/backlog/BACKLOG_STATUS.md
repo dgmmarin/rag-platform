@@ -17,7 +17,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
-| EPIC-05 | Ingestion pipeline | 42 | 10 | 🚧 In progress |
+| EPIC-05 | Ingestion pipeline | 42 | 18 | 🚧 In progress |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
@@ -551,13 +551,13 @@ because `internal/api` changed) all stay green. ADR-0032; ISSUE-0005. _(Pre-exis
 `mise run test` leaks `CONTROL_PLANE_URL`/`PROVISION_DB_URL` into the `internal/cli` "RequireURL" tests (they
 pass in a clean env); both pre-date this change and no gated package was touched.)_
 
-## EPIC-05 · Ingestion pipeline — 🚧 10/42 pts
+## EPIC-05 · Ingestion pipeline — 🚧 18/42 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-05.1 | Document and version store | 5 | ✅ Done | FR-ING-02, ADR-0008, SPEC-03 |
 | STORY-05.2 | Go parsers: HTML, Markdown, text, CSV, JSON | 5 | ✅ Done | FR-ING-01, SPEC-05 §2 |
-| STORY-05.3 | Parsing sidecar (Python) and Go client | 8 | 🔲 Todo | FR-ING-11, ADR-0006 |
+| STORY-05.3 | Parsing sidecar (Python) and Go client | 8 | ✅ Done | FR-ING-11, ADR-0006 |
 | STORY-05.4 | Structure-aware chunker | 5 | 🔲 Todo | FR-ING-03/04, SPEC-05 §3 |
 | STORY-05.5 | Embedding provider interface and implementations | 5 | 🔲 Todo | FR-ING-05, NFR-MNT-02 |
 | STORY-05.6 | Sink implementation and commit semantics | 5 | 🔲 Todo | FR-ING-07, NFR-REL-02, SPEC-05 §5 |
@@ -607,6 +607,29 @@ for boilerplate removal, heading preservation, table→markdown, JSON records/ne
 registry dispatch/unsupported-MIME. `go test ./internal/ingest/parse` green; module suite otherwise unchanged
 (the pre-existing env-sensitive `internal/cli` `*RequiresURL` failures under mise `.env` injection are the
 documented ISSUE-0003 noise). Lint/gofmt clean. ISSUE-0007. EPIC-05 → 10/42.
+
+**Delivered (STORY-05.3):** the Python **parsing sidecar** (`services/parser`) and its **Go client**
+(`internal/ingest/sidecar`) — the heavy-format half of the parse stage (ADR-0006, SPEC-05 §2, FR-ING-11).
+The STORY-01.2 health-only stub becomes a real Flask/gunicorn service: `POST /parse` (multipart `file`+`mime`)
+extracts **PDF** (PyMuPDF — font-size heading heuristic + `find_tables`), **DOCX** (python-docx, body walked in
+document order so paragraphs/tables interleave), **PPTX** (python-pptx — slide titles/text/tables) and **XLSX**
+(openpyxl — per-sheet heading+table) into the **same `Normalised{title, blocks}`** the Go parsers emit (STORY-05.2),
+tables carrying `rows` + a GFM `text` from a `markdown_table` that mirrors the Go `markdownTable` byte-for-byte —
+so both producers hash identically and are interchangeable to the chunker. Focused per-format libraries (all
+manylinux wheels, non-root `python:3.11-slim`) over a mega-extractor (ADR-0035); the block shape follows SPEC-05
+§2 `rows`, reconciling ADR-0006's older `table`. Error taxonomy the worker acts on: **415** unsupported /
+**422** parse-failure (both terminal — the worker records `metadata.parse_error` and skips, the sync still
+succeeds, SPEC-05 §8) / **429·5xx** transient / **413** too large. The **Go client** `Parse(ctx, filename, mime,
+data) → parse.Normalised` applies the 120 s parse budget, retries transport/429/5xx with capped exponential
+backoff **honouring `Retry-After`** (cancellable by context), and wraps each call in an **OpenTelemetry span with
+W3C trace-context injection** via the installed global propagator — no `otelhttp` dependency. `config.ParserURL`
+reads `PARSER_URL` (compose already sets `http://parser:8081`). Six committed fixtures across the four formats
+(`gen_fixtures.py`, runtime deps only). `mise run test-parser` (13 pytest, wired into CI, ADR-0014) + `go test
+./internal/ingest/sidecar ./internal/config` green (success/decoding, 415/422 terminal-no-retry,
+retry-then-succeed, give-up, Retry-After-cut-by-context, trace injection, health); `golangci-lint` 0 issues;
+gofmt clean. The image installs every dep as a manylinux wheel (build log confirms) — a clean tagged export
+couldn't be confirmed locally (dev docker daemon wedged mid-run), so CI's `integration` job builds it via
+compose. No schema/OpenAPI/migration change. ADR-0035; ISSUE-0008. EPIC-05 → 18/42.
 
 ## EPIC-06 · Connector framework and upload connector — 🔲 0/13 pts
 

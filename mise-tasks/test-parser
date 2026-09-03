@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+#MISE description="Run the Python parsing-sidecar tests (STORY-05.3)"
+# Mirrors the Go `test` task for the sidecar (ADR-0006). CI runs this same task
+# (ADR-0014), so local and CI never diverge. A local venv keeps the sidecar's
+# deps out of the system interpreter; it is gitignored.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT/services/parser"
+
+VENV=".venv"
+python -m venv "$VENV"
+"$VENV/bin/pip" install --quiet --disable-pip-version-check -r requirements.txt pytest
+"$VENV/bin/python" -m pytest -q
