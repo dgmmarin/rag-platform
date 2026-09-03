@@ -36,6 +36,7 @@ type CLI struct {
 	Migrate MigrateCmd `cmd:"" help:"Apply database migrations."`
 	Enroll  EnrollCmd  `cmd:"" help:"Enrol a new tenant."`
 	Tenant  TenantCmd  `cmd:"" help:"Manage tenant lifecycle (suspend, resume, delete)."`
+	OpenAPI OpenAPICmd `cmd:"" name:"openapi" help:"Print the OpenAPI spec (regenerates api/openapi.yaml)."`
 }
 
 // New builds the Kong parser for the ragctl grammar, writing output to the

@@ -56,6 +56,10 @@ func New(d Deps) http.Handler {
 		mux.Handle("GET /metrics", d.Metrics.Handler())
 	}
 
+	// The OpenAPI description is public (open, no auth): it drives client and SDK
+	// generation and must be reachable without a credential (SPEC-07 §3).
+	mux.Handle("GET /v1/openapi.json", OpenAPIHandler())
+
 	// --- Open auth routes (no session required to obtain one). ---
 	mux.Handle("POST /v1/auth/signup", handlerOr(d.Signup))
 	mux.Handle("POST /v1/auth/login", handlerOr(d.Login))

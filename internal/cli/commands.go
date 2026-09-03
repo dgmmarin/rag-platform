@@ -9,6 +9,7 @@ import (
 
 	"github.com/alecthomas/kong"
 
+	"github.com/rag-platform/ragctl/internal/api"
 	"github.com/rag-platform/ragctl/internal/migrate"
 	"github.com/rag-platform/ragctl/internal/provision"
 )
@@ -55,6 +56,24 @@ func (c *ServeCmd) Run(k *kong.Context, g *Globals) error {
 		Cipher:     cipher,
 		Secure:     c.SecureCookies,
 	}, k.Stderr)
+}
+
+// OpenAPICmd prints the OpenAPI 3.1 document as YAML (STORY-04.2, SPEC-07 §3). It
+// takes no DB or config: the spec is built purely from the Go route table and
+// error-code constants in internal/api, so `mise run openapi` can regenerate the
+// checked-in api/openapi.yaml offline. A drift-guard test fails CI if the file
+// falls out of step with the code (ADR-0028).
+type OpenAPICmd struct{}
+
+// Run writes the generated OpenAPI YAML to stdout. `mise run openapi` redirects it
+// into api/openapi.yaml.
+func (c *OpenAPICmd) Run(k *kong.Context) error {
+	body, err := api.MarshalOpenAPIYAML()
+	if err != nil {
+		return fmt.Errorf("openapi: %w", err)
+	}
+	_, werr := k.Stdout.Write(body)
+	return werr
 }
 
 // WorkCmd starts the job worker (SPEC-02 §7:

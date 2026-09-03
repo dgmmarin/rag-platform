@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Regenerate api/openapi.yaml from the Go route table (SPEC-07 §3)"
+set -euo pipefail
+# The spec is built from code (internal/api/openapi.go); this writes the checked-in
+# YAML artifact. A drift-guard unit test fails if the file is stale (ADR-0028).
+go run ./cmd/ragctl openapi > api/openapi.yaml
+echo "openapi: wrote api/openapi.yaml"

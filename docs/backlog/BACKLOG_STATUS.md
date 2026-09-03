@@ -16,7 +16,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
-| EPIC-04 | Public API surface | 21 | 5 | 🚧 In progress |
+| EPIC-04 | Public API surface | 21 | 10 | 🚧 In progress |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **94** | **28%** |
+| **Total** | | **337** | **99** | **29%** |
 
 ---
 
@@ -336,12 +336,12 @@ golden path over the real control-plane Postgres driving the real `RequireScope`
 over the per-key limit → 429 with `Retry-After`/`RateLimit-*`, and a second key of the same tenant unaffected —
 per-key isolation). ADR-0026.
 
-## EPIC-04 · Public API surface — 🚧 5/21 pts
+## EPIC-04 · Public API surface — 🚧 10/21 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-04.1 | HTTP server, routing, middleware chain | 5 | ✅ Done | SPEC-07 §1, ADR-0027 |
-| STORY-04.2 | OpenAPI generation and contract tests | 5 | 🔲 Todo | SPEC-07 §3 |
+| STORY-04.2 | OpenAPI generation and contract tests | 5 | ✅ Done | SPEC-07 §3, ADR-0028 |
 | STORY-04.3 | Sources endpoints | 3 | 🔲 Todo | FR-SRC-01/14 |
 | STORY-04.4 | Documents endpoints | 3 | 🔲 Todo | FR-SRC-02, FR-ADM-03 |
 | STORY-04.5 | Jobs endpoints | 2 | 🔲 Todo | FR-ADM-02 |
@@ -376,6 +376,29 @@ control-plane Postgres (`test/e2e/api_router_e2e_test.go`: the assembled router 
 readyz open, anon `/admin/audit` `401` object envelope with `X-Request-Id`, seed a real `settings.update` row,
 login through the mounted route, platform admin reads the audit log through the full chain, non-admin `403`). No
 migration/schema change (this story only wires existing services) so the drift guard stays green. ADR-0027.
+
+**Delivered (STORY-04.2):** OpenAPI generation and contract tests (SPEC-07 §3, ADR-0028). The OpenAPI 3.1
+document is built in `internal/api/openapi.go` from a single `liveRoutes()` table (mirroring the routes
+STORY-04.1's router mounts) and the `ErrorCodes()` list derived from the SPEC-07 §1 `Code*` constants — so
+the spec is genuinely code-derived: the `ErrorEnvelope` component schema matches the `errorEnvelope` Go type
+and its `code` enum *is* `ErrorCodes()`, and neither can drift from what `WriteError` emits. It is served as
+JSON at `GET /v1/openapi.json` (open, no auth — a public description drives client/SDK generation) via
+`OpenAPIHandler()`, mounted alongside the operational endpoints, and marshalled to the checked-in
+`api/openapi.yaml` by `mise run openapi` (a new `ragctl openapi` Kong subcommand that needs no DB/config, so it
+regenerates offline and keeps `mise.toml` minimal — one task file, no tool pin; single-entrypoint per
+ADR-0009). **Divergence from SPEC-07 §3's literal "oapi-codegen or swag", recorded in ADR-0028:** no
+code-generation toolchain was added — `oapi-codegen` is spec-first (wrong direction) and `swag` is
+annotation-driven codegen, both heavy for a small, mostly-seam surface. The only new import is
+`gopkg.in/yaml.v3` (promoted from transitive to direct); `santhosh-tekuri/jsonschema/v6` is reused. SPEC-07 §3
+updated to describe the realised approach. **Contract enforcement is two-pronged:** a drift-guard unit test
+fails CI when `api/openapi.yaml` is stale (regenerate with `mise run openapi`), and a jsonschema contract test
+(unit + an e2e golden path over the real control-plane Postgres, `test/e2e/openapi_e2e_test.go`) drives *real*
+error responses from the assembled router (a 401 from the scope gate, a 404 from the unknown-route fallback)
+and validates them against the `ErrorEnvelope` schema extracted from the *served* spec, with a negative control
+(a bare-string `{"error":"…"}` body) proving the check has teeth. TDD throughout (tests written and watched
+red before the builder existed). No migration/schema change and no tenant data touched (C-3), so the drift
+guard stays green; `internal/api` stays outside the coverage gate (consistent with ADR-0027) but the new code
+is unit- + e2e-covered. The route table is the growable seam 04.3–04.6 append to. ADR-0028.
 
 ## EPIC-05 · Ingestion pipeline — 🔲 0/42 pts
 
@@ -476,6 +499,8 @@ migration/schema change (this story only wires existing services) so the drift g
 _EPIC-04 (Public API surface) is now under way: STORY-04.1 stands up the public router and mounts the accumulated
 EPIC-03 middleware in the SPEC-07 §1 order (request ID/logging → recovery → CORS globally, with auth →
 credential-keyed rate limit per route) plus every 03.x handler built behind it — the router-wiring seam every
-EPIC-02/03 story deferred to. Suggested next: STORY-04.2 (OpenAPI generation and contract tests — SPEC-07 §3),
-then the resource endpoints (04.3 sources, 04.4 documents, 04.5 jobs, 04.6 admin tenants) that slot into the
-`not_found` route seams STORY-04.1 left in place._
+EPIC-02/03 story deferred to. STORY-04.2 then generates the OpenAPI 3.1 spec from that router's route table,
+serves it at `/v1/openapi.json`, and adds the drift-guard + jsonschema contract tests (SPEC-07 §3, ADR-0028).
+Suggested next: the resource endpoints (04.3 sources, 04.4 documents, 04.5 jobs, 04.6 admin tenants) that slot
+into the `not_found` route seams STORY-04.1 left in place — each appends its routes to `liveRoutes()` so the
+spec grows with them._

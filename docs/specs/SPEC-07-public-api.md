@@ -40,4 +40,21 @@
 | GET | /healthz, /readyz | — | |
 
 ## 3. OpenAPI
-Generated from Go types (`oapi-codegen` or `swag`) into `api/openapi.yaml`; served at `/v1/openapi.json`. Contract tests in CI validate responses against it.
+Generated from Go into `api/openapi.yaml`; served at `/v1/openapi.json`. Contract tests in CI validate responses against it.
+
+The document is built in `internal/api/openapi.go` from the same route table the
+router mounts and the same error-code constants `WriteError` emits — so the spec
+is code-derived and cannot silently drift from the API. It is served as JSON at
+`/v1/openapi.json` (open, no auth) and marshalled to the checked-in
+`api/openapi.yaml` by `mise run openapi` (`ragctl openapi`). A drift-guard unit
+test fails CI when the YAML is stale, and a contract test (unit + an e2e golden
+path over the real stack) validates recorded error responses against the
+`ErrorEnvelope` schema the spec itself publishes, using
+`santhosh-tekuri/jsonschema/v6`.
+
+This realises the section's intent without a code-generation toolchain
+(`oapi-codegen` is spec-first — the wrong direction — and `swag` adds
+annotation-driven codegen for a small, mostly-seam surface); ADR-0028 records the
+decision and the divergence. Stories 04.3–04.6 add their routes to the same route
+table, and the served JSON, the YAML artifact, the drift guard, and the contract
+test all extend with them.

@@ -29,5 +29,6 @@
 | [0025](0025-platform-admin-impersonation-grants.md) | Platform admin impersonation — explicit `impersonation_sessions` grant recording real admin + impersonated user, time-bounded, revocable, audited | Accepted |
 | [0026](0026-rate-limiting-in-process-token-bucket.md) | Rate limiting — in-process token bucket per API key and per tenant, `settings.limits.qps`-driven, fail-closed `429` with `Retry-After`/`RateLimit-*` | Accepted |
 | [0027](0027-public-router-composition-and-error-envelope.md) | Public router — dependency-injected `internal/api` package, credential-keyed rate-limiter-after-auth chain, and one SPEC-07 §1 error envelope across router-mounted middleware/handlers | Accepted |
+| [0028](0028-openapi-generated-from-go-and-jsonschema-contract-tests.md) | OpenAPI spec built from a Go route table (no codegen toolchain), served at `/v1/openapi.json`, kept honest by a drift guard and a jsonschema contract test | Accepted |
 
 Template for new ADRs: `NNNN-short-title.md` with sections Status, Context, Options, Decision, Consequences. Reference requirement IDs from the SRS.
