@@ -54,10 +54,11 @@ Sidecar response: `{title, blocks:[{type:"heading|paragraph|table|list|code", le
 - Token counting via tiktoken `cl100k_base` (approximation is acceptable across providers).
 
 ## 4. Embedding
-- Interface `Embedder.Embed(ctx, []string) ([][]float32, error)`; providers: OpenAI, Voyage, Cohere, TEI (self-hosted).
-- Batches of ≤ 96 texts / ≤ 100k tokens; bounded concurrency per tenant (default 4 batches in flight).
-- Retries with exponential backoff on 429/5xx; honours `Retry-After`; circuit breaker per provider.
-- Token usage recorded into `jobs.stats` and `usage_daily`.
+- Interface `Embedder.Embed(ctx, []string) (Result, error)` where `Result{Vectors [][]float32, Tokens int}`; providers: OpenAI, Voyage, Cohere, TEI (self-hosted). The Go interface returns a `Result` rather than a bare `[][]float32` so the per-call token usage this section requires be recorded is surfaced alongside the vectors instead of lost — `Result.Vectors` is that `[][]float32`, aligned one-to-one with the input, and `Result.Tokens` is the provider-reported usage (0 when the provider's API omits it, e.g. TEI). Adding a provider is one `Embedder` implementation (NFR-MNT-02). See ADR-0037.
+- Batches of ≤ 96 texts / ≤ 100k tokens; bounded concurrency per tenant (default 4 batches in flight). The value returned by `embed.New` is itself an `Embedder` that partitions an arbitrary input into provider-sized batches, runs them with the bounded concurrency, and reassembles vectors in input order.
+- Retries with exponential backoff on 429/5xx; honours `Retry-After`; circuit breaker per provider (opens after N consecutive failures, short-circuits with `ErrCircuitOpen` for a cooldown, then admits one half-open trial).
+- Provider access is fail-closed against the tenant's `settings.providers_allowed` (SPEC-09 §2): `embed.New` refuses a provider absent from the allowlist (`ErrProviderNotAllowed`).
+- Token usage recorded into `jobs.stats` and `usage_daily`: the embedder surfaces `Result.Tokens`; the sink (STORY-05.6) folds it into `usage.Delta.EmbedTokens` and `jobs.stats.embed_tokens`.
 
 ## 5. Commit semantics
 Per document, one transaction: insert `document_versions`, insert all `chunks`, `UPDATE documents SET current_version=$1, last_seen_at=now(), status='active'`. If embedding fails the transaction is not opened; the document keeps its previous version and the job records the error.

@@ -17,7 +17,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
-| EPIC-05 | Ingestion pipeline | 42 | 23 | 🚧 In progress |
+| EPIC-05 | Ingestion pipeline | 42 | 28 | 🚧 In progress |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
@@ -551,7 +551,7 @@ because `internal/api` changed) all stay green. ADR-0032; ISSUE-0005. _(Pre-exis
 `mise run test` leaks `CONTROL_PLANE_URL`/`PROVISION_DB_URL` into the `internal/cli` "RequireURL" tests (they
 pass in a clean env); both pre-date this change and no gated package was touched.)_
 
-## EPIC-05 · Ingestion pipeline — 🚧 23/42 pts
+## EPIC-05 · Ingestion pipeline — 🚧 28/42 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -559,7 +559,7 @@ pass in a clean env); both pre-date this change and no gated package was touched
 | STORY-05.2 | Go parsers: HTML, Markdown, text, CSV, JSON | 5 | ✅ Done | FR-ING-01, SPEC-05 §2 |
 | STORY-05.3 | Parsing sidecar (Python) and Go client | 8 | ✅ Done | FR-ING-11, ADR-0006 |
 | STORY-05.4 | Structure-aware chunker | 5 | ✅ Done | FR-ING-03/04, SPEC-05 §3 |
-| STORY-05.5 | Embedding provider interface and implementations | 5 | 🔲 Todo | FR-ING-05, NFR-MNT-02 |
+| STORY-05.5 | Embedding provider interface and implementations | 5 | ✅ Done | FR-ING-05, NFR-MNT-02 |
 | STORY-05.6 | Sink implementation and commit semantics | 5 | 🔲 Todo | FR-ING-07, NFR-REL-02, SPEC-05 §5 |
 | STORY-05.7 | Job stats and error capture | 2 | 🔲 Todo | FR-ING-10 |
 | STORY-05.8 | Reindex job with table swap | 5 | 🔲 Todo | FR-ING-09, SPEC-03 §5, SPEC-05 §7 |
@@ -649,6 +649,37 @@ shim) so split table parts re-render. TDD: `go test ./internal/ingest/chunk` gre
 heading_path, context-line-on-embed-only (+ title==H1 dedupe), table/code intact, target/overlap configurable
 with overlap carried, oversize table→rows and code→lines. `golangci-lint` 0 issues; gofmt clean; `parse` re-run
 green after the export. No schema/OpenAPI/migration change. ADR-0036; ISSUE-0009. EPIC-05 → 23/42.
+
+**Delivered (STORY-05.5):** the **embedding stage** (`internal/ingest/embed`) — turns chunk text into vectors
+(SPEC-05 §4, FR-ING-05, NFR-MNT-02). An `Embedder` seam (`Embed(ctx, []string) (Result, error)`) with four
+**dependency-free** `net/http`+`encoding/json` providers behind a `registry` (a fifth is one file + one line,
+NFR-MNT-02, no vendor SDKs per ADR-0002): **OpenAI** and **Voyage** share the identical
+`{model,input}`→`{data:[{index,embedding}],usage.total_tokens}` schema so they are **one** implementation
+(`openAICompatible`, data re-sorted by index); **Cohere** (`{texts,input_type:"search_document"}`→`embeddings` +
+`meta.billed_units.input_tokens`); **TEI** self-hosted (`{inputs}`→bare `[[...]]`, no usage → `Tokens=0`). The
+value `New` returns is **itself an `Embedder`** — a `batcher` that partitions arbitrary input into **≤96-text /
+≤100k-token** batches, runs them with **bounded per-tenant concurrency** (`errgroup.SetLimit`, default 4 in
+flight — already-present `golang.org/x/sync`, no new dep), guards each batch with a **per-provider circuit
+breaker** (closed/open/half-open, `ErrCircuitOpen` short-circuits without hitting the API so the sink can *snooze*
+per SPEC-05 §8), and reassembles vectors in **input order** with tokens summed. Per-request **retry/backoff
+honouring `Retry-After`** on 429/5xx (context-cancellable, terminal non-2xx not retried) + an **OTel span with W3C
+propagation** mirror `internal/ingest/sidecar` exactly (no `otelhttp` dep). **Token usage surfaced** via
+`Result{Vectors [][]float32, Tokens int}` — the SPEC-05 §4 signature is *widened* from bare `[][]float32` because
+that same section requires token usage be recorded and a bare slice cannot carry it (SPEC-05 §4 updated; ADR-0037);
+the sink (STORY-05.6) folds `Result.Tokens` into `usage.Delta.EmbedTokens` (ADR-0024) and `jobs.stats.embed_tokens`
+(SPEC-05 §6) — this story only surfaces it. **Provider allowlist fail-closed**: `New` refuses a provider absent
+from `settings.providers_allowed` (`ErrProviderNotAllowed`, incl. empty) *before* the registry, so tenant content
+never leaves for a non-permitted provider (SPEC-09 §2); `ErrUnknownProvider` for a bad name. TDD (`embed_test.go`
+watched fail — no non-test files — before implementation); `go test ./internal/ingest/embed` green and **`-race`
+clean**: per-provider request-shape/auth/path + out-of-order reassembly + token surfacing, batching bounds (texts
+and token budget, order across batches), bounded concurrency, retry-then-succeed, `Retry-After`-cut-by-context,
+terminal-not-retried, breaker opens+short-circuits, allowlist reject + empty-fails-closed, unknown provider, empty
+input. `gofmt`/`go vet` clean; pinned `golangci-lint v2.13.1` **0 issues**. No schema/OpenAPI/migration change
+(`jobs.stats` is an existing JSON blob, `usage_daily` already exists; this package writes neither). Coverage:
+`internal/ingest` reports SKIP against the gate (matches the path exactly, no direct Go files) so the subpackage is
+not gated. Module change limited to promoting `golang.org/x/sync` + `go.opentelemetry.io/otel/trace` to direct
+(the `golang.org/x/net` promotion is a pre-existing drift fix — `internal/ingest/parse` uses `x/net/html`).
+ADR-0037; ISSUE-0010. EPIC-05 → 28/42.
 
 ## EPIC-06 · Connector framework and upload connector — 🔲 0/13 pts
 
