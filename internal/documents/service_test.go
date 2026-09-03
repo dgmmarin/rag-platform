@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -61,6 +62,12 @@ func (f *fakeStore) SoftDelete(_ context.Context, _ *tenant.DB, _ string) (bool,
 }
 func (f *fakeStore) Put(_ context.Context, _ *tenant.DB, _ PutInput) (PutResult, error) {
 	return PutResult{}, nil
+}
+func (f *fakeStore) TouchIfUnchanged(_ context.Context, _ *tenant.DB, _, _ string, _ []byte) (bool, error) {
+	return false, nil
+}
+func (f *fakeStore) SoftDeleteUnseen(_ context.Context, _ *tenant.DB, _ string, _ time.Time) (int, error) {
+	return 0, nil
 }
 
 type fakeJobs struct {

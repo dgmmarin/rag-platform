@@ -63,6 +63,8 @@ Sidecar response: `{title, blocks:[{type:"heading|paragraph|table|list|code", le
 ## 5. Commit semantics
 Per document, one transaction: insert `document_versions`, insert all `chunks`, `UPDATE documents SET current_version=$1, last_seen_at=now(), status='active'`. If embedding fails the transaction is not opened; the document keeps its previous version and the job records the error.
 
+Realised by the ingestion **sink** (`internal/ingest/sink`, STORY-05.6, ADR-0038), which composes the §1 stages and owns no SQL of its own: the §1 "compare (== current version hash?)" step is the atomic `documents.TouchIfUnchanged` store method (touch `last_seen_at` and skip chunk/embed on a match — so an unchanged document costs no embedding), the per-document transaction is `documents.Put` (ADR-0008/0033), and `Sink.Complete` soft-deletes unseen documents on a **full sync only** via `documents.SoftDeleteUnseen` (`last_seen_at < run.started_at`), where `started_at` is captured when the run begins. A single-document parse or embed error is recorded in `jobs.stats.errors` and the sync continues (§2/§8); `embed.ErrCircuitOpen` returns a `sink.SnoozeError` so the worker snoozes the job rather than failing it (§8). A worker crash mid-sync leaves no partial document: completed documents are whole and unseen ones are skipped by hash on the retry.
+
 ## 6. Job stats (`jobs.stats`)
 `docs_seen, docs_changed, docs_unchanged, docs_deleted, docs_failed, chunks_written, embed_tokens, bytes_fetched, duration_ms, errors:[{external_id, msg}] (capped at 100)`.
 

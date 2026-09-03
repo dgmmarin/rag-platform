@@ -17,7 +17,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
-| EPIC-05 | Ingestion pipeline | 42 | 28 | 🚧 In progress |
+| EPIC-05 | Ingestion pipeline | 42 | 33 | 🚧 In progress |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **110** | **33%** |
+| **Total** | | **337** | **115** | **34%** |
 
 ---
 
@@ -551,7 +551,7 @@ because `internal/api` changed) all stay green. ADR-0032; ISSUE-0005. _(Pre-exis
 `mise run test` leaks `CONTROL_PLANE_URL`/`PROVISION_DB_URL` into the `internal/cli` "RequireURL" tests (they
 pass in a clean env); both pre-date this change and no gated package was touched.)_
 
-## EPIC-05 · Ingestion pipeline — 🚧 28/42 pts
+## EPIC-05 · Ingestion pipeline — 🚧 33/42 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -560,7 +560,7 @@ pass in a clean env); both pre-date this change and no gated package was touched
 | STORY-05.3 | Parsing sidecar (Python) and Go client | 8 | ✅ Done | FR-ING-11, ADR-0006 |
 | STORY-05.4 | Structure-aware chunker | 5 | ✅ Done | FR-ING-03/04, SPEC-05 §3 |
 | STORY-05.5 | Embedding provider interface and implementations | 5 | ✅ Done | FR-ING-05, NFR-MNT-02 |
-| STORY-05.6 | Sink implementation and commit semantics | 5 | 🔲 Todo | FR-ING-07, NFR-REL-02, SPEC-05 §5 |
+| STORY-05.6 | Sink implementation and commit semantics | 5 | ✅ Done | FR-ING-07, NFR-REL-02, SPEC-05 §5 |
 | STORY-05.7 | Job stats and error capture | 2 | 🔲 Todo | FR-ING-10 |
 | STORY-05.8 | Reindex job with table swap | 5 | 🔲 Todo | FR-ING-09, SPEC-03 §5, SPEC-05 §7 |
 | STORY-05.9 | Garbage collection job | 2 | 🔲 Todo | SPEC-03 §4 |
@@ -680,6 +680,46 @@ input. `gofmt`/`go vet` clean; pinned `golangci-lint v2.13.1` **0 issues**. No s
 not gated. Module change limited to promoting `golang.org/x/sync` + `go.opentelemetry.io/otel/trace` to direct
 (the `golang.org/x/net` promotion is a pre-existing drift fix — `internal/ingest/parse` uses `x/net/html`).
 ADR-0037; ISSUE-0010. EPIC-05 → 28/42.
+
+**Delivered (STORY-05.6):** the ingestion **Sink** (`internal/ingest/sink`) — the per-document orchestrator
+(SPEC-05 §1/§5, FR-ING-07, NFR-REL-02) a connector (EPIC-06/07) pushes documents at, tying the STORY-05.1–05.5
+stages together and owning **no SQL of its own**: every tenant write goes through `documents.Store` and thus a
+`*tenant.DB` from the resolver (ADR-0003, C-3). `Sink.Put(ctx, Document)` runs the §1 flow — parse
+(`parse.Default()` registry, routing `ErrUnsupportedMIME` to the `sidecar.Client`) → normalise (`Normalised.
+Markdown()`) + `sha256` → **hash short-circuit** → `chunk.Document` → `embed.Embedder.Embed` → `documents.Put`
+in **one transaction** — stamping every chunk with the configured embedding model (Invariant 3) and its aligned
+vector. **Hash-before-embed** is a new atomic store method `documents.TouchIfUnchanged` (one `update … from
+document_versions … where content_hash=$hash`): an unchanged document only touches `last_seen_at` (and
+reactivates a byte-identical reappearance) and **costs no embedding**, the SPEC-05 §1 short-circuit that
+`documents.Put`'s own compare (after embeddings exist) cannot provide. `Sink.Complete` soft-deletes documents
+not re-seen this run (`last_seen_at < started_at`) via a second new store method `documents.SoftDeleteUnseen`
+**on a FULL sync only** — an incremental sync never deletes; `started_at` is captured at `New`. **Error
+classification** (ADR-0038): a single-document parse error or a non-circuit embed error is recorded in
+`stats.errors` with `docs_failed++` and the sync continues (§2/§8); `embed.ErrCircuitOpen` returns a
+`sink.SnoozeError` so the worker snoozes the job rather than failing it (§8); an infrastructure (store/DB) error
+is propagated to fail the job for retry. **Crash safety (NFR-REL-02 teeth):** the per-document transaction is
+`documents.Put`'s (ADR-0008) so a worker crash mid-sync leaves **no partial document** — completed documents are
+whole and unseen ones are skipped by hash on the retry. The sink accumulates a `Stats` struct whose JSON tags
+match the SPEC-05 §6 `jobs.stats` shape (`docs_seen/changed/unchanged/deleted/failed`, `chunks_written`,
+`embed_tokens`, `bytes_fetched`, `duration_ms`, `errors:[{external_id,msg}]`); the actual `jobs.stats`/
+`usage_daily` persistence and the 100-error cap stay STORY-05.7 (errors left uncapped here, ponytail). Ports
+(`LocalParser`/`SidecarParser`/`Store`/`embed.Embedder`) are injected so the orchestration is hermetically
+unit-testable; the `*tenant.DB` is an opaque pass-through (nil in unit tests). TDD (`sink_test.go` watched fail
+— undefined `New`/`Config`/`Document` — before implementation); `go test ./internal/ingest/sink` green and
+**`-race` clean**: changed→embed+store, unchanged→embed skipped, `ErrUnsupportedMIME`→sidecar, parse
+failure→`docs_failed`+continue, circuit-open→`*SnoozeError`, non-circuit embed error→recorded, store
+error→propagated, full `Complete` soft-deletes / incremental does not, stats+duration accumulation. A DB e2e
+(`test/e2e/sink_e2e_test.go`, tag `e2e`, stubbed provider) over a **real enrolled tenant** proves the
+per-document transaction (`live_chunks` flip visible on commit), **no partial document** on a mid-transaction
+failure (a wrong-dimension chunk rolls the whole version back), crash-retry-by-hash (A unchanged not duplicated,
+B changed, C swept), and full-vs-incremental `Complete` — **PASS** (74.5 s). `gofmt`/`go vet` clean; pinned
+`golangci-lint v2.13.1` **0 issues** on `internal/ingest/sink` and `internal/documents` (incl. the `forbidigo`
+`Unsafe()` ban). No schema/migration/OpenAPI change (the two store methods are new SQL over existing tables;
+`jobs.stats`/`usage_daily` are STORY-05.7). Coverage: `internal/ingest/sink` sits under `internal/ingest`
+(gate SKIP — matches the path exactly, no direct Go files); `internal/documents` is not gated. ADR-0038;
+ISSUE-0011. EPIC-05 → 33/42. _(Environment: `docker compose exec` is ~60 s here, so the e2e reads the tenant id
+over the direct control pool rather than the `docker compose exec` psql helper; best-effort `t.Cleanup` teardown
+may skip on that slowness.)_
 
 ## EPIC-06 · Connector framework and upload connector — 🔲 0/13 pts
 

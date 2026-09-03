@@ -31,6 +31,13 @@ type Store interface {
 	// current_version (ADR-0008, SPEC-05 §5); an unchanged content hash only
 	// touches last_seen_at. See put.go.
 	Put(ctx context.Context, db *tenant.DB, in PutInput) (PutResult, error)
+	// TouchIfUnchanged is the SPEC-05 §1 hash short-circuit: touch last_seen_at and
+	// return unchanged=true when the current version's hash matches, so the sink
+	// skips chunk+embed. See sync.go.
+	TouchIfUnchanged(ctx context.Context, db *tenant.DB, sourceID, externalID string, hash []byte) (bool, error)
+	// SoftDeleteUnseen marks documents of a source not re-seen since startedAt
+	// 'deleted' (full-sync Sink.Complete, SPEC-05 §5). See sync.go.
+	SoftDeleteUnseen(ctx context.Context, db *tenant.DB, sourceID string, startedAt time.Time) (int, error)
 }
 
 // TenantStore is the production Store over a tenant database.
