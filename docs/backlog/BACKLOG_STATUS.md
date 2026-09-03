@@ -17,7 +17,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
-| EPIC-05 | Ingestion pipeline | 42 | 18 | 🚧 In progress |
+| EPIC-05 | Ingestion pipeline | 42 | 23 | 🚧 In progress |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
@@ -551,14 +551,14 @@ because `internal/api` changed) all stay green. ADR-0032; ISSUE-0005. _(Pre-exis
 `mise run test` leaks `CONTROL_PLANE_URL`/`PROVISION_DB_URL` into the `internal/cli` "RequireURL" tests (they
 pass in a clean env); both pre-date this change and no gated package was touched.)_
 
-## EPIC-05 · Ingestion pipeline — 🚧 18/42 pts
+## EPIC-05 · Ingestion pipeline — 🚧 23/42 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-05.1 | Document and version store | 5 | ✅ Done | FR-ING-02, ADR-0008, SPEC-03 |
 | STORY-05.2 | Go parsers: HTML, Markdown, text, CSV, JSON | 5 | ✅ Done | FR-ING-01, SPEC-05 §2 |
 | STORY-05.3 | Parsing sidecar (Python) and Go client | 8 | ✅ Done | FR-ING-11, ADR-0006 |
-| STORY-05.4 | Structure-aware chunker | 5 | 🔲 Todo | FR-ING-03/04, SPEC-05 §3 |
+| STORY-05.4 | Structure-aware chunker | 5 | ✅ Done | FR-ING-03/04, SPEC-05 §3 |
 | STORY-05.5 | Embedding provider interface and implementations | 5 | 🔲 Todo | FR-ING-05, NFR-MNT-02 |
 | STORY-05.6 | Sink implementation and commit semantics | 5 | 🔲 Todo | FR-ING-07, NFR-REL-02, SPEC-05 §5 |
 | STORY-05.7 | Job stats and error capture | 2 | 🔲 Todo | FR-ING-10 |
@@ -630,6 +630,25 @@ retry-then-succeed, give-up, Retry-After-cut-by-context, trace injection, health
 gofmt clean. The image installs every dep as a manylinux wheel (build log confirms) — a clean tagged export
 couldn't be confirmed locally (dev docker daemon wedged mid-run), so CI's `integration` job builds it via
 compose. No schema/OpenAPI/migration change. ADR-0035; ISSUE-0008. EPIC-05 → 18/42.
+
+**Delivered (STORY-05.4):** the **structure-aware chunker** (`internal/ingest/chunk`) — splits a parsed
+document (`parse.Normalised`, from either producer) into retrieval chunks (SPEC-05 §3, FR-ING-03/04).
+`Document(n, cfg) []Chunk` walks the blocks maintaining a `heading_path`: prose accumulates to
+`TargetTokens` (default 512); a **heading flushes the current chunk and re-roots the path** so every chunk
+carries exactly one `heading_path` (AC "respects headings"); **tables and code are atomic** — flushed clear of
+prose and never split unless a block alone exceeds 2×target, when it splits on **row** (header repeated) or
+**line** boundaries so no row/line breaks; consecutive prose chunks **overlap** by `OverlapTokens` (default 64,
+tail words of the previous chunk, counted toward the next budget so the size bound holds). The output `Chunk`
+carries **both** `Content` (stored verbatim in `chunks.content`) **and** `EmbedText` — `Content` prefixed with
+the SPEC-05 §3 context line `"{title} > {heading path}"` (empty/consecutive-duplicate segments dropped, so a
+title equal to H1 doesn't repeat) — the embedder (STORY-05.5) embeds `EmbedText`, the store persists `Content`.
+Token counting is an **injectable** `Config.Count` defaulting to a regex approximation (SPEC-05 §3 permits it;
+no tiktoken dependency — inject a `cl100k_base` counter later to tighten). `parse.RenderTable` exported (thin
+shim) so split table parts re-render. TDD: `go test ./internal/ingest/chunk` green incl. the headline
+**property test** (`TestSizeBoundsProperty`, 50 randomised docs: no chunk exceeds target, positions dense) plus
+heading_path, context-line-on-embed-only (+ title==H1 dedupe), table/code intact, target/overlap configurable
+with overlap carried, oversize table→rows and code→lines. `golangci-lint` 0 issues; gofmt clean; `parse` re-run
+green after the export. No schema/OpenAPI/migration change. ADR-0036; ISSUE-0009. EPIC-05 → 23/42.
 
 ## EPIC-06 · Connector framework and upload connector — 🔲 0/13 pts
 

@@ -149,6 +149,12 @@ func canonicalMIME(contentType string) string {
 	return strings.ToLower(strings.TrimSpace(contentType))
 }
 
+// RenderTable renders rows (header row first) as a GFM markdown table — the same
+// rendering the parsers use for Table blocks. Exported for the chunker (STORY-05.4),
+// which re-renders header-plus-rows parts when it must split an oversize table
+// (SPEC-05 §3) without breaking a row.
+func RenderTable(rows [][]string) string { return markdownTable(rows) }
+
 // markdownTable renders rows (header first) as a GFM markdown table. Pipes inside
 // cells are escaped. An empty input yields an empty string. It is shared by the
 // HTML, CSV, Markdown and JSON parsers so every "table as markdown" is identical.
