@@ -17,7 +17,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
-| EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
+| EPIC-05 | Ingestion pipeline | 42 | 5 | 🚧 In progress |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **105** | **31%** |
+| **Total** | | **337** | **110** | **33%** |
 
 ---
 
@@ -551,11 +551,11 @@ because `internal/api` changed) all stay green. ADR-0032; ISSUE-0005. _(Pre-exis
 `mise run test` leaks `CONTROL_PLANE_URL`/`PROVISION_DB_URL` into the `internal/cli` "RequireURL" tests (they
 pass in a clean env); both pre-date this change and no gated package was touched.)_
 
-## EPIC-05 · Ingestion pipeline — 🔲 0/42 pts
+## EPIC-05 · Ingestion pipeline — 🚧 5/42 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
-| STORY-05.1 | Document and version store | 5 | 🔲 Todo | FR-ING-02, ADR-0008, SPEC-03 |
+| STORY-05.1 | Document and version store | 5 | ✅ Done | FR-ING-02, ADR-0008, SPEC-03 |
 | STORY-05.2 | Go parsers: HTML, Markdown, text, CSV, JSON | 5 | 🔲 Todo | FR-ING-01, SPEC-05 §2 |
 | STORY-05.3 | Parsing sidecar (Python) and Go client | 8 | 🔲 Todo | FR-ING-11, ADR-0006 |
 | STORY-05.4 | Structure-aware chunker | 5 | 🔲 Todo | FR-ING-03/04, SPEC-05 §3 |
@@ -564,6 +564,27 @@ pass in a clean env); both pre-date this change and no gated package was touched
 | STORY-05.7 | Job stats and error capture | 2 | 🔲 Todo | FR-ING-10 |
 | STORY-05.8 | Reindex job with table swap | 5 | 🔲 Todo | FR-ING-09, SPEC-03 §5, SPEC-05 §7 |
 | STORY-05.9 | Garbage collection job | 2 | 🔲 Todo | SPEC-03 §4 |
+
+**Delivered (STORY-05.1):** `TenantStore.Put` (`internal/documents/put.go`) — the WRITE half of the tenant
+document store, the persistence step of the ingestion sink (ADR-0008, SPEC-05 §5). It lives beside the STORY-04.4
+read/soft-delete store because it is the **same tenant content** (`documents`/`document_versions`/`chunks`, C-3),
+the same tables and the same `*tenant.DB`-only access (ADR-0003, C-1) — not the coverage-gated `internal/ingest`,
+whose real inhabitant is the sink *orchestration* at STORY-05.6 (rationale in ADR-0033). `Put(ctx, *tenant.DB,
+PutInput)` takes an already parsed, chunked and **embedded** version (SPEC-05 §5 opens no transaction before
+embeddings exist, so embeddings are a required input — no unembedded staging; the vector is written via a
+pgvector text literal + `$n::vector`, no codec dependency) and: compares the input `content_hash` to the current
+version's — **unchanged ⇒ touches only `last_seen_at`** (`Changed=false`, no version, no chunk churn, no embedding
+cost); **changed/new ⇒** in ONE `db.Begin` transaction upserts the identity (reactivate + touch), inserts the
+immutable `document_versions` row (or reuses a prior version with that exact hash on an A→B→A **rollback** — a
+pointer change, ADR-0008), inserts its chunks, then **flips `documents.current_version`** (+`last_seen_at`,
+`status='active'`) and commits — so a reader of the `live_chunks` view sees the old version until commit and the
+new one **instantly**, never a half-built version and never a non-current version's chunks (SPEC-03 §2 invariants
+1–2). No HTTP route/OpenAPI change (a pure data-layer store) and **no migration/schema change** (the tables and
+`live_chunks` already exist), so the drift guard stays green. TDD (unit `vectorLiteral`/`validatePut` watched red
+first); e2e golden path (`test/e2e/document_store_e2e_test.go` over a real enrolled tenant DB — all four
+acceptance bullets plus rollback and the non-current-leak guard); `TestTenantIsolationSuite` (SPEC-01 §9) and
+`TestDocumentsGoldenPath` re-run green. Coverage gate green (`internal/tenant` 70.7%; `internal/ingest` not
+created ⇒ SKIP). Lint clean on the touched package. ADR-0033; ISSUE-0006. Starts EPIC-05 (5/42).
 
 ## EPIC-06 · Connector framework and upload connector — 🔲 0/13 pts
 

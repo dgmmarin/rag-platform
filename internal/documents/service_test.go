@@ -59,6 +59,9 @@ func (f *fakeStore) Chunks(_ context.Context, _ *tenant.DB, _ string, limit int,
 func (f *fakeStore) SoftDelete(_ context.Context, _ *tenant.DB, _ string) (bool, error) {
 	return f.deleteExst, f.deleteErr
 }
+func (f *fakeStore) Put(_ context.Context, _ *tenant.DB, _ PutInput) (PutResult, error) {
+	return PutResult{}, nil
+}
 
 type fakeJobs struct {
 	enqueued  []NewIngestJob

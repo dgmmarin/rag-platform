@@ -27,6 +27,10 @@ type Store interface {
 	// when there is no such document; it is idempotent (a re-delete still reports
 	// existed=true).
 	SoftDelete(ctx context.Context, db *tenant.DB, id string) (existed bool, err error)
+	// Put persists a fully-built, embedded document version and atomically flips
+	// current_version (ADR-0008, SPEC-05 §5); an unchanged content hash only
+	// touches last_seen_at. See put.go.
+	Put(ctx context.Context, db *tenant.DB, in PutInput) (PutResult, error)
 }
 
 // TenantStore is the production Store over a tenant database.

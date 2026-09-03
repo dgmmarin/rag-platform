@@ -8,11 +8,15 @@
 //
 // The ingest job it enqueues (ingest_document) is control-plane queue state, so
 // that one write goes to the control-plane jobs table via a JobEnqueuer; the raw
-// upload bytes go to object storage via the Storage seam (EPIC-06). Neither the
-// document row nor its version/chunks are built here: that is the ingestion
-// pipeline (EPIC-05 STORY-05.1 + the upload connector, EPIC-06), whose worker
-// (EPIC-09) consumes the enqueued job (ADR-0008: build a version fully, then flip
-// documents.current_version in one transaction).
+// upload bytes go to object storage via the Storage seam (EPIC-06).
+//
+// The WRITE side of this same tenant content — building a version and its chunks
+// and flipping documents.current_version atomically — is TenantStore.Put (put.go,
+// STORY-05.1, ADR-0008/ADR-0033): given a fully parsed, chunked and embedded
+// version, it persists it in one transaction so a query never sees a half-built
+// document. The upstream pipeline stages that produce a PutInput (parser, chunker,
+// embedder) and the sink orchestration/worker are EPIC-05.2+ and EPIC-09; the
+// upload connector is EPIC-06.
 package documents
 
 import (

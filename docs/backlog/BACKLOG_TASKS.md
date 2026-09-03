@@ -198,10 +198,10 @@ breakdown, tasks are derived from the acceptance criteria.
 ## EPIC-05 · Ingestion pipeline
 
 ### STORY-05.1 — Document and version store (FR-ING-02, ADR-0008, SPEC-03)
-- [ ] `Put` with unchanged hash only touches `last_seen_at`
-- [ ] changed hash inserts version
-- [ ] `current_version` flipped in same tx as chunks
-- [ ] `live_chunks` reflects swap instantly
+- [x] `Put` with unchanged hash only touches `last_seen_at` — `TenantStore.Put` (write side of the tenant document store in `internal/documents`, reached only through `*tenant.DB`/the resolver, ADR-0003/C-3) compares the input `content_hash` to the current version's; equal ⇒ `update documents set last_seen_at=now()` and `Changed=false`, no new version, no chunk churn, no embedding cost
+- [x] changed hash inserts version — new/changed hash inserts an immutable `document_versions` row (or reuses a prior version with that exact hash on an A→B→A rollback — a pointer change, ADR-0008) and its chunks; embeddings are a required `Put` input at commit (SPEC-05 §5, no unembedded staging), written via a pgvector text literal + `$n::vector` (no codec dep)
+- [x] `current_version` flipped in same tx as chunks — one `db.Begin` transaction: upsert identity (reactivate + touch), insert version, insert all chunks, then `update documents set current_version=…, last_seen_at=now(), status='active'`, commit (SPEC-05 §5); a crash before commit leaves the previous version live (no partial `active` document, SPEC-03 §2 invariant 1)
+- [x] `live_chunks` reflects swap instantly — because the flip and the chunk writes commit atomically, a reader of `live_chunks` sees the old version until commit and the new one instantly, and never a non-current version's chunks. No HTTP route/OpenAPI change (pure data-layer store) and no schema/migration change (`documents`/`document_versions`/`chunks`/`live_chunks` already exist → drift guard green). TDD (unit `vectorLiteral`/`validatePut` red-first) + e2e golden path (`test/e2e/document_store_e2e_test.go`, real enrolled tenant DB, all four bullets + rollback); `TestTenantIsolationSuite` (SPEC-01 §9) re-run. Coverage gate green (`internal/ingest` not created → SKIP). ADR-0033; ISSUE-0006
 
 ### STORY-05.2 — Go parsers: HTML, Markdown, text, CSV, JSON (FR-ING-01, SPEC-05 §2)
 - [ ] HTML boilerplate removed (readability)
