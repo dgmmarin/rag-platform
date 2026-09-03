@@ -78,12 +78,17 @@ type DocError struct {
 	Msg        string `json:"msg"`
 }
 
+// maxDocErrors caps stats.errors per SPEC-05 §6: keep at most the first 100
+// {external_id, msg} entries. docs_failed keeps counting past the cap (see
+// recordFailure), so the count stays honest even when the list is truncated.
+const maxDocErrors = 100
+
 // Stats accumulates the SPEC-05 §6 job statistics as the sink runs. The JSON tags
-// match the jobs.stats shape so STORY-05.7 can marshal it directly; this package
-// only fills the struct.
-//
-// ponytail: Errors is uncapped here. Ceiling: an all-failing sync grows it
-// unbounded. Upgrade path: STORY-05.7 caps it at 100 when it persists jobs.stats.
+// match the jobs.stats shape so the worker (STORY-09.1) can marshal it directly;
+// this package only fills the struct. Errors is capped at maxDocErrors (SPEC-05
+// §6); DocsFailed keeps counting past the cap, so the count is honest even when
+// the list is truncated. Stats() guarantees Errors marshals as a list ([], never
+// null) so the persisted value always matches the SPEC-05 §6 shape.
 type Stats struct {
 	DocsSeen      int        `json:"docs_seen"`
 	DocsChanged   int        `json:"docs_changed"`
@@ -252,10 +257,14 @@ func (s *Sink) Complete(ctx context.Context) error {
 }
 
 // Stats returns a snapshot of the accumulated statistics, with duration_ms filled
-// from the run start to now.
+// from the run start to now. Errors is normalised to a non-nil slice so it
+// marshals as a list ([], never null) — the SPEC-05 §6 jobs.stats shape.
 func (s *Sink) Stats() Stats {
 	out := s.stats
 	out.DurationMS = s.now().Sub(s.startedAt).Milliseconds()
+	if out.Errors == nil {
+		out.Errors = []DocError{}
+	}
 	return out
 }
 
@@ -312,11 +321,16 @@ func (s *Sink) putInput(doc Document, norm parse.Normalised, content string, has
 	return in
 }
 
-// recordFailure appends a per-document error and increments docs_failed. A doc
-// counted failed here contributed no version and no chunks (SPEC-05 §5/§8).
+// recordFailure counts a per-document failure and appends its {external_id, msg}
+// to stats.errors, capped at maxDocErrors (SPEC-05 §6). docs_failed always
+// increments — including past the cap — so the count is honest even when the
+// error list is truncated. A doc counted failed here contributed no version and
+// no chunks (SPEC-05 §5/§8).
 func (s *Sink) recordFailure(externalID string, err error) {
 	s.stats.DocsFailed++
-	s.stats.Errors = append(s.stats.Errors, DocError{ExternalID: externalID, Msg: err.Error()})
+	if len(s.stats.Errors) < maxDocErrors {
+		s.stats.Errors = append(s.stats.Errors, DocError{ExternalID: externalID, Msg: err.Error()})
+	}
 }
 
 func embedTexts(chunks []chunk.Chunk) []string {

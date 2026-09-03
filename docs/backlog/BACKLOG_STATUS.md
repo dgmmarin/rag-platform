@@ -17,7 +17,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
-| EPIC-05 | Ingestion pipeline | 42 | 33 | 🚧 In progress |
+| EPIC-05 | Ingestion pipeline | 42 | 35 | 🚧 In progress |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **115** | **34%** |
+| **Total** | | **337** | **117** | **35%** |
 
 ---
 
@@ -551,7 +551,7 @@ because `internal/api` changed) all stay green. ADR-0032; ISSUE-0005. _(Pre-exis
 `mise run test` leaks `CONTROL_PLANE_URL`/`PROVISION_DB_URL` into the `internal/cli` "RequireURL" tests (they
 pass in a clean env); both pre-date this change and no gated package was touched.)_
 
-## EPIC-05 · Ingestion pipeline — 🚧 33/42 pts
+## EPIC-05 · Ingestion pipeline — 🚧 35/42 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -561,7 +561,7 @@ pass in a clean env); both pre-date this change and no gated package was touched
 | STORY-05.4 | Structure-aware chunker | 5 | ✅ Done | FR-ING-03/04, SPEC-05 §3 |
 | STORY-05.5 | Embedding provider interface and implementations | 5 | ✅ Done | FR-ING-05, NFR-MNT-02 |
 | STORY-05.6 | Sink implementation and commit semantics | 5 | ✅ Done | FR-ING-07, NFR-REL-02, SPEC-05 §5 |
-| STORY-05.7 | Job stats and error capture | 2 | 🔲 Todo | FR-ING-10 |
+| STORY-05.7 | Job stats and error capture | 2 | ✅ Done | FR-ING-10, SPEC-05 §6 |
 | STORY-05.8 | Reindex job with table swap | 5 | 🔲 Todo | FR-ING-09, SPEC-03 §5, SPEC-05 §7 |
 | STORY-05.9 | Garbage collection job | 2 | 🔲 Todo | SPEC-03 §4 |
 
@@ -720,6 +720,25 @@ B changed, C swept), and full-vs-incremental `Complete` — **PASS** (74.5 s). `
 ISSUE-0011. EPIC-05 → 33/42. _(Environment: `docker compose exec` is ~60 s here, so the e2e reads the tenant id
 over the direct control pool rather than the `docker compose exec` psql helper; best-effort `t.Cleanup` teardown
 may skip on that slowness.)_
+
+**Delivered (STORY-05.7):** finalises the in-memory ingestion `Stats` value STORY-05.6 left open (SPEC-05 §6,
+FR-ING-10) — no worker or `jobs`/`usage_daily` write (that stays STORY-09.1). **100-error cap:**
+`Sink.recordFailure` (`internal/ingest/sink/sink.go`) now keeps at most the first `maxDocErrors = 100`
+`{external_id, msg}` entries via a single `len(...) < 100` guard in the one error-recording path, while
+`DocsFailed` **always** increments — including past the cap — so the count stays honest even when the list is
+truncated (retiring the STORY-05.6 ADR-0038 ponytail "errors left uncapped here"). **Shape (SPEC-05 §6):** the
+`Stats` JSON tags already matched the jobs.stats shape (`docs_seen/changed/unchanged/deleted/failed`,
+`chunks_written`, `embed_tokens`, `bytes_fetched`, `duration_ms`, `errors:[{external_id,msg}]`) with `duration_ms`
+filled from the run clock in `Stats()`; `Stats()` now also normalises `Errors` to a non-nil slice so a clean run
+marshals `errors` as an empty list (`[]`), never `null`. TDD (`sink_test.go`): `TestErrorsCappedAtHundred`
+(150 failing docs ⇒ `len(errors)==100` but `docs_failed==150`, first 100 kept) and
+`TestStatsEmptyErrorsMarshalAsList` (`errors:null` pre-fix) watched red for the right reasons, then green;
+`TestStatsMarshalMatchesSpecShape` asserts the marshalled object carries exactly the 10 SPEC-05 §6 keys and that
+`errors` is a list of objects with exactly `external_id` and `msg`. `gofmt -l`/`go vet` clean;
+`go test ./internal/ingest/sink` green and `-race` clean; pinned `golangci-lint v2.13.1` **0 issues**. No new ADR
+(the cap + list-shape realise the SPEC-05 §6 contract and the ADR-0038 upgrade path, not a new decision); no
+schema/migration/OpenAPI change. Coverage: `internal/ingest/sink` under `internal/ingest` (gate SKIP). ISSUE-0012.
+EPIC-05 → 35/42.
 
 ## EPIC-06 · Connector framework and upload connector — 🔲 0/13 pts
 

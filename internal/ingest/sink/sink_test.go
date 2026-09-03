@@ -1,8 +1,11 @@
 package sink
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -360,6 +363,100 @@ func TestStatsAccumulateAcrossDocsAndDuration(t *testing.T) {
 	}
 	if st.DurationMS != 2000 {
 		t.Fatalf("DurationMS = %d, want 2000", st.DurationMS)
+	}
+}
+
+// failingDoc is a document whose parse always fails (sidecar ErrParseFailed), so
+// each Put records one per-document error and continues (SPEC-05 §2/§8).
+func failingDoc(externalID string) Document {
+	return Document{ExternalID: externalID, MimeType: "application/pdf", Data: []byte("garbage")}
+}
+
+// TestErrorsCappedAtHundred proves the SPEC-05 §6 cap: 150 failing docs keep at
+// most the first 100 {external_id, msg} entries, but docs_failed keeps counting
+// past the cap so the count stays honest even when the list is truncated.
+func TestErrorsCappedAtHundred(t *testing.T) {
+	store := &fakeStore{}
+	emb := &fakeEmbedder{dim: 4}
+	sc := &fakeSidecar{err: sidecar.ErrParseFailed}
+	s := New(baseConfig(store, emb, sc))
+
+	const n = 150
+	for i := 0; i < n; i++ {
+		if err := s.Put(context.Background(), failingDoc(fmt.Sprintf("broken-%d.pdf", i))); err != nil {
+			t.Fatalf("Put %d: %v", i, err)
+		}
+	}
+	st := s.Stats()
+	if st.DocsFailed != n {
+		t.Fatalf("DocsFailed = %d, want %d (count stays honest past the cap)", st.DocsFailed, n)
+	}
+	if len(st.Errors) != 100 {
+		t.Fatalf("len(Errors) = %d, want 100 (capped)", len(st.Errors))
+	}
+	if st.Errors[0].ExternalID != "broken-0.pdf" || st.Errors[99].ExternalID != "broken-99.pdf" {
+		t.Fatalf("cap kept the wrong entries: first=%q last=%q (want the FIRST 100)",
+			st.Errors[0].ExternalID, st.Errors[99].ExternalID)
+	}
+}
+
+// TestStatsMarshalMatchesSpecShape asserts json.Marshal(Stats) yields exactly the
+// SPEC-05 §6 jobs.stats field names/shape, and that errors is a list of objects
+// carrying exactly external_id and msg.
+func TestStatsMarshalMatchesSpecShape(t *testing.T) {
+	s := New(baseConfig(&fakeStore{}, &fakeEmbedder{dim: 4}, &fakeSidecar{err: sidecar.ErrParseFailed}))
+	if err := s.Put(context.Background(), failingDoc("x.pdf")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	b, err := json.Marshal(s.Stats())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	want := []string{
+		"docs_seen", "docs_changed", "docs_unchanged", "docs_deleted", "docs_failed",
+		"chunks_written", "embed_tokens", "bytes_fetched", "duration_ms", "errors",
+	}
+	if len(m) != len(want) {
+		t.Fatalf("stats has %d keys, want %d: %s", len(m), len(want), b)
+	}
+	for _, k := range want {
+		if _, ok := m[k]; !ok {
+			t.Fatalf("stats missing key %q: %s", k, b)
+		}
+	}
+
+	var errs []map[string]json.RawMessage
+	if err := json.Unmarshal(m["errors"], &errs); err != nil {
+		t.Fatalf("errors is not a list of objects: %v (%s)", err, m["errors"])
+	}
+	if len(errs) != 1 {
+		t.Fatalf("errors len = %d, want 1", len(errs))
+	}
+	if len(errs[0]) != 2 {
+		t.Fatalf("error object has %d keys, want exactly 2: %s", len(errs[0]), m["errors"])
+	}
+	for _, k := range []string{"external_id", "msg"} {
+		if _, ok := errs[0][k]; !ok {
+			t.Fatalf("error object missing key %q: %s", k, m["errors"])
+		}
+	}
+}
+
+// TestStatsEmptyErrorsMarshalAsList proves a clean-run stats carries errors as an
+// empty list ([]), not null — the SPEC-05 §6 shape is a list.
+func TestStatsEmptyErrorsMarshalAsList(t *testing.T) {
+	s := New(baseConfig(&fakeStore{}, &fakeEmbedder{dim: 4}, &fakeSidecar{}))
+	b, err := json.Marshal(s.Stats())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !bytes.Contains(b, []byte(`"errors":[]`)) {
+		t.Fatalf("empty errors must marshal as [], got %s", b)
 	}
 }
 
