@@ -122,7 +122,15 @@ const (
 	authSession                   // session cookie
 	authPlatformAdmin             // session cookie + platform-admin
 	authScopeAdmin                // API key with admin scope + rate limit
+	authScopeIngest               // API key with ingest scope + rate limit
+	authScopeQuery                // API key with query scope + rate limit
 )
+
+// isAPIKeyScope reports whether an auth is one of the Bearer-API-key scopes; they
+// share the same security requirement and 401/403/429 error responses.
+func isAPIKeyScope(a auth) bool {
+	return a == authScopeAdmin || a == authScopeIngest || a == authScopeQuery
+}
 
 // route is one row of the live API surface. The router mounts these today; the
 // spec is built from the same list so the two stay in step (04.3–04.6 append
@@ -213,7 +221,47 @@ func liveRoutes() []route {
 			params:  []Parameter{sourceIDParam()},
 			success: "connection ok",
 			extra:   []errResp{{"404", "no such source, or the connector framework is not available yet"}}},
+
+		// Documents (STORY-04.4, FR-SRC-02/FR-ADM-03). Tenant content, tenant
+		// derived from the API key (FR-ACC-03). Scopes differ per route (SPEC-07 §2).
+		{method: "POST", path: "/v1/documents", tag: "documents", summary: "Upload a file (multipart) and enqueue ingestion (Idempotency-Key honoured).", operationID: "documentIngest", auth: authScopeIngest,
+			success: "ingestion enqueued", okStatus: "202",
+			extra: []errResp{{"400", "missing file, unsupported type, or upload too large"}, {"404", "object storage is not available yet"}, {"503", "tenant is not available"}}},
+		{method: "GET", path: "/v1/documents", tag: "documents", summary: "List the tenant's documents (filter by source, status, q).", operationID: "documentList", auth: authScopeQuery,
+			params: []Parameter{
+				{Name: "source", In: "query", Description: "Filter by source id.", Schema: strSchema()},
+				{Name: "status", In: "query", Description: "Filter by status (active, deleted).", Schema: strSchema()},
+				{Name: "q", In: "query", Description: "Free-text match on title or external id.", Schema: strSchema()},
+				{Name: "limit", In: "query", Description: "Page size (default 50, max 200).", Schema: map[string]any{"type": "integer"}},
+				{Name: "cursor", In: "query", Description: "Opaque pagination cursor from a prior next_cursor.", Schema: strSchema()},
+			},
+			success: "a page of documents ({items, next_cursor})",
+			extra:   []errResp{{"400", "invalid filter, limit or cursor"}, {"503", "tenant is not available"}}},
+		{method: "GET", path: "/v1/documents/{id}", tag: "documents", summary: "Get one document with current version metadata (optional ?content=true).", operationID: "documentGet", auth: authScopeQuery,
+			params: []Parameter{
+				documentIDParam(),
+				{Name: "content", In: "query", Description: "Include the current version's full text when true.", Schema: map[string]any{"type": "boolean"}},
+			},
+			success: "the document",
+			extra:   []errResp{{"404", "no such document"}, {"503", "tenant is not available"}}},
+		{method: "DELETE", path: "/v1/documents/{id}", tag: "documents", summary: "Soft-delete a document.", operationID: "documentDelete", auth: authScopeIngest,
+			params:  []Parameter{documentIDParam()},
+			success: "document deleted",
+			extra:   []errResp{{"404", "no such document"}, {"503", "tenant is not available"}}},
+		{method: "GET", path: "/v1/documents/{id}/chunks", tag: "documents", summary: "List a document's current-version chunks (debugging).", operationID: "documentChunks", auth: authScopeAdmin,
+			params: []Parameter{
+				documentIDParam(),
+				{Name: "limit", In: "query", Description: "Page size (default 50, max 200).", Schema: map[string]any{"type": "integer"}},
+				{Name: "cursor", In: "query", Description: "Opaque pagination cursor from a prior next_cursor.", Schema: strSchema()},
+			},
+			success: "a page of chunks ({items, next_cursor})",
+			extra:   []errResp{{"404", "no such document"}, {"503", "tenant is not available"}}},
 	}
+}
+
+// documentIDParam is the shared {id} path parameter for the document subresource routes.
+func documentIDParam() Parameter {
+	return Parameter{Name: "id", In: "path", Required: true, Description: "Document id.", Schema: strSchema()}
 }
 
 // sourceIDParam is the shared {id} path parameter for the source subresource routes.
@@ -237,6 +285,7 @@ func Document() *OpenAPI {
 			{Name: "platform", Description: "Platform-admin surface under /admin (requires is_platform_admin)."},
 			{Name: "usage", Description: "Tenant-scoped usage accounting."},
 			{Name: "sources", Description: "Tenant content sources (create/update/delete, sync, test)."},
+			{Name: "documents", Description: "Tenant documents: upload, list, get, delete, and chunk debugging."},
 		},
 		Paths: map[string]PathItem{},
 		Components: Components{
@@ -347,10 +396,10 @@ func strSchema() map[string]any { return map[string]any{"type": "string"} }
 // securityFor maps a route's auth to its OpenAPI security requirement. An open
 // route returns nil (no requirement); there is no global security object.
 func securityFor(a auth) []map[string][]string {
-	switch a {
-	case authScopeAdmin:
+	switch {
+	case isAPIKeyScope(a):
 		return []map[string][]string{{"bearerAuth": {}}}
-	case authSession, authPlatformAdmin:
+	case a == authSession, a == authPlatformAdmin:
 		return []map[string][]string{{"sessionCookie": {}}}
 	default:
 		return nil
@@ -373,11 +422,12 @@ func responsesFor(r route) map[string]Response {
 	}
 	add := func(code, desc string) { resp[code] = Response{Description: desc, Content: errRef} }
 
-	switch r.auth {
-	case authScopeAdmin:
+	if isAPIKeyScope(r.auth) {
 		add("401", "missing or invalid API key")
 		add("403", "API key lacks the required scope")
 		add("429", "rate limit exceeded")
+	}
+	switch r.auth {
 	case authPlatformAdmin:
 		add("401", "no session")
 		add("403", "not a platform admin")

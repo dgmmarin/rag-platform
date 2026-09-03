@@ -17,7 +17,9 @@ import (
 	"github.com/rag-platform/ragctl/internal/cp/tenants"
 	"github.com/rag-platform/ragctl/internal/cp/usage"
 	"github.com/rag-platform/ragctl/internal/crypto"
+	"github.com/rag-platform/ragctl/internal/documents"
 	"github.com/rag-platform/ragctl/internal/obs"
+	"github.com/rag-platform/ragctl/internal/tenant"
 )
 
 // apiServer holds the assembled public router plus the background loops (the
@@ -42,12 +44,16 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	if controlURL == "" {
 		return nil, fmt.Errorf("serve: no control-plane URL (set --control-plane-url or CONTROL_PLANE_URL)")
 	}
-	_ = cipher // reserved for tenant-plane resolution wired by later EPIC-04 routes.
 
 	pool, err := pgxpool.New(ctx, controlURL)
 	if err != nil {
 		return nil, fmt.Errorf("serve: open control-plane pool: %w", err)
 	}
+
+	// --- Tenant resolver: the ONLY source of a tenant.DB (ADR-0003). The documents
+	// routes (STORY-04.4) read tenant content through it; the cipher decrypts each
+	// tenant's stored DB password at pool-build time (SPEC-09 §2). ---
+	resolver := tenant.NewResolver(tenant.Config{ControlPool: pool, Decrypter: cipher})
 
 	// --- Auth (password + sessions). ---
 	authSvc := auth.NewService(auth.FromPool(pool))
@@ -93,6 +99,15 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	// the control-plane pool — never a tenant pool. ---
 	sourceHandlers := sources.NewHandlers(sources.NewService(sources.FromPool(pool)))
 
+	// --- Documents (tenant-content list/get/chunks/soft-delete + upload enqueue,
+	// STORY-04.4). Reads reach the tenant database via the resolver (ADR-0003, C-3);
+	// the ingest_document enqueue writes the control-plane jobs table. Object
+	// storage is the EPIC-06 seam: Storage is left nil, so POST /v1/documents
+	// returns the not_found seam envelope until STORY-06.x wires it. ---
+	docSvc := documents.NewService(resolver, documents.NewTenantStore(), documents.JobsFromPool(pool))
+	docSvc.MaxBytes = cfg.MaxUploadBytes
+	docHandlers := documents.NewHandlers(docSvc)
+
 	// --- Rate limiting (per key + per tenant, credential-keyed). ---
 	limiter := ratelimit.New(nil)
 	settingsSvc := tenants.NewSettingsService(tenants.SettingsFromPool(pool))
@@ -134,6 +149,12 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		SourceDelete: http.HandlerFunc(sourceHandlers.Delete),
 		SourceSync:   http.HandlerFunc(sourceHandlers.Sync),
 		SourceTest:   http.HandlerFunc(sourceHandlers.Test),
+
+		DocumentIngest: http.HandlerFunc(docHandlers.Ingest),
+		DocumentList:   http.HandlerFunc(docHandlers.List),
+		DocumentGet:    http.HandlerFunc(docHandlers.Get),
+		DocumentDelete: http.HandlerFunc(docHandlers.Delete),
+		DocumentChunks: http.HandlerFunc(docHandlers.Chunks),
 	}
 
 	return &apiServer{

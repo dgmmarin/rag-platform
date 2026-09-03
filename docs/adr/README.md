@@ -30,5 +30,7 @@
 | [0026](0026-rate-limiting-in-process-token-bucket.md) | Rate limiting — in-process token bucket per API key and per tenant, `settings.limits.qps`-driven, fail-closed `429` with `Retry-After`/`RateLimit-*` | Accepted |
 | [0027](0027-public-router-composition-and-error-envelope.md) | Public router — dependency-injected `internal/api` package, credential-keyed rate-limiter-after-auth chain, and one SPEC-07 §1 error envelope across router-mounted middleware/handlers | Accepted |
 | [0028](0028-openapi-generated-from-go-and-jsonschema-contract-tests.md) | OpenAPI spec built from a Go route table (no codegen toolchain), served at `/v1/openapi.json`, kept honest by a drift guard and a jsonschema contract test | Accepted |
+| [0029](0029-sources-endpoints-control-plane-store-and-connector-job-seams.md) | Sources endpoints — control-plane store, `409`-by-index concurrent-sync guard, and connector/worker seams | Accepted |
+| [0030](0030-documents-endpoints-tenant-content-via-resolver-and-storage-ingest-seams.md) | Documents endpoints — tenant content reached through the resolver, with object-storage and document-store/ingest-worker seams (upload enqueues `ingest_document`; no partial document row) | Accepted |
 
 Template for new ADRs: `NNNN-short-title.md` with sections Status, Context, Options, Decision, Consequences. Reference requirement IDs from the SRS.

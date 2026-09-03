@@ -48,6 +48,15 @@ type Deps struct {
 	SourceDelete http.Handler // DELETE /v1/sources/{id}
 	SourceSync   http.Handler // POST /v1/sources/{id}/sync
 	SourceTest   http.Handler // POST /v1/sources/{id}/test
+
+	// Documents resource handlers (STORY-04.4, FR-SRC-02/FR-ADM-03). Documents are
+	// tenant content reached via tenant.DB (ADR-0003); a nil handler is the
+	// not-implemented seam (handlerOr). Scopes differ per route (SPEC-07 §2).
+	DocumentIngest http.Handler // POST /v1/documents (ingest scope)
+	DocumentList   http.Handler // GET /v1/documents (query scope)
+	DocumentGet    http.Handler // GET /v1/documents/{id} (query scope)
+	DocumentDelete http.Handler // DELETE /v1/documents/{id} (ingest scope)
+	DocumentChunks http.Handler // GET /v1/documents/{id}/chunks (admin scope)
 }
 
 // New assembles the public HTTP handler: the global middleware chain in the
@@ -105,10 +114,21 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /v1/sources/{id}/sync", tenantScoped(d.RequireScopeAdmin, d.SourceSync))
 	mux.Handle("POST /v1/sources/{id}/test", tenantScoped(d.RequireScopeAdmin, d.SourceTest))
 
-	// Documents/jobs/settings/members/api-keys and the admin tenant routes are
-	// later EPIC-04 stories (04.4–04.6). They are intentionally NOT registered
-	// here: an unregistered path yields the not_found envelope below, which is the
-	// seam their handlers slot into.
+	// Documents (STORY-04.4, FR-SRC-02/FR-ADM-03, SPEC-07 §2). Tenant content
+	// reached through the resolver (ADR-0003); the tenant is derived from the API
+	// key (FR-ACC-03). Scopes follow SPEC-07 §2: ingest for upload/delete, query
+	// for list/get, admin for the chunks debug endpoint. Bearer-authenticated, so
+	// no CSRF applies.
+	mux.Handle("POST /v1/documents", tenantScoped(d.RequireScopeIngest, d.DocumentIngest))
+	mux.Handle("GET /v1/documents", tenantScoped(d.RequireScopeQuery, d.DocumentList))
+	mux.Handle("GET /v1/documents/{id}", tenantScoped(d.RequireScopeQuery, d.DocumentGet))
+	mux.Handle("DELETE /v1/documents/{id}", tenantScoped(d.RequireScopeIngest, d.DocumentDelete))
+	mux.Handle("GET /v1/documents/{id}/chunks", tenantScoped(d.RequireScopeAdmin, d.DocumentChunks))
+
+	// Jobs/settings/members/api-keys and the admin tenant routes are later EPIC-04
+	// stories (04.5–04.6). They are intentionally NOT registered here: an
+	// unregistered path yields the not_found envelope below, which is the seam
+	// their handlers slot into.
 
 	// Global chain (outer -> inner), SPEC-07 §1 order with the credential-keyed
 	// rate limiter moved inside per-route auth (ADR-0027):

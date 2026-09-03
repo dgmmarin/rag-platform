@@ -16,7 +16,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
-| EPIC-04 | Public API surface | 21 | 13 | 🚧 In progress |
+| EPIC-04 | Public API surface | 21 | 16 | 🚧 In progress |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
@@ -336,14 +336,14 @@ golden path over the real control-plane Postgres driving the real `RequireScope`
 over the per-key limit → 429 with `Retry-After`/`RateLimit-*`, and a second key of the same tenant unaffected —
 per-key isolation). ADR-0026.
 
-## EPIC-04 · Public API surface — 🚧 13/21 pts
+## EPIC-04 · Public API surface — 🚧 16/21 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-04.1 | HTTP server, routing, middleware chain | 5 | ✅ Done | SPEC-07 §1, ADR-0027 |
 | STORY-04.2 | OpenAPI generation and contract tests | 5 | ✅ Done | SPEC-07 §3, ADR-0028 |
 | STORY-04.3 | Sources endpoints | 3 | ✅ Done | FR-SRC-01/14 |
-| STORY-04.4 | Documents endpoints | 3 | 🔲 Todo | FR-SRC-02, FR-ADM-03 |
+| STORY-04.4 | Documents endpoints | 3 | ✅ Done | FR-SRC-02, FR-ADM-03 |
 | STORY-04.5 | Jobs endpoints | 2 | 🔲 Todo | FR-ADM-02 |
 | STORY-04.6 | Admin tenant endpoints | 3 | 🔲 Todo | FR-TEN-01/05/07 |
 
@@ -430,6 +430,46 @@ credentials are echoed). ADR-0029; ISSUE-0002. _(Pre-existing, unrelated to this
 full `mise run lint` are red in the local environment for a golangci-lint/Go-toolchain drift on two EPIC-03
 files and env-sensitive `internal/cli` tests — verified identical on a clean checkout; no gated package was
 touched.)_
+
+**Delivered (STORY-04.4):** the documents API — a new `internal/documents` package (FR-SRC-02, FR-ADM-03,
+SPEC-07 §2/§2b, ADR-0030) plus its five routes wired into `internal/api` (`New` + `liveRoutes()`). Unlike
+sources, documents/versions/chunks are **tenant content** (`schemas/tenant.sql`, C-3), so — for the first time on
+the request path — the routes reach a tenant database, and only through a `tenant.DB` from the resolver
+(ADR-0003): the `Service` holds a `tenant.Resolver` (the sole source of a handle), the `TenantStore` runs the
+SQL, and `buildAPIServer` now constructs `tenant.NewResolver` from the control pool + the **startup cipher it had
+reserved since STORY-04.1**. The tenant is always the one resolved from the API key (FR-ACC-03, no `tenant_id`
+parameter); no `tenant_id` column exists on tenant tables (C-1). Scopes follow SPEC-07 §2: `ingest` for
+upload/delete, `query` for list/get, `admin` for the chunks debug endpoint. `GET /v1/documents`
+(`?source&status&q&limit&cursor` → `{items,next_cursor}` keyset pagination), `GET /v1/documents/{id}`
+(current-version metadata; `?content=true` adds the full normalised text), `DELETE /v1/documents/{id}` (soft
+delete → status `deleted`; `live_chunks` already hides non-active docs), and `GET /v1/documents/{id}/chunks`
+(current-version chunks for debugging — the opaque embedding vector is **never** returned) are fully served
+against the tenant schema. `POST /v1/documents` validates the multipart upload here (**FR-SRC-02** type allowlist
+— pdf/docx/md/html/txt/csv — and a configurable size ceiling, default 50 MB via the new `MAX_UPLOAD_BYTES`) and
+enqueues a **real** `ingest_document` job in the control-plane `jobs` table; the **Idempotency-Key** is stored in
+`jobs.payload` and replays the active ingest job (SPEC-07 §1). Two dependencies are **injected seams**, not built
+here: object storage (`Storage` port, EPIC-06 STORY-06.x) is nil today, so the upload returns the `not_found`
+seam envelope (mirroring STORY-04.1/04.3) until it is wired — and the ingest worker (EPIC-09) that consumes the
+job. Critically, **no document row is created on upload**: an active document must have a non-null
+`current_version` and there is no pending status (SPEC-03 §2 invariant 1), so the row and its first version are
+built together by the ingest worker/document store (STORY-05.1, ADR-0008) in one transaction — the `202`
+response carries the queued job as the client's handle. No migration/schema change (the
+`documents`/`document_versions`/`chunks` tables and the `ingest_document` job kind already existed), so the drift
+guard stays green; `api/openapi.yaml` regenerated via `mise run openapi` so the served spec, the drift guard and
+the contract tests grow with the five routes (ADR-0028). TDD throughout (unit tests watched red before the
+service/handlers existed). Unit tests (`internal/documents`: upload allowlist/size, cursor round-trips,
+open-error mapping, nil-storage seam, enqueue payload + idempotent replay, delete not-found/read-only, handler
+multipart parsing + error→envelope mapping; `internal/api`: the five routes run their scope gate → rate-limit →
+handler) + an e2e golden path over a **real enrolled tenant database** and the real control-plane Postgres
+(`test/e2e/documents_e2e_test.go`: seed a document/version/chunk in the tenant DB, then list→filter→get→
+get-`?content`→chunks→delete through the assembled API-key chain, and a real `ingest_document` enqueue via a
+test `Storage`, asserting the soft delete and the queued job land in the real tables and no embedding vector is
+echoed). `TestOpenAPIContractGoldenPath`, `TestAPIRouterGoldenPath`, `TestSourcesGoldenPath` and the
+`TestTenantIsolationSuite` (SPEC-01 §9, re-run because `internal/api` changed) all stay green. ADR-0030;
+ISSUE-0003. _(Pre-existing, unrelated to this story: full `mise run test`/`lint`/`coverage` are red in the local
+environment for a golangci-lint/Go-toolchain drift on two EPIC-03 audit files and env-sensitive `internal/cli`
+tests under mise's `.env` injection — the latter pass once the leaked `CONTROL_PLANE_URL`/age-key env is cleared;
+no gated package was touched.)_
 
 ## EPIC-05 · Ingestion pipeline — 🔲 0/42 pts
 

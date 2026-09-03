@@ -19,6 +19,8 @@ tags:
     description: Tenant-scoped usage accounting.
   - name: sources
     description: Tenant content sources (create/update/delete, sync, test).
+  - name: documents
+    description: 'Tenant documents: upload, list, get, delete, and chunk debugging.'
 paths:
   /admin/audit:
     get:
@@ -181,6 +183,277 @@ paths:
       responses:
         "200":
           description: user created
+  /v1/documents:
+    get:
+      summary: List the tenant's documents (filter by source, status, q).
+      operationId: documentList
+      tags:
+        - documents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: source
+          in: query
+          description: Filter by source id.
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by status (active, deleted).
+          schema:
+            type: string
+        - name: q
+          in: query
+          description: Free-text match on title or external id.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Page size (default 50, max 200).
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          description: Opaque pagination cursor from a prior next_cursor.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: a page of documents ({items, next_cursor})
+        "400":
+          description: invalid filter, limit or cursor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "503":
+          description: tenant is not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    post:
+      summary: Upload a file (multipart) and enqueue ingestion (Idempotency-Key honoured).
+      operationId: documentIngest
+      tags:
+        - documents
+      security:
+        - bearerAuth: []
+      responses:
+        "202":
+          description: ingestion enqueued
+        "400":
+          description: missing file, unsupported type, or upload too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "404":
+          description: object storage is not available yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "503":
+          description: tenant is not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/documents/{id}:
+    get:
+      summary: Get one document with current version metadata (optional ?content=true).
+      operationId: documentGet
+      tags:
+        - documents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Document id.
+          schema:
+            type: string
+        - name: content
+          in: query
+          description: Include the current version's full text when true.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: the document
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "404":
+          description: no such document
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "503":
+          description: tenant is not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    delete:
+      summary: Soft-delete a document.
+      operationId: documentDelete
+      tags:
+        - documents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Document id.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: document deleted
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "404":
+          description: no such document
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "503":
+          description: tenant is not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/documents/{id}/chunks:
+    get:
+      summary: List a document's current-version chunks (debugging).
+      operationId: documentChunks
+      tags:
+        - documents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Document id.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Page size (default 50, max 200).
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          description: Opaque pagination cursor from a prior next_cursor.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: a page of chunks ({items, next_cursor})
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "404":
+          description: no such document
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "503":
+          description: tenant is not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /v1/openapi.json:
     get:
       summary: This OpenAPI document as JSON.

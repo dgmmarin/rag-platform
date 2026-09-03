@@ -86,6 +86,11 @@ type Config struct {
 	// RateLimitTenantBurst is the per-tenant bucket capacity as a multiple of qps;
 	// the aggregate ceiling is sized looser than a single key. Default 2.
 	RateLimitTenantBurst float64
+
+	// MaxUploadBytes is the POST /v1/documents upload ceiling (FR-SRC-02:
+	// configurable, default 50 MB). It bounds the multipart body so an oversize
+	// upload cannot exhaust memory.
+	MaxUploadBytes int64
 }
 
 // Load reads configuration, overlaying the optional config file (if filePath is
@@ -181,6 +186,16 @@ func Load(filePath string) (Config, error) {
 			return Config{}, fmt.Errorf("config: invalid RATE_LIMIT_TENANT_BURST %q: %w", raw, err)
 		}
 		cfg.RateLimitTenantBurst = v
+	}
+
+	// Upload ceiling (STORY-04.4, FR-SRC-02). Default 50 MB.
+	cfg.MaxUploadBytes = 50 << 20
+	if raw := mustGet(get, "MAX_UPLOAD_BYTES"); raw != "" {
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || v <= 0 {
+			return Config{}, fmt.Errorf("config: invalid MAX_UPLOAD_BYTES %q", raw)
+		}
+		cfg.MaxUploadBytes = v
 	}
 
 	return cfg, nil

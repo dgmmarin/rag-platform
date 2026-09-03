@@ -55,6 +55,38 @@ the queued jobs and performs the FR-SRC-12 cascade. Source credentials
 (FR-SRC-10) are deferred to STORY-06.2: a `credentials` field is rejected `400`
 (fail closed, C-4) and is never returned. See ADR-0029.
 
+### 2b. Documents (STORY-04.4 realisation)
+The documents routes are served by `internal/documents`. Unlike sources,
+documents/versions/chunks are **tenant content** (`schemas/tenant.sql`, C-3), so
+this path reaches a tenant database — and the only way to do that is a `tenant.DB`
+from the resolver (ADR-0003). The tenant is taken only from the authenticated API
+key (FR-ACC-03); the service opens the handle via the resolver, which
+`buildAPIServer` now constructs (the reserved startup cipher decrypts each
+tenant's DB password, SPEC-09 §2). Scopes follow the table above: `ingest` for
+upload/delete, `query` for list/get, `admin` for the chunks debug endpoint.
+
+`GET /v1/documents` (`?source&status&q&limit&cursor` → `{items,next_cursor}`
+keyset pagination), `GET /v1/documents/{id}` (current-version metadata, optional
+`?content=true` for the full normalised text), `DELETE /v1/documents/{id}` (soft
+delete — status→`deleted`; `live_chunks` already excludes non-active documents),
+and `GET /v1/documents/{id}/chunks` (current-version chunks for debugging; the
+opaque embedding vector is never returned) are fully served against the tenant
+schema.
+
+`POST /v1/documents` validates the multipart upload at the API layer (FR-SRC-02:
+type allowlist — PDF/DOCX/Markdown/HTML/TXT/CSV — and a configurable size ceiling,
+default 50 MB via `MAX_UPLOAD_BYTES`), then two seams complete it: **object
+storage** for the raw bytes is the EPIC-06 seam (a `Storage` port, nil today — so
+the endpoint returns the not_found seam envelope until STORY-06.x wires it), and
+the **ingest worker** (EPIC-09) that consumes the job. The `ingest_document`
+enqueue itself is real (control-plane `jobs` table); the `Idempotency-Key` is
+stored in `jobs.payload` and replays the active ingest job. No document row is
+created on upload: an active document must have a non-null `current_version`
+(SPEC-03 §2 invariant 1) and there is no pending status, so the row and its first
+version are built together by the ingest worker/document store (STORY-05.1,
+ADR-0008); the `202` response carries the queued job as the client's handle. See
+ADR-0030.
+
 ## 3. OpenAPI
 Generated from Go into `api/openapi.yaml`; served at `/v1/openapi.json`. Contract tests in CI validate responses against it.
 

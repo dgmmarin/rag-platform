@@ -183,9 +183,9 @@ breakdown, tasks are derived from the acceptance criteria.
       Idempotency-Key replays the active job.)_
 
 ### STORY-04.4 — Documents endpoints (FR-SRC-02, FR-ADM-03)
-- [ ] multipart upload to object storage + job
-- [ ] list/get/delete
-- [ ] chunks debug endpoint for admins
+- [x] multipart upload to object storage + job — upload validated (FR-SRC-02 type allowlist + configurable size, default 50 MB) and the real `ingest_document` job enqueued in the control-plane `jobs` table; object storage is the EPIC-06 seam (`Storage` port nil today → not_found seam envelope); the document row + version are built by the ingest worker/document store (STORY-05.1, ADR-0008), not on upload (SPEC-03 §2 invariant 1)
+- [x] list/get/delete — list (`?source&status&q&limit&cursor` → `{items,next_cursor}`), get (current-version metadata, optional `?content=true`), soft delete; all reach tenant content only through the resolver + `tenant.DB` (ADR-0003, C-3), tenant from the API key (FR-ACC-03)
+- [x] chunks debug endpoint for admins — `GET /v1/documents/{id}/chunks` returns the current-version chunks (never the embedding vector)
 
 ### STORY-04.5 — Jobs endpoints (FR-ADM-02)
 - [ ] list with filters, get, cancel
