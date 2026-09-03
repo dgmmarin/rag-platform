@@ -17,6 +17,8 @@ tags:
     description: Platform-admin surface under /admin (requires is_platform_admin).
   - name: usage
     description: Tenant-scoped usage accounting.
+  - name: sources
+    description: Tenant content sources (create/update/delete, sync, test).
 paths:
   /admin/audit:
     get:
@@ -188,6 +190,318 @@ paths:
       responses:
         "200":
           description: the OpenAPI 3.1 document
+  /v1/sources:
+    get:
+      summary: List the tenant's sources.
+      operationId: sourceList
+      tags:
+        - sources
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          description: Page size (default 50, max 200).
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          description: Opaque pagination cursor from a prior next_cursor.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: a page of sources ({items, next_cursor})
+        "400":
+          description: invalid limit or cursor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    post:
+      summary: Create a source (config validated by the connector).
+      operationId: sourceCreate
+      tags:
+        - sources
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: source created
+        "400":
+          description: invalid source body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "409":
+          description: a source with that name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/sources/{id}:
+    get:
+      summary: Get one source.
+      operationId: sourceGet
+      tags:
+        - sources
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Source id.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: the source
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "404":
+          description: no such source
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    patch:
+      summary: Update a source (includes pause/resume via status).
+      operationId: sourceUpdate
+      tags:
+        - sources
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Source id.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: the updated source
+        "400":
+          description: invalid patch body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "404":
+          description: no such source
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "409":
+          description: a source with that name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    delete:
+      summary: Delete a source (enqueues delete_source).
+      operationId: sourceDelete
+      tags:
+        - sources
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Source id.
+          schema:
+            type: string
+      responses:
+        "202":
+          description: deletion scheduled
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "404":
+          description: no such source
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/sources/{id}/sync:
+    post:
+      summary: Start a manual sync (Idempotency-Key honoured).
+      operationId: sourceSync
+      tags:
+        - sources
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Source id.
+          schema:
+            type: string
+      responses:
+        "202":
+          description: sync job enqueued
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "404":
+          description: no such source
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "409":
+          description: a sync is already queued or running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/sources/{id}/test:
+    post:
+      summary: Test a source's configuration and credentials.
+      operationId: sourceTest
+      tags:
+        - sources
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Source id.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: connection ok
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "404":
+          description: no such source, or the connector framework is not available yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /v1/usage:
     get:
       summary: Daily usage rows for the authenticated tenant.

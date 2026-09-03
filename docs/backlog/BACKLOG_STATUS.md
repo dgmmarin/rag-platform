@@ -16,7 +16,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-01 | Project foundation | 21 | 21 | ✅ Complete |
 | EPIC-02 | Tenancy core | 34 | 34 | ✅ Complete |
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
-| EPIC-04 | Public API surface | 21 | 10 | 🚧 In progress |
+| EPIC-04 | Public API surface | 21 | 13 | 🚧 In progress |
 | EPIC-05 | Ingestion pipeline | 42 | 0 | 🔲 Todo |
 | EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
@@ -25,7 +25,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **99** | **29%** |
+| **Total** | | **337** | **102** | **30%** |
 
 ---
 
@@ -336,13 +336,13 @@ golden path over the real control-plane Postgres driving the real `RequireScope`
 over the per-key limit → 429 with `Retry-After`/`RateLimit-*`, and a second key of the same tenant unaffected —
 per-key isolation). ADR-0026.
 
-## EPIC-04 · Public API surface — 🚧 10/21 pts
+## EPIC-04 · Public API surface — 🚧 13/21 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-04.1 | HTTP server, routing, middleware chain | 5 | ✅ Done | SPEC-07 §1, ADR-0027 |
 | STORY-04.2 | OpenAPI generation and contract tests | 5 | ✅ Done | SPEC-07 §3, ADR-0028 |
-| STORY-04.3 | Sources endpoints | 3 | 🔲 Todo | FR-SRC-01/14 |
+| STORY-04.3 | Sources endpoints | 3 | ✅ Done | FR-SRC-01/14 |
 | STORY-04.4 | Documents endpoints | 3 | 🔲 Todo | FR-SRC-02, FR-ADM-03 |
 | STORY-04.5 | Jobs endpoints | 2 | 🔲 Todo | FR-ADM-02 |
 | STORY-04.6 | Admin tenant endpoints | 3 | 🔲 Todo | FR-TEN-01/05/07 |
@@ -399,6 +399,37 @@ and validates them against the `ErrorEnvelope` schema extracted from the *served
 red before the builder existed). No migration/schema change and no tenant data touched (C-3), so the drift
 guard stays green; `internal/api` stays outside the coverage gate (consistent with ADR-0027) but the new code
 is unit- + e2e-covered. The route table is the growable seam 04.3–04.6 append to. ADR-0028.
+
+**Delivered (STORY-04.3):** the sources API — a new `internal/cp/sources` package (FR-SRC-01/14, SPEC-07 §2/§2a,
+ADR-0029) plus its seven routes wired into `internal/api` (`New` + `liveRoutes()`) behind
+`RequireScopeAdmin → RateLimit`. Sources are control-plane registry data (C-3), so the package operates on the
+control-plane pool via a `Store`/PoolDB — it never opens a tenant database (ADR-0003) — and every operation is
+scoped to the tenant resolved from the API key (FR-ACC-03, no `tenant_id` parameter). `GET /v1/sources`
+(`?limit&cursor` → `{items,next_cursor}` keyset pagination), `POST` (create), `GET/PATCH/DELETE /{id}`
+(PATCH covers pause/resume via `status`, restricted to active/paused; delete marks the source `deleting` and
+enqueues a `delete_source` job), `POST /{id}/sync` and `POST /{id}/test`. **Concurrent-sync 409** is enforced by
+the *existing* `jobs_one_active_sync_per_source` partial unique index — the sync handler writes a queued
+`sync_source` mirror row (the row the EPIC-09 worker will consume) and maps the unique violation to `conflict`;
+the **Idempotency-Key** is stored in `jobs.payload` and an active matching sync is replayed rather than
+conflicting (SPEC-07 §1). Two dependencies are **injected seams**, not built here: the connector framework
+(`Validator`: `ValidateConfig`/`Test`, EPIC-06 STORY-06.1) is nil today — `/test` returns the `not_found` seam
+envelope (mirroring STORY-04.1) and create/update run generic validation only (kind/name/config-shape), with the
+kind-specific `ValidateConfig` slotting in when the port is wired (NFR-MNT-01); and the River worker that
+executes the queued jobs and performs the FR-SRC-12 cascade (EPIC-09 STORY-09.1/09.6). Credentials (FR-SRC-10)
+are deferred to STORY-06.2: a `credentials` field in the body is rejected `400` (fail closed, no plaintext on the
+write path — C-4) and no response ever returns credentials. No migration/schema change (the `sources`/`jobs`
+tables and the unique index already existed), so the drift guard stays green; `api/openapi.yaml` regenerated via
+`mise run openapi` so the served spec, the drift guard and the contract tests grow with the new routes
+(ADR-0028). TDD throughout (unit tests written and watched red before the service/handlers existed). Unit tests
+(`internal/cp/sources`: validation branches, duplicate-name/404/409 mapping, pause/resume, delete idempotency,
+sync 409 + idempotent replay, `/test` seam, cursor pagination; `internal/api`: the seven routes run
+`scope-admin → rate-limit → handler`) + an e2e golden path over the real control-plane Postgres
+(`test/e2e/sources_e2e_test.go`: create→list→get→patch→sync→idempotent-replay→409→delete→test-seam through the
+assembled API-key chain, asserting the queued jobs and `deleting` status land in the real tables and that no
+credentials are echoed). ADR-0029; ISSUE-0002. _(Pre-existing, unrelated to this story: `mise run coverage` and
+full `mise run lint` are red in the local environment for a golangci-lint/Go-toolchain drift on two EPIC-03
+files and env-sensitive `internal/cli` tests — verified identical on a clean checkout; no gated package was
+touched.)_
 
 ## EPIC-05 · Ingestion pipeline — 🔲 0/42 pts
 
@@ -501,6 +532,8 @@ EPIC-03 middleware in the SPEC-07 §1 order (request ID/logging → recovery →
 credential-keyed rate limit per route) plus every 03.x handler built behind it — the router-wiring seam every
 EPIC-02/03 story deferred to. STORY-04.2 then generates the OpenAPI 3.1 spec from that router's route table,
 serves it at `/v1/openapi.json`, and adds the drift-guard + jsonschema contract tests (SPEC-07 §3, ADR-0028).
-Suggested next: the resource endpoints (04.3 sources, 04.4 documents, 04.5 jobs, 04.6 admin tenants) that slot
-into the `not_found` route seams STORY-04.1 left in place — each appends its routes to `liveRoutes()` so the
-spec grows with them._
+STORY-04.3 then adds the sources
+endpoints (`internal/cp/sources`) over the control-plane pool, with the connector framework and the job worker as
+injected seams for EPIC-06/09 (ADR-0029). Suggested next: the remaining resource endpoints (04.4 documents, 04.5
+jobs, 04.6 admin tenants) that slot into the `not_found` route seams STORY-04.1 left in place — each appends its
+routes to `liveRoutes()` so the spec grows with them._

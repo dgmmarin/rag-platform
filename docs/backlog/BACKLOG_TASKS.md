@@ -173,8 +173,14 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] CI validates recorded responses — a jsonschema contract test (unit + e2e golden path over the real control-plane Postgres, `test/e2e/openapi_e2e_test.go`) drives real router error responses (401 scope gate, 404 unknown-route) and validates them against the `ErrorEnvelope` schema extracted from the *served* spec, with a bare-string negative control; both run via `mise run test` / `mise run e2e` in CI.
 
 ### STORY-04.3 — Sources endpoints (FR-SRC-01/14)
-- [ ] CRUD, `sync`, `test` wired to connector registry
-- [ ] 409 on concurrent sync
+- [x] CRUD, `sync`, `test` wired to connector registry
+      _(CRUD + sync/delete enqueue are live against the control-plane `sources`/`jobs`
+      tables; the connector registry — `ValidateConfig`/`Test` — is an injected
+      `Validator` seam supplied by EPIC-06 STORY-06.1, so `test` returns the
+      not_found seam until then. ADR-0029.)_
+- [x] 409 on concurrent sync
+      _(via the existing `jobs_one_active_sync_per_source` partial unique index;
+      Idempotency-Key replays the active job.)_
 
 ### STORY-04.4 — Documents endpoints (FR-SRC-02, FR-ADM-03)
 - [ ] multipart upload to object storage + job

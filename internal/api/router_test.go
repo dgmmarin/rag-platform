@@ -65,6 +65,14 @@ func newTestDeps(ran *[]string) Deps {
 		UsageList:          okHandler(ran, "usage-list"),
 		ImpersonationStart: okHandler(ran, "impersonation-start"),
 		ImpersonationEnd:   okHandler(ran, "impersonation-end"),
+
+		SourceList:   okHandler(ran, "source-list"),
+		SourceCreate: okHandler(ran, "source-create"),
+		SourceGet:    okHandler(ran, "source-get"),
+		SourceUpdate: okHandler(ran, "source-update"),
+		SourceDelete: okHandler(ran, "source-delete"),
+		SourceSync:   okHandler(ran, "source-sync"),
+		SourceTest:   okHandler(ran, "source-test"),
 	}
 }
 
@@ -239,13 +247,51 @@ func TestPanicBecomesEnvelope(t *testing.T) {
 func TestSeamRoutesReturnNotFound(t *testing.T) {
 	var ran []string
 	h := New(newTestDeps(&ran))
-	for _, p := range []string{"/v1/sources", "/v1/documents", "/v1/jobs", "/admin/tenants"} {
+	for _, p := range []string{"/v1/documents", "/v1/jobs", "/admin/tenants"} {
 		rr := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, p, nil)
 		r.Header.Set("Authorization", "Bearer rk_x_y")
 		h.ServeHTTP(rr, r)
 		if rr.Code != http.StatusNotFound {
 			t.Fatalf("%s = %d, want 404 (seam)", p, rr.Code)
+		}
+	}
+}
+
+// The sources routes are mounted behind scope-admin -> rate-limit and dispatch by
+// method to their handlers (STORY-04.3). Each must run the tenant-scoped chain
+// then reach its own handler, and {id} subpaths must route to the right method.
+func TestSourcesRoutesChain(t *testing.T) {
+	cases := []struct {
+		method, path, handler string
+	}{
+		{http.MethodGet, "/v1/sources", "source-list"},
+		{http.MethodPost, "/v1/sources", "source-create"},
+		{http.MethodGet, "/v1/sources/abc", "source-get"},
+		{http.MethodPatch, "/v1/sources/abc", "source-update"},
+		{http.MethodDelete, "/v1/sources/abc", "source-delete"},
+		{http.MethodPost, "/v1/sources/abc/sync", "source-sync"},
+		{http.MethodPost, "/v1/sources/abc/test", "source-test"},
+	}
+	for _, c := range cases {
+		var ran []string
+		h := New(newTestDeps(&ran))
+		rr := httptest.NewRecorder()
+		r := httptest.NewRequest(c.method, c.path, nil)
+		r.Header.Set("Authorization", "Bearer rk_x_y")
+		h.ServeHTTP(rr, r)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s %s = %d, want 200; body=%s", c.method, c.path, rr.Code, rr.Body.String())
+		}
+		// The credential-keyed rate limiter runs inside the scope gate (ADR-0027).
+		if idxOf(ran, "scope-admin") < 0 || idxOf(ran, "rate-limit") < 0 {
+			t.Fatalf("%s %s did not run scope-admin -> rate-limit; ran=%v", c.method, c.path, ran)
+		}
+		if idxOf(ran, "scope-admin") > idxOf(ran, "rate-limit") {
+			t.Fatalf("%s %s ran rate-limit before scope; ran=%v", c.method, c.path, ran)
+		}
+		if !contains(ran, c.handler) {
+			t.Fatalf("%s %s did not reach %s; ran=%v", c.method, c.path, c.handler, ran)
 		}
 	}
 }

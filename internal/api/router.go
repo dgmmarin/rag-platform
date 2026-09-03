@@ -38,6 +38,16 @@ type Deps struct {
 	UsageList          http.Handler
 	ImpersonationStart http.Handler
 	ImpersonationEnd   http.Handler
+
+	// Sources resource handlers (STORY-04.3, FR-SRC-01/14). All are `admin`
+	// scope; a nil handler is the not-implemented seam (handlerOr).
+	SourceList   http.Handler // GET /v1/sources
+	SourceCreate http.Handler // POST /v1/sources
+	SourceGet    http.Handler // GET /v1/sources/{id}
+	SourceUpdate http.Handler // PATCH /v1/sources/{id}
+	SourceDelete http.Handler // DELETE /v1/sources/{id}
+	SourceSync   http.Handler // POST /v1/sources/{id}/sync
+	SourceTest   http.Handler // POST /v1/sources/{id}/test
 }
 
 // New assembles the public HTTP handler: the global middleware chain in the
@@ -84,10 +94,21 @@ func New(d Deps) http.Handler {
 	}
 	mux.Handle("GET /v1/usage", tenantScoped(d.RequireScopeAdmin, d.UsageList))
 
-	// Sources/documents/jobs/settings/members/api-keys and the admin tenant
-	// routes are later EPIC-04 stories (04.3–04.6). They are intentionally NOT
-	// registered here: an unregistered path yields the not_found envelope below,
-	// which is the seam their handlers slot into.
+	// Sources (STORY-04.3, FR-SRC-01/14, SPEC-07 §2). All admin scope; the tenant
+	// is derived from the API key (FR-ACC-03). These are Bearer-authenticated, so
+	// no CSRF applies (CSRF guards cookie-session mutations only).
+	mux.Handle("GET /v1/sources", tenantScoped(d.RequireScopeAdmin, d.SourceList))
+	mux.Handle("POST /v1/sources", tenantScoped(d.RequireScopeAdmin, d.SourceCreate))
+	mux.Handle("GET /v1/sources/{id}", tenantScoped(d.RequireScopeAdmin, d.SourceGet))
+	mux.Handle("PATCH /v1/sources/{id}", tenantScoped(d.RequireScopeAdmin, d.SourceUpdate))
+	mux.Handle("DELETE /v1/sources/{id}", tenantScoped(d.RequireScopeAdmin, d.SourceDelete))
+	mux.Handle("POST /v1/sources/{id}/sync", tenantScoped(d.RequireScopeAdmin, d.SourceSync))
+	mux.Handle("POST /v1/sources/{id}/test", tenantScoped(d.RequireScopeAdmin, d.SourceTest))
+
+	// Documents/jobs/settings/members/api-keys and the admin tenant routes are
+	// later EPIC-04 stories (04.4–04.6). They are intentionally NOT registered
+	// here: an unregistered path yields the not_found envelope below, which is the
+	// seam their handlers slot into.
 
 	// Global chain (outer -> inner), SPEC-07 §1 order with the credential-keyed
 	// rate limiter moved inside per-route auth (ADR-0027):

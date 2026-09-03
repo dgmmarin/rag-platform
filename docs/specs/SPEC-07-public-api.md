@@ -39,6 +39,22 @@
 | DELETE | /admin/tenants/{id} | platform | schedules deletion with grace |
 | GET | /healthz, /readyz | — | |
 
+### 2a. Sources (STORY-04.3 realisation)
+The sources routes are served by `internal/cp/sources` over the control-plane
+pool — sources are registry data and live in the control plane (C-3); this path
+never opens a tenant database (ADR-0003). The tenant is taken only from the
+authenticated API key (FR-ACC-03). Concurrent-sync `409` is enforced by the
+existing `jobs_one_active_sync_per_source` partial unique index (a queued
+`sync_source` mirror row is written for the EPIC-09 worker to consume); the
+`Idempotency-Key` is stored in `jobs.payload` and replays the active sync job.
+Two dependencies are injected seams provided by later epics: the connector
+framework (`ValidateConfig`/`Test`, EPIC-06 STORY-06.1) — until it is wired,
+`POST .../test` returns the `not_found` seam envelope and create/update run only
+generic validation — and the job worker (EPIC-09 STORY-09.1/09.6) that executes
+the queued jobs and performs the FR-SRC-12 cascade. Source credentials
+(FR-SRC-10) are deferred to STORY-06.2: a `credentials` field is rejected `400`
+(fail closed, C-4) and is never returned. See ADR-0029.
+
 ## 3. OpenAPI
 Generated from Go into `api/openapi.yaml`; served at `/v1/openapi.json`. Contract tests in CI validate responses against it.
 

@@ -13,6 +13,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/cp/audit"
 	"github.com/rag-platform/ragctl/internal/cp/auth"
 	"github.com/rag-platform/ragctl/internal/cp/ratelimit"
+	"github.com/rag-platform/ragctl/internal/cp/sources"
 	"github.com/rag-platform/ragctl/internal/cp/tenants"
 	"github.com/rag-platform/ragctl/internal/cp/usage"
 	"github.com/rag-platform/ragctl/internal/crypto"
@@ -85,6 +86,13 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	usageCounter := usage.NewCounter(usage.FromPool(pool))
 	usageHandlers := usage.NewHandlers(usage.NewService(usage.FromPool(pool)))
 
+	// --- Sources (tenant-scoped CRUD + sync/delete enqueue, STORY-04.3). The
+	// connector-framework Validator is left nil until EPIC-06 (STORY-06.1) wires
+	// the registry: create/update run generic validation and /test reports the
+	// seam envelope. Sources are control-plane registry data (C-3), so this uses
+	// the control-plane pool — never a tenant pool. ---
+	sourceHandlers := sources.NewHandlers(sources.NewService(sources.FromPool(pool)))
+
 	// --- Rate limiting (per key + per tenant, credential-keyed). ---
 	limiter := ratelimit.New(nil)
 	settingsSvc := tenants.NewSettingsService(tenants.SettingsFromPool(pool))
@@ -118,6 +126,14 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		UsageList:          http.HandlerFunc(usageHandlers.List),
 		ImpersonationStart: http.HandlerFunc(impHandlers.Start),
 		ImpersonationEnd:   http.HandlerFunc(impHandlers.End),
+
+		SourceList:   http.HandlerFunc(sourceHandlers.List),
+		SourceCreate: http.HandlerFunc(sourceHandlers.Create),
+		SourceGet:    http.HandlerFunc(sourceHandlers.Get),
+		SourceUpdate: http.HandlerFunc(sourceHandlers.Update),
+		SourceDelete: http.HandlerFunc(sourceHandlers.Delete),
+		SourceSync:   http.HandlerFunc(sourceHandlers.Sync),
+		SourceTest:   http.HandlerFunc(sourceHandlers.Test),
 	}
 
 	return &apiServer{

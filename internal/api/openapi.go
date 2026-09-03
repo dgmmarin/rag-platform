@@ -138,6 +138,15 @@ type route struct {
 	// success is the 2xx response description; okStatus its code (defaults 200).
 	success  string
 	okStatus string
+	// extra are documented error responses beyond those the auth chain implies
+	// (e.g. 404 on an {id} route, 409 on a conflicting sync/duplicate name).
+	extra []errResp
+}
+
+// errResp is one extra documented error response for a route.
+type errResp struct {
+	status string
+	desc   string
 }
 
 // liveRoutes is the single source of truth for the documented surface. It mirrors
@@ -172,7 +181,44 @@ func liveRoutes() []route {
 				{Name: "to", In: "query", Description: "Inclusive end date (YYYY-MM-DD).", Schema: strSchema()},
 			},
 			success: "usage rows"},
+
+		// Sources (STORY-04.3, FR-SRC-01/14). Tenant derived from the API key.
+		{method: "GET", path: "/v1/sources", tag: "sources", summary: "List the tenant's sources.", operationID: "sourceList", auth: authScopeAdmin,
+			params: []Parameter{
+				{Name: "limit", In: "query", Description: "Page size (default 50, max 200).", Schema: map[string]any{"type": "integer"}},
+				{Name: "cursor", In: "query", Description: "Opaque pagination cursor from a prior next_cursor.", Schema: strSchema()},
+			},
+			success: "a page of sources ({items, next_cursor})",
+			extra:   []errResp{{"400", "invalid limit or cursor"}}},
+		{method: "POST", path: "/v1/sources", tag: "sources", summary: "Create a source (config validated by the connector).", operationID: "sourceCreate", auth: authScopeAdmin,
+			success: "source created", okStatus: "201",
+			extra: []errResp{{"400", "invalid source body"}, {"409", "a source with that name already exists"}}},
+		{method: "GET", path: "/v1/sources/{id}", tag: "sources", summary: "Get one source.", operationID: "sourceGet", auth: authScopeAdmin,
+			params:  []Parameter{sourceIDParam()},
+			success: "the source",
+			extra:   []errResp{{"404", "no such source"}}},
+		{method: "PATCH", path: "/v1/sources/{id}", tag: "sources", summary: "Update a source (includes pause/resume via status).", operationID: "sourceUpdate", auth: authScopeAdmin,
+			params:  []Parameter{sourceIDParam()},
+			success: "the updated source",
+			extra:   []errResp{{"400", "invalid patch body"}, {"404", "no such source"}, {"409", "a source with that name already exists"}}},
+		{method: "DELETE", path: "/v1/sources/{id}", tag: "sources", summary: "Delete a source (enqueues delete_source).", operationID: "sourceDelete", auth: authScopeAdmin,
+			params:  []Parameter{sourceIDParam()},
+			success: "deletion scheduled", okStatus: "202",
+			extra: []errResp{{"404", "no such source"}}},
+		{method: "POST", path: "/v1/sources/{id}/sync", tag: "sources", summary: "Start a manual sync (Idempotency-Key honoured).", operationID: "sourceSync", auth: authScopeAdmin,
+			params:  []Parameter{sourceIDParam()},
+			success: "sync job enqueued", okStatus: "202",
+			extra: []errResp{{"404", "no such source"}, {"409", "a sync is already queued or running"}}},
+		{method: "POST", path: "/v1/sources/{id}/test", tag: "sources", summary: "Test a source's configuration and credentials.", operationID: "sourceTest", auth: authScopeAdmin,
+			params:  []Parameter{sourceIDParam()},
+			success: "connection ok",
+			extra:   []errResp{{"404", "no such source, or the connector framework is not available yet"}}},
 	}
+}
+
+// sourceIDParam is the shared {id} path parameter for the source subresource routes.
+func sourceIDParam() Parameter {
+	return Parameter{Name: "id", In: "path", Required: true, Description: "Source id.", Schema: strSchema()}
 }
 
 // Document builds the in-code OpenAPI 3.1 document describing the live surface.
@@ -190,6 +236,7 @@ func Document() *OpenAPI {
 			{Name: "auth", Description: "Session and OIDC authentication."},
 			{Name: "platform", Description: "Platform-admin surface under /admin (requires is_platform_admin)."},
 			{Name: "usage", Description: "Tenant-scoped usage accounting."},
+			{Name: "sources", Description: "Tenant content sources (create/update/delete, sync, test)."},
 		},
 		Paths: map[string]PathItem{},
 		Components: Components{
@@ -340,6 +387,10 @@ func responsesFor(r route) map[string]Response {
 	// readyz can report not-ready.
 	if r.operationID == "readyz" {
 		add("503", "a readiness check failed")
+	}
+	// Per-route extras (404/409/400 for resource routes).
+	for _, e := range r.extra {
+		add(e.status, e.desc)
 	}
 	return resp
 }
