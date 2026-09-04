@@ -1072,6 +1072,12 @@ paths:
       responses:
         "200":
           description: connection ok
+        "400":
+          description: the connection or credential test failed; the envelope message is actionable (e.g. unreachable host, bad credentials)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         "401":
           description: missing or invalid API key
           content:

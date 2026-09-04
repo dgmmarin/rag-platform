@@ -494,6 +494,48 @@ func TestTestConnectionNotFound(t *testing.T) {
 	}
 }
 
+// A connector "test connection" failure (unreachable host, bad credentials) is a
+// client-facing, actionable error (FR-SRC-14). The service wraps it as a
+// *ValidationError carrying the connector's already-sanitised message so the
+// handler surfaces it (ISSUE-0026, ADR-0050) rather than genericising it to 500.
+func TestTestConnectionSurfacesConnectorFailure(t *testing.T) {
+	st := newFakeStore()
+	svc := newTestService(t, st)
+	s, _ := svc.Create(context.Background(), CreateParams{TenantID: tenantA, Kind: "web_crawl", Name: "n"})
+	const actionable = "start URL returned 500"
+	svc.Validator = fakeValidator{test: func(_ context.Context, _ string, _ json.RawMessage, _ map[string]string) error {
+		return errors.New(actionable)
+	}}
+	err := svc.Test(context.Background(), tenantA, s.ID)
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *ValidationError, got %T: %v", err, err)
+	}
+	if ve.Msg != actionable {
+		t.Fatalf("message = %q, want %q", ve.Msg, actionable)
+	}
+}
+
+// When the connector for a valid kind is not registered yet, SourcesValidator.Test
+// returns the injected ErrConnectorUnavailable. The service must preserve that
+// sentinel (→ the 404 seam) and NOT wrap it as a ValidationError.
+func TestTestConnectionPreservesUnavailableFromValidator(t *testing.T) {
+	st := newFakeStore()
+	svc := newTestService(t, st)
+	s, _ := svc.Create(context.Background(), CreateParams{TenantID: tenantA, Kind: "web_crawl", Name: "n"})
+	svc.Validator = fakeValidator{test: func(_ context.Context, _ string, _ json.RawMessage, _ map[string]string) error {
+		return ErrConnectorUnavailable
+	}}
+	err := svc.Test(context.Background(), tenantA, s.ID)
+	if !errors.Is(err, ErrConnectorUnavailable) {
+		t.Fatalf("want ErrConnectorUnavailable preserved, got %v", err)
+	}
+	var ve *ValidationError
+	if errors.As(err, &ve) {
+		t.Fatalf("ErrConnectorUnavailable must not be wrapped as ValidationError")
+	}
+}
+
 func TestListPaginates(t *testing.T) {
 	st := newFakeStore()
 	svc := newTestService(t, st)

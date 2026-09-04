@@ -71,9 +71,12 @@ flagged boundary below). No migration, no OpenAPI change, no new dependency.
   enforced on every probe (NFR-SEC-04). No control-plane/OpenAPI change, no migration,
   no new dependency.
 
-## Flagged boundary
-The `/test` HTTP handler (`internal/cp/sources`) maps a non-sentinel service error to a
-generic 500, so the connector's actionable message is delivered/tested at the connector
-boundary but genericised by the HTTP envelope. Surfacing it through the `/test` response
-is a one-line follow-up in the sources package, deliberately outside STORY-07.8's scope
-("only the connectors' Test methods"). Recorded in ADR-0050 so the follow-up is visible.
+## Flagged boundary — RESOLVED (ISSUE-0026)
+At STORY-07.8 the `/test` HTTP handler (`internal/cp/sources`) mapped a non-sentinel
+service error to a generic 500, so the connector's actionable message was delivered/tested
+at the connector boundary but genericised by the HTTP envelope. Surfacing it through the
+`/test` response was a one-line follow-up in the sources package, deliberately outside
+STORY-07.8's scope ("only the connectors' Test methods"). It is now resolved by
+**ISSUE-0026** (ADR-0050 follow-up section): a failed `Connector.Test` is wrapped in
+`sources.ValidationError` and surfaced as 400 `validation` with the actionable message,
+completing FR-SRC-14 end-to-end.

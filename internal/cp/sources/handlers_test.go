@@ -3,6 +3,7 @@ package sources
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,15 +26,22 @@ func newTestHandlers(st *fakeStore) *Handlers {
 
 func decodeEnvelope(t *testing.T, body []byte) string {
 	t.Helper()
+	code, _ := decodeEnvelopeFull(t, body)
+	return code
+}
+
+func decodeEnvelopeFull(t *testing.T, body []byte) (code, message string) {
+	t.Helper()
 	var env struct {
 		Error struct {
-			Code string `json:"code"`
+			Code    string `json:"code"`
+			Message string `json:"message"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &env); err != nil {
 		t.Fatalf("decode envelope: %v (body=%s)", err, body)
 	}
-	return env.Error.Code
+	return env.Error.Code, env.Error.Message
 }
 
 func TestHandlerCreateRequiresTenant(t *testing.T) {
@@ -240,6 +248,50 @@ func TestHandlerTestConnectionSeam(t *testing.T) {
 	}
 	if code := decodeEnvelope(t, rr.Body.Bytes()); code != "not_found" {
 		t.Fatalf("code=%q", code)
+	}
+}
+
+// A connector "test connection" FAILURE is surfaced through the HTTP path as a
+// 400 validation envelope carrying the connector's actionable message, not a
+// generic 500 (FR-SRC-14, ISSUE-0026). Mirrors the create-path ValidationError.
+func TestHandlerTestConnectionFailureIs400(t *testing.T) {
+	st := newFakeStore()
+	h := newTestHandlers(st)
+	s, _ := h.Service.Create(context.Background(), CreateParams{TenantID: tenantA, Kind: "web_crawl", Name: "n"})
+	const actionable = "authentication failed: check credentials"
+	h.Service.Validator = fakeValidator{test: func(_ context.Context, _ string, _ json.RawMessage, _ map[string]string) error {
+		return errors.New(actionable)
+	}}
+	r := httptest.NewRequest(http.MethodPost, "/v1/sources/"+s.ID+"/test", nil)
+	r.SetPathValue("id", s.ID)
+	rr := httptest.NewRecorder()
+	h.Test(rr, r.WithContext(ctxWithTenant(r.Context())))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	code, msg := decodeEnvelopeFull(t, rr.Body.Bytes())
+	if code != "validation" {
+		t.Fatalf("code=%q, want validation", code)
+	}
+	if msg != actionable {
+		t.Fatalf("message=%q, want %q", msg, actionable)
+	}
+}
+
+// An unknown source on the /test path stays a 404 not_found (unchanged behaviour).
+func TestHandlerTestConnectionNotFound(t *testing.T) {
+	st := newFakeStore()
+	h := newTestHandlers(st)
+	h.Service.Validator = fakeValidator{}
+	r := httptest.NewRequest(http.MethodPost, "/v1/sources/"+newID(9)+"/test", nil)
+	r.SetPathValue("id", newID(9))
+	rr := httptest.NewRecorder()
+	h.Test(rr, r.WithContext(ctxWithTenant(r.Context())))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	if code := decodeEnvelope(t, rr.Body.Bytes()); code != "not_found" {
+		t.Fatalf("code=%q, want not_found", code)
 	}
 }
 

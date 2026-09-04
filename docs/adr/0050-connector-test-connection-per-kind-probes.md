@@ -102,15 +102,50 @@ reused unchanged.
   needed.** All tests are hermetic (httptest fixtures + the real egress guard for the
   SSRF-block cases). Coverage: `internal/egress` 87.8%, `webcrawl` 79.9%, `api` 80.5%,
   `connector`/`upload` unchanged — all ≥ 70 %.
-- **Known boundary (flagged, out of STORY-07.8's scope).** The `/v1/sources/{id}/test`
-  HTTP handler (`internal/cp/sources`) maps a non-sentinel service error to a generic
-  500 ("could not test source"); the create path, by contrast, wraps a connector error
-  in a client-facing `ValidationError`. So today the actionable message is delivered at
-  the **connector boundary** (and asserted there) but is genericised by the HTTP
-  envelope. Surfacing it through the `/test` response — e.g. wrapping the `Test` error
-  in a `ValidationError`/dedicated envelope in `sources.Service.Test` — is a one-line
-  change in the sources package, which STORY-07.8 leaves untouched by scope ("only the
-  connectors' Test methods"). Recorded here so the follow-up is a deliberate, visible
-  decision rather than a silent gap (per the source-of-truth hierarchy: FR-SRC-14 wants
-  the admin to see an actionable error; the connector delivers it, the envelope should
-  be updated next where that path is owned).
+- **Known boundary (flagged, out of STORY-07.8's scope) — RESOLVED by ISSUE-0026, see
+  the follow-up below.** The `/v1/sources/{id}/test` HTTP handler (`internal/cp/sources`)
+  mapped a non-sentinel service error to a generic 500 ("could not test source"); the
+  create path, by contrast, wraps a connector error in a client-facing `ValidationError`.
+  So at STORY-07.8 the actionable message was delivered at the **connector boundary** (and
+  asserted there) but genericised by the HTTP envelope. Surfacing it through the `/test`
+  response — wrapping the `Test` error in a `ValidationError` in `sources.Service.Test` —
+  is a one-line change in the sources package, which STORY-07.8 left untouched by scope
+  ("only the connectors' Test methods"). Recorded here so the follow-up was a deliberate,
+  visible decision rather than a silent gap (per the source-of-truth hierarchy: FR-SRC-14
+  wants the admin to see an actionable error; the connector delivers it, the envelope is
+  updated next where that path is owned).
+
+## Follow-up (ISSUE-0026): HTTP surfacing of a failed test — 400 via `ValidationError`
+
+The boundary flagged above is now closed in the sources package (`internal/cp/sources`),
+completing FR-SRC-14 end-to-end.
+
+- **Status code: 400 `validation`, not 422.** A well-formed request whose live
+  connection/credential probe FAILED (unreachable host, rejected credentials) is a
+  client-facing 4xx about the tenant admin's own source config — not a 500. It is
+  surfaced as **400** by wrapping the connector's `Test` error in the existing
+  `*sources.ValidationError`, exactly mirroring the CREATE path (which wraps a connector
+  `ValidateConfig` error the same way). A dedicated **422 Unprocessable Entity** was
+  considered — arguably more precise for "the config is well-formed but the remote
+  failed" — and rejected: it would add a new envelope code to the SPEC-07 §1 vocabulary
+  and diverge from the create path for no admin-visible gain. The actionable detail rides
+  in the envelope `message`, so the status choice is about consistency and machinery
+  reuse, and 400 wins on both (lowest code; the `validation` code already exists).
+
+- **Surfacing mechanism.** `Service.Test` wraps the probe failure and preserves the seam
+  sentinels: `ErrConnectorUnavailable` (an unregistered kind → the 404 seam) and
+  `ErrNotFound` pass through unwrapped, a genuine internal fault (credential decrypt /
+  store failure) occurs *before* the probe and keeps the 500 fallback, and everything
+  else from `Validator.Test` becomes a `*ValidationError`. The handler needs no new
+  mapping — `writeServiceError` already maps `*ValidationError → 400`.
+
+- **Sanitisation (C-4) unchanged.** The message returned is the connector's `Test` error
+  verbatim, already sanitised at the connector boundary by the classifier above (never
+  echoes the raw error or a URL query; names only the non-secret host). The service does
+  not re-wrap the raw transport error, and the decrypt-and-zero lifecycle on the Test
+  path is untouched.
+
+- **OpenAPI.** The `sourceTest` operation gains a `400` response (Go annotation in
+  `internal/api/openapi.go`, regenerated into `api/openapi.yaml` via `mise run openapi`);
+  the drift and contract guards stay green (the `validation` code was already in the
+  ErrorEnvelope enum, so no schema change). No migration, no new dependency.

@@ -197,8 +197,11 @@ func (h *Handlers) Sync(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, job)
 }
 
-// Test serves POST /v1/sources/{id}/test (runs Connector.Test). Until the
-// connector framework is wired (EPIC-06) this returns the not_found seam envelope.
+// Test serves POST /v1/sources/{id}/test (runs Connector.Test). A failed probe —
+// unreachable host or bad credentials — is a 400 validation envelope carrying the
+// connector's actionable, sanitised message (FR-SRC-14, ISSUE-0026); an unknown
+// source is 404, and while the connector framework is unwired (EPIC-06) or a kind
+// has no connector, it returns the not_found seam envelope.
 func (h *Handlers) Test(w http.ResponseWriter, r *http.Request) {
 	tid, ok := tenant.TenantIDFromCtx(r.Context())
 	if !ok {
@@ -213,7 +216,9 @@ func (h *Handlers) Test(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeServiceError maps a service error to the SPEC-07 §1 envelope. A
-// ValidationError is 400; the sentinels map to their documented statuses; an
+// ValidationError is 400 (both a bad input and a failed connector "test connection",
+// which the service wraps as a ValidationError carrying the sanitised, actionable
+// message — ISSUE-0026); the sentinels map to their documented statuses; an
 // ErrConnectorUnavailable becomes the not_found seam (mirroring STORY-04.1);
 // anything else is a generic 500 with the safe fallback message.
 func writeServiceError(w http.ResponseWriter, err error, fallback string) {

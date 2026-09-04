@@ -1160,11 +1160,17 @@ REAL guard, non-XML/empty sitemap, and a recording `Doer`/`RoundTripper` asserti
 ≤10 s deadline is applied). Hermetic — httptest + the real egress guard, no DB/object
 storage. `go test ./...` green; coverage `egress` 87.8% / `webcrawl` 79.9% / `api` 80.5% /
 `upload` 87.5% / `connector` 85.4% (≥ 70 % gate); gofmt + `go vet` clean; changed/new files
-lint-clean. No migration, no OpenAPI change, no new dependency. *Flagged boundary:* the
-`/test` HTTP handler genericises a non-sentinel service error to a 500, so the actionable
-message is delivered/tested at the connector boundary but not yet surfaced through the
-`/test` response envelope — a one-line follow-up in the sources package, outside 07.8's
-scope (ADR-0050). Remaining EPIC-07 story (07.9) is Todo.
+lint-clean. No migration, no OpenAPI change, no new dependency. *Flagged boundary — now
+RESOLVED (ISSUE-0026, ADR-0050 follow-up):* the `/test` HTTP handler had genericised a
+non-sentinel service error to a 500, so the actionable message was delivered/tested at the
+connector boundary but not surfaced through the `/test` response envelope. The follow-up
+fix wraps a failed `Connector.Test` in `sources.ValidationError` so `POST
+/v1/sources/{id}/test` returns **400 `validation`** with the connector's sanitised,
+actionable message (422 rejected for consistency with the create path); the seam sentinels
+(unregistered kind → 404 seam, unknown source → 404) and the credential decrypt/zero
+lifecycle are unchanged, and the `sourceTest` OpenAPI operation gains a 400 response
+(drift/contract guards green). This completes FR-SRC-14 end-to-end. Remaining EPIC-07 story
+(07.9) is Todo.
 
 ## EPIC-08 · Retrieval and answering — 🔲 0/39 pts
 

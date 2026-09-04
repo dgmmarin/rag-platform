@@ -311,6 +311,17 @@ func (s *Service) Sync(ctx context.Context, p SyncParams) (Job, error) {
 // Test runs the connector "test connection" for a source (FR-SRC-14). It returns
 // ErrConnectorUnavailable when the connector framework is not wired (EPIC-06
 // seam) and ErrNotFound for an unknown source.
+//
+// A connector probe FAILURE — an unreachable host or rejected credentials — is a
+// client-facing, actionable error about the admin's own source config, not an
+// internal fault: it is wrapped as a *ValidationError so the handler surfaces the
+// connector's message (400) instead of genericising it to 500 (ISSUE-0026,
+// ADR-0050 §"HTTP surfacing"). The connector already sanitises its Test errors at
+// the connector boundary (ADR-0050: never echoes the raw error or a URL query, C-4),
+// so the message is safe to return verbatim. The seam sentinels (ErrConnectorUnavailable
+// for an unregistered kind, ErrNotFound) are preserved unwrapped so they keep their
+// own statuses. A genuine internal fault (credential decrypt, store failure) occurs
+// before the probe and propagates unchanged to the 500 fallback.
 func (s *Service) Test(ctx context.Context, tenantID, id string) error {
 	if tenantID == "" {
 		return fmt.Errorf("sources: tenant is required")
@@ -331,7 +342,15 @@ func (s *Service) Test(ctx context.Context, tenantID, id string) error {
 		return err
 	}
 	defer zero() // clear the decrypted secret the moment Test returns (SPEC-04 §6)
-	return s.Validator.Test(ctx, src.Kind, src.Config, creds)
+	if err := s.Validator.Test(ctx, src.Kind, src.Config, creds); err != nil {
+		// Preserve the seam sentinels; wrap a real probe failure as an actionable
+		// client-facing validation error (mirrors the Create path's ValidateConfig wrap).
+		if errors.Is(err, ErrConnectorUnavailable) || errors.Is(err, ErrNotFound) {
+			return err
+		}
+		return invalid("%s", err.Error())
+	}
+	return nil
 }
 
 // sealCredentials marshals a plaintext credential map and envelope-encrypts it

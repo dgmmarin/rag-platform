@@ -244,7 +244,10 @@ func liveRoutes() []route {
 		{method: "POST", path: "/v1/sources/{id}/test", tag: "sources", summary: "Test a source's configuration and credentials.", operationID: "sourceTest", auth: authScopeAdmin,
 			params:  []Parameter{sourceIDParam()},
 			success: "connection ok",
-			extra:   []errResp{{"404", "no such source, or the connector framework is not available yet"}}},
+			extra: []errResp{
+				{"400", "the connection or credential test failed; the envelope message is actionable (e.g. unreachable host, bad credentials)"},
+				{"404", "no such source, or the connector framework is not available yet"},
+			}},
 
 		// Documents (STORY-04.4, FR-SRC-02/FR-ADM-03). Tenant content, tenant
 		// derived from the API key (FR-ACC-03). Scopes differ per route (SPEC-07 §2).
