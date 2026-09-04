@@ -3,9 +3,12 @@ package webcrawl
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
+	"errors"
 	"fmt"
 
 	"github.com/rag-platform/ragctl/internal/connector"
+	"github.com/rag-platform/ragctl/internal/egress"
 )
 
 // sitemapConfigSchema is the SPEC-04 §3 sitemap-connector config contract. It mirrors
@@ -67,11 +70,46 @@ func validateSitemapSemantics(c config) error {
 	return nil
 }
 
-// Test validates the configuration without network I/O (FR-SRC-14). Live reachability
-// probing across all connector kinds is STORY-07.8; here Test guarantees the config is
-// well-formed so an obviously invalid source is rejected before it is scheduled.
-func (sitemapConnector) Test(_ context.Context, cfg json.RawMessage, _ connector.Credentials) error {
-	return sitemapConnector{}.ValidateConfig(cfg)
+// Test validates the config, then fetches AND parses the first sitemap URL through
+// the SSRF-guarded egress Doer, bounded by the ≤10 s probe deadline (FR-SRC-14,
+// STORY-07.8). It reuses the STORY-07.5 sitemap fetch (gzip + size cap) and parser.
+// Outcomes map to actionable, secret-free errors: unreachable (host not found /
+// address not permitted / refused / timed out), a non-2xx status, a non-XML body, or
+// an empty sitemap (no <url>/<sitemap> entries). A sitemap authenticates nothing, so
+// creds is ignored.
+func (sitemapConnector) Test(ctx context.Context, cfg json.RawMessage, _ connector.Credentials) error {
+	if err := (sitemapConnector{}).ValidateConfig(cfg); err != nil {
+		return err
+	}
+	var c config
+	if err := json.Unmarshal(cfg, &c); err != nil {
+		return err // unreachable after ValidateConfig
+	}
+	_, u, err := parseAndNormalize(c.SitemapURLs[0])
+	if err != nil {
+		return err // unreachable after ValidateConfig
+	}
+	ctx, cancel := context.WithTimeout(ctx, egress.ProbeTimeout)
+	defer cancel()
+
+	cr := newSitemapCrawler(c, syncDoer)
+	body, err := cr.fetchSitemap(ctx, u.String())
+	if err != nil {
+		if msg, ok := transportMessage(err, u.Host); ok {
+			return fmt.Errorf("sitemap: %s", msg)
+		}
+		// A non-2xx status / size-cap failure: fetchSitemap's message carries no
+		// secret (a sitemap URL has no credentials), so it is safe to surface.
+		return fmt.Errorf("sitemap: could not fetch sitemap: %v", err)
+	}
+	var f sitemapFile
+	if err := xml.Unmarshal(body, &f); err != nil {
+		return errors.New("sitemap: response is not valid XML")
+	}
+	if len(f.URLs) == 0 && len(f.Sitemaps) == 0 {
+		return errors.New("sitemap: no <url> or <sitemap> entries found (empty sitemap)")
+	}
+	return nil
 }
 
 // Sync enumerates the sitemap(s) into the sink (SPEC-04 §3). It decodes the config,

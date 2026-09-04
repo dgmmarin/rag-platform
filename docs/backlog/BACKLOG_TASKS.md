@@ -305,8 +305,11 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] `incremental_param` with cursor in State — cursor baked onto the endpoint Path (paginate.go untouched), verbatim max `updated_at` persisted; NEW generic `connector_state` tenant table (migration 00002, schema v2) via `tenantStateStore` over `*tenant.DB` (ADR-0003; no `tenant_id`); hermetic round-trip tests + a DB-backed e2e
 - [x] weekly full sync for deletion detection — connector supports full (`SyncRun.Full` ⇒ full enumeration + `Complete`) and incremental modes and records `api:last_full_sync`; the weekly CADENCE (setting `Full` + full-mode sink) is the EPIC-09 scheduler's job (ADR-0049)
 
-### STORY-07.8 — Source "test connection" for all kinds (FR-SRC-14)
-- [ ] each connector's `Test` validates reachability and credentials within 10 s with actionable errors
+### STORY-07.8 — Source "test connection" for all kinds (FR-SRC-14) — ✅ Done (ADR-0050, ISSUE-0025)
+- [x] each connector's `Test` validates reachability and credentials within 10 s with actionable errors — `upload` trivial success (no external system); `web_crawl` GETs the first `start_url`; `sitemap` fetches+parses the first sitemap URL; `api` builds the authed client (incl. lazy oauth2 token fetch) and hits the first endpoint (401/403 ⇒ credential error, 2xx ⇒ ok)
+- [x] hard ≤10 s deadline derived inside every network `Test` (`context.WithTimeout(ctx, egress.ProbeTimeout)`), asserted by a deadline-recording `Doer`/`RoundTripper`
+- [x] actionable + sanitised errors via a shared `egress.ClassifyError(err, host)` (SSRF-block / DNS / timeout / refused / generic) that never echoes the raw error or the URL query (C-4); SSRF guard enforced on every probe (NFR-SEC-04)
+- [x] TDD RED-first, hermetic (httptest + the real egress guard for SSRF-block); no migration, no OpenAPI change, no new dependency
 
 ### STORY-07.9 — Connector documentation
 - [ ] `docs/connectors/*.md` with config reference and examples per kind

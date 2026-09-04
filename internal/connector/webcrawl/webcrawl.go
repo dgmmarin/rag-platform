@@ -26,6 +26,7 @@ import (
 	"fmt"
 
 	"github.com/rag-platform/ragctl/internal/connector"
+	"github.com/rag-platform/ragctl/internal/egress"
 )
 
 // userAgent identifies the platform crawler and carries a contact URL, as required
@@ -154,12 +155,32 @@ func validateSemantics(c config) error {
 	return nil
 }
 
-// Test validates the configuration (FR-SRC-14). Live reachability/credential
-// probing across all connector kinds is STORY-07.8; here Test guarantees the
-// config is well-formed and fetchable-in-principle without performing network I/O,
-// so an obviously invalid source is rejected before it is ever scheduled.
-func (webCrawlConnector) Test(_ context.Context, cfg json.RawMessage, _ connector.Credentials) error {
-	return webCrawlConnector{}.ValidateConfig(cfg)
+// Test validates the config, then probes reachability of the source (FR-SRC-14,
+// STORY-07.8): a single GET of the first start_url through the SSRF-guarded egress
+// Doer, bounded by the ≤10 s probe deadline. Outcomes map to actionable, secret-free
+// errors (host not found / address not permitted / connection refused / timed out /
+// "start URL returned <status>"); a 2xx/3xx is success. No credentials are needed —
+// web_crawl authenticates nothing — so creds is ignored. Robots.txt is intentionally
+// NOT consulted for a test (a robots disallow is not an unreachable source), but the
+// SSRF guard always applies.
+func (webCrawlConnector) Test(ctx context.Context, cfg json.RawMessage, _ connector.Credentials) error {
+	if err := (webCrawlConnector{}).ValidateConfig(cfg); err != nil {
+		return err
+	}
+	var c config
+	if err := json.Unmarshal(cfg, &c); err != nil {
+		return err // unreachable after ValidateConfig
+	}
+	_, u, err := parseAndNormalize(c.StartURLs[0])
+	if err != nil {
+		return err // unreachable after ValidateConfig
+	}
+	ctx, cancel := context.WithTimeout(ctx, egress.ProbeTimeout)
+	defer cancel()
+	if err := probeReachable(ctx, syncDoer, u.String()); err != nil {
+		return fmt.Errorf("web_crawl: %w", err)
+	}
+	return nil
 }
 
 // Sync enumerates the website into the sink (SPEC-04 §2). It decodes the config,

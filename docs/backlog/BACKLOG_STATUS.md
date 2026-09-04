@@ -19,13 +19,13 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
-| EPIC-07 | Web crawl, sitemap and API connectors | 39 | 35 | 🚧 In progress |
+| EPIC-07 | Web crawl, sitemap and API connectors | 39 | 37 | 🚧 In progress |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **169** | **50%** |
+| **Total** | | **337** | **171** | **51%** |
 
 ---
 
@@ -969,7 +969,7 @@ ISSUE-0017. _(Pre-existing, unrelated: `internal/cli` unit tests fail only under
 port had to be published out of band to run the e2e; no gated package's behaviour
 regressed and no new lint finding was introduced.)_
 
-## EPIC-07 · Web crawl, sitemap and API connectors — 🚧 35/39 pts
+## EPIC-07 · Web crawl, sitemap and API connectors — 🚧 37/39 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -980,7 +980,7 @@ regressed and no new lint finding was introduced.)_
 | STORY-07.5 | Sitemap connector | 3 | ✅ Done | FR-SRC-06, SPEC-04 §3/§3a, ADR-0047 |
 | STORY-07.6 | HTTP API connector: auth and pagination | 8 | ✅ Done | FR-SRC-07, SPEC-04 §4/§4a, ADR-0048 |
 | STORY-07.7 | HTTP API connector: templating and incremental sync | 5 | ✅ Done | FR-SRC-07/08, SPEC-04 §4/§4b, ADR-0049 |
-| STORY-07.8 | Source "test connection" for all kinds | 2 | 🔲 Todo | FR-SRC-14 |
+| STORY-07.8 | Source "test connection" for all kinds | 2 | ✅ Done | FR-SRC-14, NFR-SEC-04, SPEC-04 §1b, ADR-0050 |
 | STORY-07.9 | Connector documentation | 2 | 🔲 Todo | — |
 
 **Delivered (STORY-07.1):** the `web_crawl` connector and crawl core
@@ -1136,6 +1136,35 @@ full-vs-incremental, nil-State) with an in-memory `StateStore`; the golden-path 
 (golangci-lint v2.13.1, 0 issues), tenant drift + version guards green; api-package
 coverage 79.3%. No control-plane/OpenAPI change, no new dependency. Remaining EPIC-07
 stories (07.8–07.9) are Todo.
+
+**Delivered (STORY-07.8):** live "test connection" for all connector kinds (ADR-0050,
+ISSUE-0025, FR-SRC-14) — each `Connector.Test` now probes reachability AND credentials,
+bounded to ≤10 s, with actionable, sanitised errors, replacing the config-only stubs. The
+HTTP path (`POST /v1/sources/{id}/test` → `SourcesValidator` → sources-service credential
+decrypt, STORY-06.1/06.2) is unchanged. **upload**: trivial success (no external system /
+credentials; storage health is `/readyz`, documented). **web_crawl**: one GET of the first
+`start_url` through the SSRF-guarded `Doer` — 2xx/3xx ⇒ ok, non-2xx ⇒ "start URL returned
+<status>". **sitemap**: fetch AND parse the first sitemap URL (reusing §3a `fetchSitemap`
+gzip/size-cap + the `encoding/xml` parser) — actionable errors for unreachable / non-2xx /
+non-XML / empty. **api**: `buildAuthedClient` (07.6, incl. lazy oauth2 token fetch) + ONE
+request to the first endpoint/base URL — 401/403 (or an oauth2 token 401/403) ⇒
+"authentication failed: check credentials", 2xx ⇒ ok, else actionable + `redactURL`. A hard
+`context.WithTimeout(ctx, egress.ProbeTimeout)` (10 s) is derived inside every network
+`Test`. A shared secret-free classifier `egress.ClassifyError(err, host)` (SSRF-block / DNS
+/ timeout / refused / generic) lives in `internal/egress` (imported by all three network
+connectors, no cycle) so the four Tests don't duplicate the mapping; it never echoes the
+raw error or the URL query (C-4), naming only the non-secret host. TDD: `classify_test.go`,
+webcrawl `probe_test.go`/`sitemap_probe_test.go`, api `probe_test.go` RED first, then GREEN
+(reachable success, 401⇒credential, DNS/refused, SSRF-block via a loopback URL through the
+REAL guard, non-XML/empty sitemap, and a recording `Doer`/`RoundTripper` asserting the
+≤10 s deadline is applied). Hermetic — httptest + the real egress guard, no DB/object
+storage. `go test ./...` green; coverage `egress` 87.8% / `webcrawl` 79.9% / `api` 80.5% /
+`upload` 87.5% / `connector` 85.4% (≥ 70 % gate); gofmt + `go vet` clean; changed/new files
+lint-clean. No migration, no OpenAPI change, no new dependency. *Flagged boundary:* the
+`/test` HTTP handler genericises a non-sentinel service error to a 500, so the actionable
+message is delivered/tested at the connector boundary but not yet surfaced through the
+`/test` response envelope — a one-line follow-up in the sources package, outside 07.8's
+scope (ADR-0050). Remaining EPIC-07 story (07.9) is Todo.
 
 ## EPIC-08 · Retrieval and answering — 🔲 0/39 pts
 

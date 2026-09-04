@@ -23,11 +23,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/rag-platform/ragctl/internal/connector"
+	"github.com/rag-platform/ragctl/internal/egress"
 )
 
 // State keys the connector persists in SyncRun.State (SPEC-04 §1/§4, ADR-0049). The
@@ -216,11 +218,56 @@ func validateSemantics(c apiConfig) error {
 	return nil
 }
 
-// Test validates the configuration (FR-SRC-14). Live reachability/credential probing
-// across all connector kinds is STORY-07.8; here Test guarantees the config is
-// well-formed without performing network I/O.
-func (apiConnector) Test(_ context.Context, cfg json.RawMessage, _ connector.Credentials) error {
-	return apiConnector{}.ValidateConfig(cfg)
+// Test validates the config, then makes ONE lightweight, authenticated, SSRF-guarded
+// request to verify reachability AND credentials (FR-SRC-14, STORY-07.8), bounded by
+// the ≤10 s probe deadline. It builds the authed client with the decrypted
+// credentials (reusing buildAuthedClient — for oauth2_cc the token is fetched on this
+// first request, so a bad client_id/secret surfaces as a credential error) and hits
+// the first endpoint (or the base URL). Outcomes map to actionable, secret-free
+// errors: a missing secret names only the missing key; 401/403 (or an oauth2 token
+// rejection) → "authentication failed: check credentials"; 2xx → success; any other
+// status or transport failure → an actionable, redacted message. No pagination is
+// walked and no body is processed — one request is enough to prove auth.
+func (apiConnector) Test(ctx context.Context, cfg json.RawMessage, creds connector.Credentials) error {
+	if err := (apiConnector{}).ValidateConfig(cfg); err != nil {
+		return err
+	}
+	var c apiConfig
+	if err := json.Unmarshal(cfg, &c); err != nil {
+		return err // unreachable after ValidateConfig
+	}
+	ctx, cancel := context.WithTimeout(ctx, egress.ProbeTimeout)
+	defer cancel()
+
+	ac, err := buildAuthedClient(ctx, syncClient, c.Auth, creds)
+	if err != nil {
+		return err // sanitised: names only the missing credential key (ADR-0041)
+	}
+
+	target := strings.TrimRight(c.BaseURL, "/")
+	if len(c.Endpoints) > 0 {
+		target += c.Endpoints[0].Path
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return fmt.Errorf("api: invalid base_url or endpoint path")
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := ac.do(req)
+	if err != nil {
+		return fmt.Errorf("api: %s", classifyAPIError(err, hostOf(target)))
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return fmt.Errorf("api: authentication failed: check credentials")
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return nil
+	default:
+		return fmt.Errorf("api: %s returned %s", redactURL(target), strings.TrimSpace(resp.Status))
+	}
 }
 
 // Sync enumerates every configured endpoint into the sink (SPEC-04 §4). It builds the

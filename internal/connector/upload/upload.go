@@ -47,9 +47,14 @@ func (uploadConnector) ValidateConfig(cfg json.RawMessage) error {
 	return configSchema.Validate(cfg)
 }
 
-// Test is a no-op success: an upload source has no external system to reach, so
-// "test connection" (FR-SRC-14) trivially passes. Object-storage health is a
-// platform concern surfaced by readiness probes, not a per-source test.
+// Test is a no-op success (FR-SRC-14, STORY-07.8). Unlike the web_crawl/sitemap/api
+// connectors — whose Test now probes a live external system for reachability and
+// credentials — an upload source has NO external system and NO credentials to verify:
+// its documents are pushed in through POST /v1/documents, not pulled from anywhere.
+// Object-storage health is a platform-wide readiness concern (the /readyz probe),
+// deliberately NOT a per-source test — a transient storage outage should not make
+// every upload source report itself "broken", and one tenant's test must not probe
+// shared infrastructure. So "test connection" for an upload source trivially passes.
 func (uploadConnector) Test(_ context.Context, _ json.RawMessage, _ connector.Credentials) error {
 	return nil
 }

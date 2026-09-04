@@ -82,6 +82,45 @@ reaches a DB, object storage or the network.
   finalised when the first connector implements `Sync`. `SyncRun.Limiter` is
   `*golang.org/x/time/rate.Limiter`.
 
+### 1b. Realised test-connection probing (STORY-07.8)
+
+`Connector.Test` now verifies a source is actually usable — reachability AND
+credentials, within 10 s, with actionable errors (FR-SRC-14, ADR-0050) — not just the
+config shape. The HTTP path (`POST /v1/sources/{id}/test` → `SourcesValidator` → the
+sources service, which decrypts credentials and passes them in) is unchanged; this fills
+in the real per-kind probing behind it. Each `Test` first runs `ValidateConfig`, then:
+
+- **`upload`** — trivial success. No external system, no credentials (documents are
+  pushed via `POST /v1/documents`); object-storage health is a platform `/readyz`
+  concern, not a per-source test.
+- **`web_crawl`** — one GET of the first `start_url` through the SSRF-guarded egress
+  `Doer`. 2xx/3xx ⇒ success; non-2xx ⇒ "start URL returned &lt;status&gt;". robots.txt
+  is not consulted for a test, but the SSRF guard always applies.
+- **`sitemap`** — fetch AND parse the first sitemap URL (reusing the §3a `fetchSitemap`
+  gzip/size-cap path and the `encoding/xml` parser): actionable errors for unreachable,
+  non-2xx, non-XML, or empty (no `<url>`/`<sitemap>` entries).
+- **`api`** — build the authed client with the decrypted credentials (reusing §4a
+  `buildAuthedClient`; for `oauth2_cc` the token is fetched on this first request, so a
+  bad `client_id`/`secret` surfaces as a credential error) and make ONE request to the
+  first endpoint (or `base_url`): 401/403 (or an oauth2 token rejection) ⇒
+  "authentication failed: check credentials"; 2xx ⇒ success; any other status ⇒ an
+  actionable, redacted message. No pagination is walked.
+
+**Common (ADR-0050).** Every network `Test` derives a hard `context.WithTimeout(ctx,
+egress.ProbeTimeout)` (`ProbeTimeout = 10 s`) so a hanging host cannot wedge `/test`.
+Errors are actionable and **sanitised**: the shared `egress.ClassifyError(err, host)`
+maps transport failures (SSRF-block / DNS / timeout / refused / generic) to a message
+that names only the non-secret host and **never** echoes the raw error or the URL's
+query string (which can carry a secret, C-4); the API connector reuses its `redactURL`
+helper and never echoes the oauth2 `RetrieveError` body. The classifier lives in
+`internal/egress` (imported by all three network connectors, no cycle) so the four Tests
+do not duplicate the mapping.
+
+*Boundary (flagged).* The `/test` HTTP handler currently genericises a non-sentinel
+service error to a 500; the actionable message is delivered and tested at the connector
+boundary. Surfacing it through the `/test` response envelope is a one-line follow-up in
+the sources package, outside STORY-07.8's scope (ADR-0050 records it).
+
 ## 2. Web crawl connector
 Config:
 ```json
