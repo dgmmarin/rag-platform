@@ -22,6 +22,21 @@ func TestReadOnlyDBRefusesWrites(t *testing.T) {
 	}
 }
 
+// BeginRead is the read-path counterpart of Begin: unlike Begin it must NOT
+// refuse a read-only (suspended) tenant, because a read is always safe and
+// retrieval (SPEC-06 §2) needs a transaction to scope `set local hnsw.ef_search`.
+// With a nil pool it therefore reaches the pool and panics, proving it passed the
+// guard rather than short-circuiting with ErrReadOnly the way Begin does.
+func TestBeginReadDoesNotRefuseReadOnlyTenant(t *testing.T) {
+	db := &DB{id: ID(uuid.New()), status: StatusSuspended, readOnly: true} // nil pool
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("BeginRead returned without reaching the pool; it must not guard on readOnly")
+		}
+	}()
+	_, _ = db.BeginRead(context.Background())
+}
+
 func TestDBIDAndStatus(t *testing.T) {
 	id := ID(uuid.New())
 	db := &DB{id: id, status: StatusActive}

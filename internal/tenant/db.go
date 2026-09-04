@@ -88,6 +88,16 @@ func (d *DB) Begin(ctx context.Context) (pgx.Tx, error) {
 	return d.pool.Begin(ctx)
 }
 
+// BeginRead starts a read-only transaction. Unlike Begin it is permitted on a
+// suspended (read-only) tenant, because a read is always safe: the transaction is
+// opened with pgx.ReadOnly access mode, so no write can slip through even though
+// the readOnly guard is skipped. Retrieval (SPEC-06 §2) uses it to scope a
+// transaction-local `set local hnsw.ef_search` to a single query without leaking
+// the GUC back to the pooled connection.
+func (d *DB) BeginRead(ctx context.Context) (pgx.Tx, error) {
+	return d.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+}
+
 // Unsafe exposes the raw pool for the migration and provisioning commands only.
 // It is forbidden in application code by lint rule (ADR-0003, STORY-02.6).
 func (d *DB) Unsafe() *pgxpool.Pool { return d.pool }

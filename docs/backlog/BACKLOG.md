@@ -203,7 +203,7 @@ Suggested sprint order: EPIC-01 → 02 → 03 → 04 → 05 (+06 in parallel) �
 ## EPIC-08 · Retrieval and answering
 *Goal: hybrid search, rerank, grounded answers with citations.* — 39 pts
 
-**STORY-08.1 Hybrid retrieval query** (8) — Traces: FR-RET-01/02/08, ADR-0007, SPEC-06 §2
+**STORY-08.1 Hybrid retrieval query** (8) — Traces: FR-RET-01/02/08, ADR-0007, ADR-0051, SPEC-06 §2
 - AC: single SQL round trip with RRF; filters (source, uri prefix, date, metadata tags); `hnsw.ef_search` tuning; p95 ≤ 120 ms at 1 M chunks in benchmark.
 
 **STORY-08.2 Retrieve endpoint** (2) — Traces: FR-RET-08
