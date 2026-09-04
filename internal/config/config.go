@@ -109,6 +109,18 @@ type Config struct {
 	ObjectStoreBucket string
 	// ObjectStoreRegion is the S3 region label (MinIO ignores it); default "us-east-1".
 	ObjectStoreRegion string
+
+	// Query embedding (STORY-08.2, SPEC-06 §2, FR-RET-08). The retrieve/query path
+	// embeds the incoming question with the tenant's configured embedding provider
+	// (the same provider used at ingest — query and corpus MUST share a space),
+	// authenticating with this platform key. Empty leaves /v1/retrieve reporting a
+	// clean "could not embed" error rather than reaching a provider. The key is
+	// confidential and never logged (C-4). ponytail: one key per deployment (C-5
+	// single-region-per-tenant); make it a provider→key map only if a deployment
+	// ever serves tenants on heterogeneous providers. BaseURL overrides the provider
+	// endpoint for a self-hosted/proxy deployment (e.g. TEI).
+	EmbeddingAPIKey  string
+	EmbeddingBaseURL string
 }
 
 // Load reads configuration, overlaying the optional config file (if filePath is
@@ -226,6 +238,11 @@ func Load(filePath string) (Config, error) {
 	cfg.ObjectStoreSecretKey = mustGet(get, "OBJECT_STORE_SECRET_KEY")
 	cfg.ObjectStoreBucket = firstNonEmpty(mustGet(get, "OBJECT_STORE_BUCKET"), "rag-uploads")
 	cfg.ObjectStoreRegion = firstNonEmpty(mustGet(get, "OBJECT_STORE_REGION"), "us-east-1")
+
+	// Query embedding (STORY-08.2, FR-RET-08). Empty leaves /v1/retrieve embedding
+	// on its clean-error path (no provider reached).
+	cfg.EmbeddingAPIKey = mustGet(get, "EMBEDDING_API_KEY")
+	cfg.EmbeddingBaseURL = mustGet(get, "EMBEDDING_BASE_URL")
 
 	return cfg, nil
 }

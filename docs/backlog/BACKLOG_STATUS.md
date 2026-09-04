@@ -20,7 +20,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 39 | ✅ Complete |
-| EPIC-08 | Retrieval and answering | 39 | 8 | 🚧 In progress |
+| EPIC-08 | Retrieval and answering | 39 | 10 | 🚧 In progress |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
@@ -1183,12 +1183,12 @@ but is not yet consulted by the crawler (the effective cap is per-source `max_pa
 Docs-only: `go build ./...` green, no code/schema/OpenAPI/migration change. **EPIC-07
 is complete (39/39 pts).**
 
-## EPIC-08 · Retrieval and answering — 🚧 8/39 pts
+## EPIC-08 · Retrieval and answering — 🚧 10/39 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-08.1 | Hybrid retrieval query | 8 | ✅ Done | FR-RET-01/02/08, ADR-0007, ADR-0051, SPEC-06 §2 |
-| STORY-08.2 | Retrieve endpoint | 2 | 🔲 Todo | FR-RET-08 |
+| STORY-08.2 | Retrieve endpoint | 2 | ✅ Done | FR-RET-08, ADR-0052, SPEC-06 §2, SPEC-07 §2e |
 | STORY-08.3 | Reranker interface and providers | 5 | 🔲 Todo | FR-RET-03 |
 | STORY-08.4 | LLM provider interface | 5 | 🔲 Todo | NFR-MNT-02, NFR-REL-04 |
 | STORY-08.5 | Prompt assembly, citations and grounding refusal | 8 | 🔲 Todo | FR-RET-04/05, SPEC-06 §4–5 |

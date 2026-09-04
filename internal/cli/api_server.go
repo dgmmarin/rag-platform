@@ -37,6 +37,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/objectstore"
 	"github.com/rag-platform/ragctl/internal/obs"
 	"github.com/rag-platform/ragctl/internal/provision"
+	"github.com/rag-platform/ragctl/internal/retrieve"
 	"github.com/rag-platform/ragctl/internal/tenant"
 )
 
@@ -171,6 +172,17 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	// envelope until wired). See ADR-0031. ---
 	jobHandlers := jobs.NewHandlers(jobs.NewService(jobs.FromPool(pool)))
 
+	// --- Retrieve (tenant-scoped hybrid retrieval, STORY-08.2, FR-RET-08). Reads
+	// tenant content through the resolver (ADR-0003, C-3). The incoming query is
+	// embedded with the tenant's configured provider (the same seam ingest uses —
+	// query and corpus share an embedding space), authenticated with the platform
+	// embedding key; embed.New fails closed on the tenant's providers_allowed
+	// (SPEC-09 §2). `query` scope. Returns raw fused results — reranking/answering
+	// layer on later (08.3/08.5). ---
+	retrieveSvc := retrieve.NewService(resolver, settingsSvc,
+		retrieve.KeyedEmbedderFactory{APIKey: cfg.EmbeddingAPIKey, BaseURL: cfg.EmbeddingBaseURL})
+	retrieveHandlers := retrieve.NewHandlers(retrieveSvc)
+
 	// --- Rate limiting (per key + per tenant, credential-keyed). ---
 	limiter := ratelimit.New(nil)
 
@@ -254,6 +266,8 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		JobList:   http.HandlerFunc(jobHandlers.List),
 		JobGet:    http.HandlerFunc(jobHandlers.Get),
 		JobCancel: http.HandlerFunc(jobHandlers.Cancel),
+
+		Retrieve: http.HandlerFunc(retrieveHandlers.Retrieve),
 	}
 
 	return &apiServer{

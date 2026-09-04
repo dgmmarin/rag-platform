@@ -304,6 +304,13 @@ func liveRoutes() []route {
 			params:  []Parameter{jobIDParam()},
 			success: "job cancelled", okStatus: "200",
 			extra: []errResp{{"404", "no such job, or running-job cancellation is not available yet"}, {"409", "job is not in a cancellable state"}}},
+
+		// Retrieve (STORY-08.2, FR-RET-08). Tenant content, tenant derived from the
+		// API key (FR-ACC-03). `query` scope. Embeds the query with the tenant's
+		// configured provider and returns ranked chunks — no generation (SPEC-06 §2).
+		{method: "POST", path: "/v1/retrieve", tag: "retrieval", summary: "Hybrid retrieval: embed the query and return ranked chunks with scores and citation metadata (no generation). Body: {query, top_k?, filters?}.", operationID: "retrieve", auth: authScopeQuery,
+			success: "ranked chunks",
+			extra:   []errResp{{"400", "missing query or malformed body"}, {"503", "tenant is not available"}}},
 	}
 }
 
@@ -345,6 +352,7 @@ func Document() *OpenAPI {
 			{Name: "sources", Description: "Tenant content sources (create/update/delete, sync, test)."},
 			{Name: "documents", Description: "Tenant documents: upload, list, get, delete, and chunk debugging."},
 			{Name: "jobs", Description: "Tenant jobs: list, get, and cancel (the control-plane history/mirror view)."},
+			{Name: "retrieval", Description: "Hybrid retrieval: ranked chunks with scores and citation metadata (no generation)."},
 		},
 		Paths: map[string]PathItem{},
 		Components: Components{

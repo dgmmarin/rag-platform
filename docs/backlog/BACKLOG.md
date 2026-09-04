@@ -206,7 +206,7 @@ Suggested sprint order: EPIC-01 → 02 → 03 → 04 → 05 (+06 in parallel) �
 **STORY-08.1 Hybrid retrieval query** (8) — Traces: FR-RET-01/02/08, ADR-0007, ADR-0051, SPEC-06 §2
 - AC: single SQL round trip with RRF; filters (source, uri prefix, date, metadata tags); `hnsw.ef_search` tuning; p95 ≤ 120 ms at 1 M chunks in benchmark.
 
-**STORY-08.2 Retrieve endpoint** (2) — Traces: FR-RET-08
+**STORY-08.2 Retrieve endpoint** (2) — Traces: FR-RET-08, ADR-0052, SPEC-06 §2, SPEC-07 §2e
 - AC: returns ranked chunks with scores and metadata; respects filters and top_k.
 
 **STORY-08.3 Reranker interface and providers** (5) — Traces: FR-RET-03

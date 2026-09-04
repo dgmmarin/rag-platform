@@ -23,6 +23,8 @@ tags:
     description: 'Tenant documents: upload, list, get, delete, and chunk debugging.'
   - name: jobs
     description: 'Tenant jobs: list, get, and cancel (the control-plane history/mirror view).'
+  - name: retrieval
+    description: 'Hybrid retrieval: ranked chunks with scores and citation metadata (no generation).'
 paths:
   /admin/audit:
     get:
@@ -784,6 +786,47 @@ paths:
       responses:
         "200":
           description: the OpenAPI 3.1 document
+  /v1/retrieve:
+    post:
+      summary: 'Hybrid retrieval: embed the query and return ranked chunks with scores and citation metadata (no generation). Body: {query, top_k?, filters?}.'
+      operationId: retrieve
+      tags:
+        - retrieval
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ranked chunks
+        "400":
+          description: missing query or malformed body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "503":
+          description: tenant is not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /v1/sources:
     get:
       summary: List the tenant's sources.

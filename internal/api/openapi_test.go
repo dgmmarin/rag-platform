@@ -30,6 +30,7 @@ var wantDocumentedRoutes = []struct{ method, path string }{
 	{http.MethodPost, "/admin/impersonations"},
 	{http.MethodDelete, "/admin/impersonations/{id}"},
 	{http.MethodGet, "/v1/usage"},
+	{http.MethodPost, "/v1/retrieve"},
 	{http.MethodGet, "/v1/openapi.json"},
 }
 

@@ -155,6 +155,29 @@ action):
 The one genuine seam is the async River provision/delete **execution** (EPIC-09);
 everything the four routes need exists. See ADR-0032.
 
+### 2e. Retrieve (STORY-08.2 realisation)
+`POST /v1/retrieve` is served by `internal/retrieve` (`Service` + `Handlers`) — the
+`query` scope. It is a retrieval-only endpoint (FR-RET-08): it embeds the incoming
+query string with the tenant's configured embedding provider (the same
+`internal/ingest/embed` seam the corpus was embedded with, so query and documents
+share an embedding space), runs the SPEC-06 §2 hybrid query (STORY-08.1's
+`retrieve.Retrieve`) and returns the ranked chunks with score + citation metadata —
+no generation. Reranking (08.3), the grounding floor and the LLM answer path (08.5)
+layer on later and consume the same results. Documents/versions/chunks are tenant
+content (C-3), so this path reaches a tenant database only via a `tenant.DB` from the
+resolver (ADR-0003); the tenant is taken only from the authenticated API key
+(FR-ACC-03), never a parameter.
+
+Request body: `{"query": "...", "top_k": 8, "filters": {"source_ids": [],
+"uri_prefix": "...", "date_from": "...", "date_to": "...", "metadata": {...}}}` —
+`top_k` and `filters` are optional (an unset `top_k` uses
+`settings.retrieval.final_k`; any value is clamped to a fixed ceiling). Response:
+`{"chunks": [{"id", "document_id", "source_id", "content", "uri", "title",
+"heading_path", "metadata", "score"}]}`. An empty query is `400`; an
+embedding-provider failure is a generic `500` that never leaks provider internals
+(C-4); an unavailable tenant is `503`. The platform embedding-provider key is config
+(`EMBEDDING_API_KEY`), never logged or returned. See ADR-0052.
+
 ## 3. OpenAPI
 Generated from Go into `api/openapi.yaml`; served at `/v1/openapi.json`. Contract tests in CI validate responses against it.
 

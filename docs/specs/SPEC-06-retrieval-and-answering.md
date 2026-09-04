@@ -1,6 +1,6 @@
 # SPEC-06: Retrieval and answering
 
-**Implements:** FR-RET-01..10, NFR-PERF-01/02, NFR-REL-04 · **Decisions:** ADR-0004, ADR-0007, ADR-0051
+**Implements:** FR-RET-01..10, NFR-PERF-01/02, NFR-REL-04 · **Decisions:** ADR-0004, ADR-0007, ADR-0051, ADR-0052
 
 ## 1. Pipeline
 ```
@@ -116,6 +116,15 @@ back to full-sort latency, so the platform pins ≥ 0.8 and the `SET` fails loud
 is absent. The implementation (`internal/retrieve`) reaches the tenant DB only through
 a `*tenant.DB` handle (ADR-0003); the query embedding ($1) is produced by the caller
 (the query API, STORY-08.2), keeping retrieval embedding-provider agnostic.
+
+STORY-08.2 realises the caller for the retrieval-only endpoint `POST /v1/retrieve`
+(FR-RET-08, SPEC-07 §2e): `internal/retrieve.Service` embeds the incoming query
+string with the tenant's configured embedding provider (the same
+`internal/ingest/embed` seam the corpus used, so query and documents share an
+embedding space; fail-closed on `providers_allowed`), then runs the hybrid query
+above and returns the ranked chunks — no generation, no `min_score` floor. `top_k`
+defaults to `settings.retrieval.final_k` and is clamped to a fixed ceiling. See
+ADR-0052.
 
 ## 3. Reranking
 If `settings.reranker.enabled`, top `top_n` fused results go to `Reranker.Rerank(query, texts)`; final order by reranker score; `min_score` then applies to reranker score instead of fused score.

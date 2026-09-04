@@ -74,6 +74,11 @@ type Deps struct {
 	JobList   http.Handler // GET /v1/jobs
 	JobGet    http.Handler // GET /v1/jobs/{id}
 	JobCancel http.Handler // POST /v1/jobs/{id}/cancel
+
+	// Retrieve handler (STORY-08.2, FR-RET-08). Reads tenant content via the
+	// resolver (ADR-0003); the tenant is derived from the API key (FR-ACC-03).
+	// `query` scope (SPEC-07 §2); a nil handler is the not-implemented seam.
+	Retrieve http.Handler // POST /v1/retrieve (query scope)
 }
 
 // New assembles the public HTTP handler: the global middleware chain in the
@@ -157,6 +162,11 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /v1/jobs", tenantScoped(d.RequireScopeAdmin, d.JobList))
 	mux.Handle("GET /v1/jobs/{id}", tenantScoped(d.RequireScopeAdmin, d.JobGet))
 	mux.Handle("POST /v1/jobs/{id}/cancel", tenantScoped(d.RequireScopeAdmin, d.JobCancel))
+
+	// Retrieve (STORY-08.2, FR-RET-08, SPEC-07 §2). Tenant content reached through
+	// the resolver (ADR-0003); the tenant is derived from the API key (FR-ACC-03).
+	// `query` scope. Bearer-authenticated, so no CSRF applies.
+	mux.Handle("POST /v1/retrieve", tenantScoped(d.RequireScopeQuery, d.Retrieve))
 
 	// Settings/members/api-keys routes are later EPIC-04 work. They are
 	// intentionally NOT registered here: an unregistered path yields the not_found

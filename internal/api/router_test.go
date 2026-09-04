@@ -73,6 +73,8 @@ func newTestDeps(ran *[]string) Deps {
 		SourceDelete: okHandler(ran, "source-delete"),
 		SourceSync:   okHandler(ran, "source-sync"),
 		SourceTest:   okHandler(ran, "source-test"),
+
+		Retrieve: okHandler(ran, "retrieve"),
 	}
 }
 
@@ -293,6 +295,30 @@ func TestSourcesRoutesChain(t *testing.T) {
 		if !contains(ran, c.handler) {
 			t.Fatalf("%s %s did not reach %s; ran=%v", c.method, c.path, c.handler, ran)
 		}
+	}
+}
+
+// The retrieve route is mounted behind the `query` scope -> rate-limit chain and
+// reaches its handler (STORY-08.2, FR-RET-08). The tenant is derived from the API
+// key by the scope gate (FR-ACC-03) — never a body/param.
+func TestRetrieveRouteChain(t *testing.T) {
+	var ran []string
+	h := New(newTestDeps(&ran))
+	rr := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/retrieve", nil)
+	r.Header.Set("Authorization", "Bearer rk_x_y")
+	h.ServeHTTP(rr, r)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST /v1/retrieve = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if idxOf(ran, "scope-query") < 0 || idxOf(ran, "rate-limit") < 0 {
+		t.Fatalf("POST /v1/retrieve did not run scope-query -> rate-limit; ran=%v", ran)
+	}
+	if idxOf(ran, "scope-query") > idxOf(ran, "rate-limit") {
+		t.Fatalf("POST /v1/retrieve ran rate-limit before scope; ran=%v", ran)
+	}
+	if !contains(ran, "retrieve") {
+		t.Fatalf("POST /v1/retrieve did not reach the handler; ran=%v", ran)
 	}
 }
 
