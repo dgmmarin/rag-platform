@@ -1,0 +1,599 @@
+[
+  {
+    "name": "A01-blog",
+    "include": null,
+    "exclude": null,
+    "content": [
+      "C_01_TITLE",
+      "C_01_BYLINE",
+      "C_01_P1",
+      "C_01_H2",
+      "C_01_P2",
+      "C_01_L1",
+      "C_01_L2"
+    ],
+    "boilerplate": [
+      "B_01_LOGO",
+      "B_01_NAV_HOME",
+      "B_01_NAV_PRICING",
+      "B_01_NAV_LOGIN",
+      "B_01_COOKIE",
+      "B_01_NEWSLETTER",
+      "B_01_RELATED_A",
+      "B_01_RELATED_B",
+      "B_01_FOOT_TOS",
+      "B_01_FOOT_PRIVACY",
+      "B_01_FOOT_TWITTER",
+      "B_01_FOOT_LINKEDIN",
+      "B_01_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "A02-blog",
+    "include": null,
+    "exclude": null,
+    "content": [
+      "C_02_TITLE",
+      "C_02_BYLINE",
+      "C_02_P1",
+      "C_02_H2",
+      "C_02_P2",
+      "C_02_L1",
+      "C_02_L2"
+    ],
+    "boilerplate": [
+      "B_02_LOGO",
+      "B_02_NAV_HOME",
+      "B_02_NAV_PRICING",
+      "B_02_NAV_LOGIN",
+      "B_02_COOKIE",
+      "B_02_NEWSLETTER",
+      "B_02_RELATED_A",
+      "B_02_RELATED_B",
+      "B_02_FOOT_TOS",
+      "B_02_FOOT_PRIVACY",
+      "B_02_FOOT_TWITTER",
+      "B_02_FOOT_LINKEDIN",
+      "B_02_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "A03-blog",
+    "include": null,
+    "exclude": null,
+    "content": [
+      "C_03_TITLE",
+      "C_03_BYLINE",
+      "C_03_P1",
+      "C_03_H2",
+      "C_03_P2",
+      "C_03_L1",
+      "C_03_L2"
+    ],
+    "boilerplate": [
+      "B_03_LOGO",
+      "B_03_NAV_HOME",
+      "B_03_NAV_PRICING",
+      "B_03_NAV_LOGIN",
+      "B_03_COOKIE",
+      "B_03_NEWSLETTER",
+      "B_03_RELATED_A",
+      "B_03_RELATED_B",
+      "B_03_FOOT_TOS",
+      "B_03_FOOT_PRIVACY",
+      "B_03_FOOT_TWITTER",
+      "B_03_FOOT_LINKEDIN",
+      "B_03_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "A04-blog",
+    "include": null,
+    "exclude": null,
+    "content": [
+      "C_04_TITLE",
+      "C_04_BYLINE",
+      "C_04_P1",
+      "C_04_H2",
+      "C_04_P2",
+      "C_04_L1",
+      "C_04_L2"
+    ],
+    "boilerplate": [
+      "B_04_LOGO",
+      "B_04_NAV_HOME",
+      "B_04_NAV_PRICING",
+      "B_04_NAV_LOGIN",
+      "B_04_COOKIE",
+      "B_04_NEWSLETTER",
+      "B_04_RELATED_A",
+      "B_04_RELATED_B",
+      "B_04_FOOT_TOS",
+      "B_04_FOOT_PRIVACY",
+      "B_04_FOOT_TWITTER",
+      "B_04_FOOT_LINKEDIN",
+      "B_04_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "B05-docs",
+    "include": [
+      "#content"
+    ],
+    "exclude": [
+      ".onthispage"
+    ],
+    "content": [
+      "C_05_TITLE",
+      "C_05_P1",
+      "C_05_CODE",
+      "C_05_H2",
+      "C_05_P2",
+      "C_05_TD1",
+      "C_05_TD2"
+    ],
+    "boilerplate": [
+      "B_05_LOGO",
+      "B_05_NAV_HOME",
+      "B_05_NAV_PRICING",
+      "B_05_NAV_LOGIN",
+      "B_05_TOC_A",
+      "B_05_TOC_B",
+      "B_05_TOC_C",
+      "B_05_ONTHISPAGE",
+      "B_05_FOOT_TOS",
+      "B_05_FOOT_PRIVACY",
+      "B_05_FOOT_TWITTER",
+      "B_05_FOOT_LINKEDIN",
+      "B_05_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "B06-docs",
+    "include": [
+      "#content"
+    ],
+    "exclude": [
+      ".onthispage"
+    ],
+    "content": [
+      "C_06_TITLE",
+      "C_06_P1",
+      "C_06_CODE",
+      "C_06_H2",
+      "C_06_P2",
+      "C_06_TD1",
+      "C_06_TD2"
+    ],
+    "boilerplate": [
+      "B_06_LOGO",
+      "B_06_NAV_HOME",
+      "B_06_NAV_PRICING",
+      "B_06_NAV_LOGIN",
+      "B_06_TOC_A",
+      "B_06_TOC_B",
+      "B_06_TOC_C",
+      "B_06_ONTHISPAGE",
+      "B_06_FOOT_TOS",
+      "B_06_FOOT_PRIVACY",
+      "B_06_FOOT_TWITTER",
+      "B_06_FOOT_LINKEDIN",
+      "B_06_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "B07-docs",
+    "include": [
+      "#content"
+    ],
+    "exclude": [
+      ".onthispage"
+    ],
+    "content": [
+      "C_07_TITLE",
+      "C_07_P1",
+      "C_07_CODE",
+      "C_07_H2",
+      "C_07_P2",
+      "C_07_TD1",
+      "C_07_TD2"
+    ],
+    "boilerplate": [
+      "B_07_LOGO",
+      "B_07_NAV_HOME",
+      "B_07_NAV_PRICING",
+      "B_07_NAV_LOGIN",
+      "B_07_TOC_A",
+      "B_07_TOC_B",
+      "B_07_TOC_C",
+      "B_07_ONTHISPAGE",
+      "B_07_FOOT_TOS",
+      "B_07_FOOT_PRIVACY",
+      "B_07_FOOT_TWITTER",
+      "B_07_FOOT_LINKEDIN",
+      "B_07_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "B08-docs",
+    "include": [
+      "#content"
+    ],
+    "exclude": [
+      ".onthispage"
+    ],
+    "content": [
+      "C_08_TITLE",
+      "C_08_P1",
+      "C_08_CODE",
+      "C_08_H2",
+      "C_08_P2",
+      "C_08_TD1",
+      "C_08_TD2"
+    ],
+    "boilerplate": [
+      "B_08_LOGO",
+      "B_08_NAV_HOME",
+      "B_08_NAV_PRICING",
+      "B_08_NAV_LOGIN",
+      "B_08_TOC_A",
+      "B_08_TOC_B",
+      "B_08_TOC_C",
+      "B_08_ONTHISPAGE",
+      "B_08_FOOT_TOS",
+      "B_08_FOOT_PRIVACY",
+      "B_08_FOOT_TWITTER",
+      "B_08_FOOT_LINKEDIN",
+      "B_08_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "C09-news",
+    "include": null,
+    "exclude": null,
+    "content": [
+      "C_09_TITLE",
+      "C_09_LEDE",
+      "C_09_P1",
+      "C_09_QUOTE",
+      "C_09_P2"
+    ],
+    "boilerplate": [
+      "B_09_MASTHEAD",
+      "B_09_NAV_WORLD",
+      "B_09_NAV_TECH",
+      "B_09_AD_top",
+      "B_09_COOKIE",
+      "B_09_AD_mid",
+      "B_09_COMMENTS_H",
+      "B_09_COMMENT_1",
+      "B_09_COMMENT_2",
+      "B_09_FOOT_TOS",
+      "B_09_FOOT_PRIVACY",
+      "B_09_FOOT_TWITTER",
+      "B_09_FOOT_LINKEDIN",
+      "B_09_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "C10-news",
+    "include": null,
+    "exclude": null,
+    "content": [
+      "C_10_TITLE",
+      "C_10_LEDE",
+      "C_10_P1",
+      "C_10_QUOTE",
+      "C_10_P2"
+    ],
+    "boilerplate": [
+      "B_10_MASTHEAD",
+      "B_10_NAV_WORLD",
+      "B_10_NAV_TECH",
+      "B_10_AD_top",
+      "B_10_COOKIE",
+      "B_10_AD_mid",
+      "B_10_COMMENTS_H",
+      "B_10_COMMENT_1",
+      "B_10_COMMENT_2",
+      "B_10_FOOT_TOS",
+      "B_10_FOOT_PRIVACY",
+      "B_10_FOOT_TWITTER",
+      "B_10_FOOT_LINKEDIN",
+      "B_10_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "C11-news",
+    "include": null,
+    "exclude": null,
+    "content": [
+      "C_11_TITLE",
+      "C_11_LEDE",
+      "C_11_P1",
+      "C_11_QUOTE",
+      "C_11_P2"
+    ],
+    "boilerplate": [
+      "B_11_MASTHEAD",
+      "B_11_NAV_WORLD",
+      "B_11_NAV_TECH",
+      "B_11_AD_top",
+      "B_11_COOKIE",
+      "B_11_AD_mid",
+      "B_11_COMMENTS_H",
+      "B_11_COMMENT_1",
+      "B_11_COMMENT_2",
+      "B_11_FOOT_TOS",
+      "B_11_FOOT_PRIVACY",
+      "B_11_FOOT_TWITTER",
+      "B_11_FOOT_LINKEDIN",
+      "B_11_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "D12-product",
+    "include": [
+      "main"
+    ],
+    "exclude": [
+      ".related",
+      ".cookie-consent"
+    ],
+    "content": [
+      "C_12_TITLE",
+      "C_12_SKU",
+      "C_12_DESC",
+      "C_12_SPEC1",
+      "C_12_SPEC2"
+    ],
+    "boilerplate": [
+      "B_12_LOGO",
+      "B_12_NAV_HOME",
+      "B_12_NAV_PRICING",
+      "B_12_NAV_LOGIN",
+      "B_12_CRUMB_HOME",
+      "B_12_CRUMB_SHOP",
+      "B_12_RELATED_H",
+      "B_12_RELATED_1",
+      "B_12_COOKIE",
+      "B_12_FOOT_TOS",
+      "B_12_FOOT_PRIVACY",
+      "B_12_FOOT_TWITTER",
+      "B_12_FOOT_LINKEDIN",
+      "B_12_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "D13-product",
+    "include": [
+      "main"
+    ],
+    "exclude": [
+      ".related",
+      ".cookie-consent"
+    ],
+    "content": [
+      "C_13_TITLE",
+      "C_13_SKU",
+      "C_13_DESC",
+      "C_13_SPEC1",
+      "C_13_SPEC2"
+    ],
+    "boilerplate": [
+      "B_13_LOGO",
+      "B_13_NAV_HOME",
+      "B_13_NAV_PRICING",
+      "B_13_NAV_LOGIN",
+      "B_13_CRUMB_HOME",
+      "B_13_CRUMB_SHOP",
+      "B_13_RELATED_H",
+      "B_13_RELATED_1",
+      "B_13_COOKIE",
+      "B_13_FOOT_TOS",
+      "B_13_FOOT_PRIVACY",
+      "B_13_FOOT_TWITTER",
+      "B_13_FOOT_LINKEDIN",
+      "B_13_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "D14-product",
+    "include": [
+      "main"
+    ],
+    "exclude": [
+      ".related",
+      ".cookie-consent"
+    ],
+    "content": [
+      "C_14_TITLE",
+      "C_14_SKU",
+      "C_14_DESC",
+      "C_14_SPEC1",
+      "C_14_SPEC2"
+    ],
+    "boilerplate": [
+      "B_14_LOGO",
+      "B_14_NAV_HOME",
+      "B_14_NAV_PRICING",
+      "B_14_NAV_LOGIN",
+      "B_14_CRUMB_HOME",
+      "B_14_CRUMB_SHOP",
+      "B_14_RELATED_H",
+      "B_14_RELATED_1",
+      "B_14_COOKIE",
+      "B_14_FOOT_TOS",
+      "B_14_FOOT_PRIVACY",
+      "B_14_FOOT_TWITTER",
+      "B_14_FOOT_LINKEDIN",
+      "B_14_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "D15-product",
+    "include": [
+      "main"
+    ],
+    "exclude": [
+      ".related",
+      ".cookie-consent"
+    ],
+    "content": [
+      "C_15_TITLE",
+      "C_15_SKU",
+      "C_15_DESC",
+      "C_15_SPEC1",
+      "C_15_SPEC2"
+    ],
+    "boilerplate": [
+      "B_15_LOGO",
+      "B_15_NAV_HOME",
+      "B_15_NAV_PRICING",
+      "B_15_NAV_LOGIN",
+      "B_15_CRUMB_HOME",
+      "B_15_CRUMB_SHOP",
+      "B_15_RELATED_H",
+      "B_15_RELATED_1",
+      "B_15_COOKIE",
+      "B_15_FOOT_TOS",
+      "B_15_FOOT_PRIVACY",
+      "B_15_FOOT_TWITTER",
+      "B_15_FOOT_LINKEDIN",
+      "B_15_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "E16-kb",
+    "include": [
+      "#kb-body"
+    ],
+    "exclude": null,
+    "content": [
+      "C_16_TITLE",
+      "C_16_P1",
+      "C_16_STEP1",
+      "C_16_STEP2",
+      "C_16_P2"
+    ],
+    "boilerplate": [
+      "B_16_LOGO",
+      "B_16_NAV_HOME",
+      "B_16_NAV_PRICING",
+      "B_16_NAV_LOGIN",
+      "B_16_PROMO",
+      "B_16_SIDE_1",
+      "B_16_SIDE_2",
+      "B_16_FOOT_TOS",
+      "B_16_FOOT_PRIVACY",
+      "B_16_FOOT_TWITTER",
+      "B_16_FOOT_LINKEDIN",
+      "B_16_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "E17-kb",
+    "include": [
+      "#kb-body"
+    ],
+    "exclude": null,
+    "content": [
+      "C_17_TITLE",
+      "C_17_P1",
+      "C_17_STEP1",
+      "C_17_STEP2",
+      "C_17_P2"
+    ],
+    "boilerplate": [
+      "B_17_LOGO",
+      "B_17_NAV_HOME",
+      "B_17_NAV_PRICING",
+      "B_17_NAV_LOGIN",
+      "B_17_PROMO",
+      "B_17_SIDE_1",
+      "B_17_SIDE_2",
+      "B_17_FOOT_TOS",
+      "B_17_FOOT_PRIVACY",
+      "B_17_FOOT_TWITTER",
+      "B_17_FOOT_LINKEDIN",
+      "B_17_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "E18-kb",
+    "include": [
+      "#kb-body"
+    ],
+    "exclude": null,
+    "content": [
+      "C_18_TITLE",
+      "C_18_P1",
+      "C_18_STEP1",
+      "C_18_STEP2",
+      "C_18_P2"
+    ],
+    "boilerplate": [
+      "B_18_LOGO",
+      "B_18_NAV_HOME",
+      "B_18_NAV_PRICING",
+      "B_18_NAV_LOGIN",
+      "B_18_PROMO",
+      "B_18_SIDE_1",
+      "B_18_SIDE_2",
+      "B_18_FOOT_TOS",
+      "B_18_FOOT_PRIVACY",
+      "B_18_FOOT_TWITTER",
+      "B_18_FOOT_LINKEDIN",
+      "B_18_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "F19-multiarticle",
+    "include": null,
+    "exclude": null,
+    "content": [
+      "C_19_TITLE",
+      "C_19_BYLINE",
+      "C_19_P1",
+      "C_19_P2"
+    ],
+    "boilerplate": [
+      "B_19_LOGO",
+      "B_19_NAV_HOME",
+      "B_19_NAV_PRICING",
+      "B_19_NAV_LOGIN",
+      "B_19_COOKIE",
+      "B_19_TEASER_H",
+      "B_19_TEASER_P",
+      "B_19_FOOT_TOS",
+      "B_19_FOOT_PRIVACY",
+      "B_19_FOOT_TWITTER",
+      "B_19_FOOT_LINKEDIN",
+      "B_19_FOOT_COPYRIGHT"
+    ]
+  },
+  {
+    "name": "G20-articleheader",
+    "include": null,
+    "exclude": null,
+    "content": [
+      "C_20_TITLE",
+      "C_20_SUB",
+      "C_20_P1",
+      "C_20_P2"
+    ],
+    "boilerplate": [
+      "B_20_LOGO",
+      "B_20_NAV_HOME",
+      "B_20_NAV_PRICING",
+      "B_20_NAV_LOGIN",
+      "B_20_PAGER_PREV",
+      "B_20_PAGER_NEXT",
+      "B_20_FOOT_TOS",
+      "B_20_FOOT_PRIVACY",
+      "B_20_FOOT_TWITTER",
+      "B_20_FOOT_LINKEDIN",
+      "B_20_FOOT_COPYRIGHT"
+    ]
+  }
+]

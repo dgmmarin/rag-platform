@@ -8,16 +8,12 @@ import (
 	"golang.org/x/net/html"
 )
 
-// extracted is the minimal structural view the CRAWLER needs from an HTML page:
-// the title (for the Document title), the canonical URL (SPEC-04 §2: becomes the
-// Document ExternalID) and the outbound links (the BFS frontier). It deliberately
-// does NOT include readable body text.
-//
-// EXTRACTION SEAM (STORY-07.3): high-quality content extraction —
-// readability-style boilerplate removal, include/exclude selectors, and
-// HTML→markdown — is a later story. For STORY-07.1 the crawler emits the RAW page
-// bytes as the Document Body (SPEC-04 §2), and 07.3 will slot its extractor in
-// behind this same parse step without touching crawl logic.
+// extracted is the structural view the CRAWLER needs from an HTML page: the title
+// (for the Document title), the canonical URL (SPEC-04 §2: becomes the Document
+// ExternalID) and the outbound links (the BFS frontier). It deliberately does NOT
+// include the readable body markdown — that is produced separately by
+// extractContent (STORY-07.3, content.go), which the selector/readability
+// extraction operates over.
 type extracted struct {
 	title     string
 	canonical string   // normalised absolute canonical URL, or "" if none/invalid
@@ -35,7 +31,10 @@ func extractHTML(body []byte, base *url.URL) (extracted, error) {
 	}
 	var ex extracted
 	seen := map[string]bool{}
-	var inTitle bool
+	// Title precedence (SPEC-04 §2): <title> → og:title → first <h1>. All three
+	// candidates are collected in one pass; precedence is resolved at the end.
+	var titleTag, ogTitle, firstH1 string
+	var inTitle, inH1 bool
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode {
@@ -43,6 +42,13 @@ func extractHTML(body []byte, base *url.URL) (extracted, error) {
 			case "title":
 				inTitle = true
 				defer func() { inTitle = false }()
+			case "meta":
+				if firstH1 == "" && ogTitle == "" && attr(n, "property") == "og:title" {
+					ogTitle = strings.TrimSpace(attr(n, "content"))
+				}
+			case "h1":
+				inH1 = true
+				defer func() { inH1 = false }()
 			case "link":
 				if attr(n, "rel") == "canonical" {
 					if norm, ok := resolveNormalize(base, attr(n, "href")); ok {
@@ -58,15 +64,31 @@ func extractHTML(body []byte, base *url.URL) (extracted, error) {
 				}
 			}
 		}
-		if inTitle && n.Type == html.TextNode && ex.title == "" {
-			ex.title = strings.TrimSpace(n.Data)
+		if n.Type == html.TextNode {
+			if inTitle && titleTag == "" {
+				titleTag = strings.TrimSpace(n.Data)
+			}
+			if inH1 && firstH1 == "" {
+				firstH1 = strings.TrimSpace(n.Data)
+			}
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			walk(c)
 		}
 	}
 	walk(doc)
+	ex.title = firstNonEmpty(titleTag, ogTitle, firstH1)
 	return ex, nil
+}
+
+// firstNonEmpty returns the first non-empty string, or "".
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // resolveNormalize resolves ref against base and returns its normalised form.

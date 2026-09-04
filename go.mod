@@ -5,6 +5,7 @@ go 1.22
 require (
 	filippo.io/age v1.2.1
 	github.com/alecthomas/kong v1.16.1
+	github.com/andybalholm/cascadia v1.3.2
 	github.com/aws/aws-sdk-go-v2/config v1.29.14
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.67
 	github.com/aws/aws-sdk-go-v2/service/kms v1.38.3

@@ -268,12 +268,17 @@ func (c *crawler) process(ctx context.Context, it item, sink connector.Sink) ([]
 }
 
 // emit sends one fetched page into the sink as a connector.Document. For HTML it
-// parses the minimal structure (title, canonical, links); the canonical URL, when
-// present, becomes the ExternalID (SPEC-04 §2). The raw bytes are the Body — the
-// content-extraction quality is STORY-07.3. Returns discovered links (HTML only).
+// parses the crawl structure (title, canonical, links), then runs the quality
+// content extraction (STORY-07.3, content.go): include/exclude selectors and the
+// readability fallback, rendered to markdown, which is emitted as the Document
+// Text (SPEC-04 §2: "HTML → markdown") — NOT the raw Body. Non-HTML responses
+// within the allowlist are passed through as the raw Body for the parse sidecar.
+// The canonical URL, when present, becomes the ExternalID (SPEC-04 §2). Returns
+// discovered links (HTML only).
 func (c *crawler) emit(ctx context.Context, it item, u *url.URL, resp *http.Response, body []byte, mime string, sink connector.Sink) (links []string) {
 	extID := it.norm
 	title := ""
+	markdown := ""
 	var isHTML bool
 	if strings.Contains(mime, "html") {
 		isHTML = true
@@ -284,6 +289,7 @@ func (c *crawler) emit(ctx context.Context, it item, u *url.URL, resp *http.Resp
 				extID = ex.canonical
 			}
 		}
+		markdown = extractContent(body, c.cfg.IncludeSelectors, c.cfg.ExcludeSelectors)
 	}
 
 	// Canonical de-duplication: two URLs sharing a canonical emit one Document.
@@ -310,6 +316,19 @@ func (c *crawler) emit(ctx context.Context, it item, u *url.URL, resp *http.Resp
 			"status":    resp.StatusCode,
 			"html":      isHTML,
 		},
+	}
+	// For HTML with usable extracted content, carry the clean markdown as Text and
+	// drop the raw Body (connector.Document contract: "Body ... nil if Text set").
+	// Empty extraction (unparseable HTML) falls back to the raw Body path so a
+	// document's content is never lost.
+	if isHTML && markdown != "" {
+		doc.Text = markdown
+		doc.Body = nil
+		doc.MimeType = "text/markdown"
+	} else if isHTML {
+		// Extraction yielded nothing (unparseable/degenerate HTML): fall back to the
+		// raw Body so content is never lost. Log identity only — never content.
+		c.log.Debug("webcrawl: HTML extraction empty; emitting raw body", "external_id", extID)
 	}
 	changed, err := sink.Put(ctx, doc)
 	c.mu.Lock()

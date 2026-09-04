@@ -278,9 +278,10 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] tests for each class (`TestIsBlockedPerClass` table + redirect-to-metadata test)
 - [x] size/timeout limits (20 MB rejected in the read path; 30 s client timeout)
 
-### STORY-07.3 — HTML content extraction quality (FR-SRC-05)
-- [ ] include/exclude selectors; readability fallback; title extraction
-- [ ] 20-page golden corpus with ≥ 90% boilerplate removed
+### STORY-07.3 — HTML content extraction quality (FR-SRC-05) — ✅ Done (ADR-0045, ISSUE-0020)
+- [x] include/exclude selectors (CSS via `cascadia`); readability fallback (reuses `parse.htmlParser`, ADR-0034); title `<title>`→`og:title`→`<h1>` (`content.go`/`extract.go`)
+- [x] HTML emitted as `Document.Text` markdown (`text/markdown`); non-HTML still raw `Body`
+- [x] 20-page golden corpus with ≥ 90% boilerplate removed (`TestGoldenCorpus`; measured mean 1.00, content retention 1.00; synthetic, human spot-review pending per ADR-0045)
 
 ### STORY-07.4 — Conditional fetch and change detection (FR-ING-02)
 - [ ] ETag/Last-Modified used
