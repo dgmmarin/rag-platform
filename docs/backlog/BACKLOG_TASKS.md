@@ -283,9 +283,10 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] HTML emitted as `Document.Text` markdown (`text/markdown`); non-HTML still raw `Body`
 - [x] 20-page golden corpus with ≥ 90% boilerplate removed (`TestGoldenCorpus`; measured mean 1.00, content retention 1.00; synthetic, human spot-review pending per ADR-0045)
 
-### STORY-07.4 — Conditional fetch and change detection (FR-ING-02)
-- [ ] ETag/Last-Modified used
-- [ ] unchanged pages cost a HEAD/304 and no parse
+### STORY-07.4 — Conditional fetch and change detection (FR-ING-02) — ✅ Done (ADR-0046, ISSUE-0021)
+- [x] ETag/Last-Modified used (`If-None-Match`/`If-Modified-Since` from `crawl_pages`; validators stored on every 200 for the next crawl)
+- [x] unchanged pages cost a 304 and no parse (conditional GET → 304: no read/parse/extract/emit, `last_fetched_at` bumped; content-hash fallback for the no-validator case; conditional GET over HEAD per ADR-0046)
+- [x] deletion-detection reconciliation: conditional skip only on incremental syncs (sink `Complete` no-op), unchanged page still marked seen — no false deletions
 
 ### STORY-07.5 — Sitemap connector (FR-SRC-06)
 - [ ] sitemap + sitemap index parsing

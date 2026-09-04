@@ -47,6 +47,12 @@ type crawler struct {
 	store   PageStore
 	limiter *rate.Limiter
 	log     *slog.Logger
+	// full is SyncRun.Full: a full sync keeps the STORY-07.1 resume-skip; an
+	// incremental sync re-visits fetched pages conditionally (STORY-07.4).
+	full bool
+	// prior is the crawl_pages state loaded at run start, keyed by normalised URL —
+	// the source of a page's prior ETag/Last-Modified/content-hash for conditional GET.
+	prior map[string]Page
 
 	allowPrefixes []string
 	seedHosts     map[string]bool
@@ -91,6 +97,7 @@ func (c *crawler) run(ctx context.Context, sr connector.SyncRun, sink connector.
 		c.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	c.limiter = sr.Limiter
+	c.full = sr.Full
 
 	// Resolve the PageStore capability of the run's State (SPEC-04 §2). Absent it,
 	// fall back to a non-resumable in-memory store and warn.
@@ -103,11 +110,13 @@ func (c *crawler) run(ctx context.Context, sr connector.SyncRun, sink connector.
 
 	c.prepareAllow()
 
-	// Load persisted state for resumability.
+	// Load persisted state for resumability and conditional fetch (STORY-07.4 reads
+	// the prior ETag/Last-Modified/content-hash from here).
 	loaded, err := c.store.Load(ctx)
 	if err != nil {
 		return c.stats, err
 	}
+	c.prior = loaded
 
 	frontier := map[int][]item{}
 	alreadyFetched := map[string]bool{}
@@ -129,18 +138,30 @@ func (c *crawler) run(ctx context.Context, sr connector.SyncRun, sink connector.
 		add(norm, u.String(), 0)
 	}
 
-	// Merge persisted pages: fetched ones are skipped on this run; pending ones
-	// (discovered but not yet fetched) are re-queued at their recorded depth — this
-	// is what makes an interrupted crawl resume instead of restarting.
+	// Merge persisted pages. Pending pages (discovered but not fetched) are always
+	// re-queued at their recorded depth — this is what makes an interrupted crawl
+	// resume instead of restarting. Previously-fetched pages depend on the sync mode
+	// (STORY-07.4):
+	//   - FULL sync: skipped (the STORY-07.1 resume-skip); deletion detection is on,
+	//     and re-seeing a page without re-emitting it would need a sink "mark seen"
+	//     signal that the connector.Sink interface does not have (an EPIC-09 concern),
+	//     so a full sync keeps re-emitting what it fetches. See ADR-0046.
+	//   - INCREMENTAL sync: re-queued for a CONDITIONAL re-visit, so a scheduled
+	//     re-crawl detects changes cheaply (a 304 or an identical content hash costs
+	//     no parse/emit). Complete is a no-op on an incremental sink, so skipping an
+	//     unchanged page can never soft-delete it (the deletion-detection reconciliation).
 	for norm, p := range loaded {
-		if p.Fetched {
+		if p.Fetched && c.full {
 			alreadyFetched[norm] = true
 		}
 		if c.visited[norm] {
-			continue
+			continue // already queued (e.g. a seed); a fetched seed is re-visited unless FULL
 		}
 		c.visited[norm] = true
-		if !p.Fetched && p.Depth <= c.cfg.MaxDepth {
+		if p.Depth > c.cfg.MaxDepth {
+			continue
+		}
+		if !p.Fetched || !c.full {
 			frontier[p.Depth] = append(frontier[p.Depth], item{norm: norm, raw: p.URL, depth: p.Depth})
 		}
 	}
@@ -227,6 +248,25 @@ func (c *crawler) process(ctx context.Context, it item, sink connector.Sink) ([]
 		return nil, nil
 	}
 	req.Header.Set("User-Agent", c.ua)
+
+	// Conditional fetch (STORY-07.4, FR-ING-02): on an incremental re-crawl, if
+	// crawl_pages holds prior validators for this page, ask the server to answer
+	// 304 Not Modified when it is unchanged. A conditional GET is one round trip and
+	// carries no body when unchanged — strictly better than a separate HEAD+GET
+	// (which is two round trips whenever the page HAS changed); see ADR-0046. Full
+	// syncs never re-visit a fetched page (they skip it), so conditional headers
+	// only fire on the incremental re-see path.
+	prior, hasPrior := c.prior[it.norm]
+	conditional := !c.full && hasPrior && prior.Fetched
+	if conditional {
+		if prior.ETag != "" {
+			req.Header.Set("If-None-Match", prior.ETag)
+		}
+		if prior.LastModified != "" {
+			req.Header.Set("If-Modified-Since", prior.LastModified)
+		}
+	}
+
 	resp, err := c.doer.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -236,6 +276,14 @@ func (c *crawler) process(ctx context.Context, it item, sink connector.Sink) ([]
 		return nil, nil
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	// 304 Not Modified: the page is unchanged. Do NOT read/parse/extract/emit it —
+	// just record that it was re-seen (bump last_fetched_at, keep validators + hash).
+	// This is the FR-ING-02 "unchanged pages cost a 304 and no parse" fast path.
+	if resp.StatusCode == http.StatusNotModified {
+		c.markUnchanged(ctx, it, prior, resp, 0)
+		return nil, nil
+	}
 
 	// Size cap (SPEC-09 §4: "max response size 20 MB"). Read at most cap+1 bytes so
 	// an over-cap body is REJECTED rather than silently truncated into a half-parsed
@@ -251,11 +299,23 @@ func (c *crawler) process(ctx context.Context, it item, sink connector.Sink) ([]
 		return nil, nil
 	}
 
+	// Content-hash change detection (STORY-07.4, the no-ETag case): many servers send
+	// neither ETag nor Last-Modified, so a 304 is impossible and a 200 is unavoidable.
+	// Compare the fetched bytes' hash to the stored one; identical content means the
+	// page is unchanged — skip parse/emit (no re-ingest), just refresh last_fetched_at
+	// (and any newly supplied validators). Only differing bytes are re-emitted. Gated
+	// on an incremental re-visit (prior fetched state present).
+	sum := sha256.Sum256(body)
+	if conditional && len(prior.ContentHash) > 0 && bytes.Equal(sum[:], prior.ContentHash) {
+		c.markUnchanged(ctx, it, prior, resp, len(body))
+		return nil, nil
+	}
+
 	mime := mimeOf(resp.Header.Get("Content-Type"))
 	links := c.emit(ctx, it, u, resp, body, mime, sink)
 
-	// Persist fetched state (etag/last-modified/hash captured for STORY-07.4).
-	sum := sha256.Sum256(body)
+	// Persist fetched state (etag/last-modified/hash) so the NEXT crawl's request for
+	// this page is conditional (STORY-07.4).
 	if err := c.store.Upsert(ctx, Page{
 		URL: it.raw, NormalizedURL: it.norm, Depth: it.depth,
 		Fetched: true, Status: resp.StatusCode,
@@ -265,6 +325,36 @@ func (c *crawler) process(ctx context.Context, it item, sink connector.Sink) ([]
 		return nil, err // a crawl_pages write failure is fatal: resumability depends on it
 	}
 	return links, nil
+}
+
+// markUnchanged records that a re-visited page was unchanged — a 304 Not Modified,
+// or a 200 whose content hash matches the stored one (STORY-07.4). It bumps
+// last_fetched_at and carries the prior status/content-hash forward, refreshing
+// ETag/Last-Modified when the response supplied new ones, so the NEXT crawl stays
+// conditional. It performs NO parse and NO emit; the page is counted as seen (not
+// changed) in Stats. bodyLen is the fetched byte count (0 for a 304, which has no
+// body). A persistence hiccup is logged, not fatal: it only degrades the next
+// crawl's conditional-fetch efficiency, and must not abort a live crawl.
+func (c *crawler) markUnchanged(ctx context.Context, it item, prior Page, resp *http.Response, bodyLen int) {
+	p := prior
+	p.URL = it.raw
+	p.NormalizedURL = it.norm
+	p.Depth = it.depth
+	p.Fetched = true
+	p.Err = ""
+	if v := resp.Header.Get("ETag"); v != "" {
+		p.ETag = v
+	}
+	if v := resp.Header.Get("Last-Modified"); v != "" {
+		p.LastModified = v
+	}
+	if err := c.store.Upsert(ctx, p); err != nil {
+		c.log.Warn("webcrawl: persist unchanged page failed", "url", it.norm, "err", err.Error())
+	}
+	c.mu.Lock()
+	c.stats.DocsSeen++
+	c.stats.BytesFetched += int64(bodyLen)
+	c.mu.Unlock()
 }
 
 // emit sends one fetched page into the sink as a connector.Document. For HTML it

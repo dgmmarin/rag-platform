@@ -19,7 +19,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
-| EPIC-07 | Web crawl, sitemap and API connectors | 39 | 16 | 🚧 In progress |
+| EPIC-07 | Web crawl, sitemap and API connectors | 39 | 19 | 🚧 In progress |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
@@ -969,14 +969,14 @@ ISSUE-0017. _(Pre-existing, unrelated: `internal/cli` unit tests fail only under
 port had to be published out of band to run the e2e; no gated package's behaviour
 regressed and no new lint finding was introduced.)_
 
-## EPIC-07 · Web crawl, sitemap and API connectors — 🚧 16/39 pts
+## EPIC-07 · Web crawl, sitemap and API connectors — 🚧 19/39 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-07.1 | Web crawler core | 8 | ✅ Done | FR-SRC-03/04, SPEC-04 §2, ADR-0043 |
 | STORY-07.2 | SSRF protection and egress rules | 3 | ✅ Done | NFR-SEC-04, SPEC-09 §4, ADR-0044 |
 | STORY-07.3 | HTML content extraction quality | 5 | ✅ Done | FR-SRC-05, SPEC-04 §2b, ADR-0045 |
-| STORY-07.4 | Conditional fetch and change detection | 3 | 🔲 Todo | FR-ING-02 |
+| STORY-07.4 | Conditional fetch and change detection | 3 | ✅ Done | FR-ING-02, SPEC-04 §2c, ADR-0046 |
 | STORY-07.5 | Sitemap connector | 3 | 🔲 Todo | FR-SRC-06 |
 | STORY-07.6 | HTTP API connector: auth and pagination | 8 | 🔲 Todo | FR-SRC-07, SPEC-04 §4 |
 | STORY-07.7 | HTTP API connector: templating and incremental sync | 5 | 🔲 Todo | FR-SRC-07/08 |
@@ -1026,8 +1026,30 @@ synthetic-but-representative golden corpus (`testdata/corpus/`, committed `expec
 *.md` baselines) with a reproducible boilerplate-removal metric guarded by a
 content-retention == 1.0 check: **mean removal 1.00** (threshold 0.90), retention
 1.00, hermetic. No schema, no migration, no OpenAPI change; webcrawl coverage 81.5%.
-Corpus caveat: synthetic, pending a one-time human spot-review (ADR-0045). Remaining
-EPIC-07 stories (07.4–07.9) are Todo.
+Corpus caveat: synthetic, pending a one-time human spot-review (ADR-0045).
+
+**Delivered (STORY-07.4):** conditional fetch and change detection closing the
+STORY-07.1 seam (`internal/connector/webcrawl/crawl.go`, ADR-0046, ISSUE-0021,
+FR-ING-02). When `crawl_pages` holds a prior ETag/Last-Modified the fetch sends
+`If-None-Match`/`If-Modified-Since`; a **304 Not Modified** re-sees the page with NO
+read/parse/extract/emit — only `last_fetched_at` is bumped (validators kept). For the
+common no-validator case, a 200's raw-body `sha256` is compared to the stored hash and
+an identical page is not re-emitted; only changed bytes re-emit (and their new links
+re-enter the frontier). New validators are stored on every 200 so the next crawl is
+conditional. Conditional GET → 304 is used over HEAD (one round trip, no body when
+unchanged; ADR-0046). An **incremental** sync (`Full == false`) re-visits fetched
+pages conditionally; a **full** sync keeps the 07.1 resume-skip. Deletion-detection
+reconciliation: conditional skip runs only on incremental syncs, where the sink's
+`Complete` is a no-op (SPEC-05 §5), so an unchanged, un-emitted page can never be
+soft-deleted (it is still marked seen in `crawl_pages`); the full-sync cheap-304
+re-see for deletion detection needs an EPIC-09 sink "mark seen" signal, until then
+deletion is the periodic full re-enumeration (SPEC-04 §4). TDD: three RED unit tests
+(304-no-parse/no-emit with a trap-link proof, no-ETag same-hash no-emit,
+changed-bytes re-emit) + a real-Postgres e2e (`TestWebCrawlConditionalFetch`: full
+crawl stores ETag+hash, incremental crawl → 304 → empty sink, `last_fetched_at`
+advanced, validators intact); the 07.1 resume e2e still passes. No schema, no
+migration, no OpenAPI change; drift guard green; `go vet` clean. Remaining EPIC-07
+stories (07.5–07.9) are Todo.
 
 ## EPIC-08 · Retrieval and answering — 🔲 0/39 pts
 

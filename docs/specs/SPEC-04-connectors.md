@@ -135,7 +135,7 @@ the sources API runs its JSON-Schema `ValidateConfig` and config-level `Test`.
   drops the SSRF-guarded transport in with no crawl-logic change. *Extraction (07.3):*
   pages are emitted as raw `Body`; only title/canonical/links are parsed here.
   *Conditional fetch (07.4):* ETag/Last-Modified/content-hash are persisted but no
-  304/HEAD-skip is done yet.
+  304/HEAD-skip is done yet. (Realised in §2c.)
 
 ### 2b. Realised content extraction (STORY-07.3)
 
@@ -173,6 +173,39 @@ raw `Body`; non-HTML responses within the allowlist still pass through as the ra
   chrome markers absent from the output, guarded by a content-retention == 1.0
   check so removal can never be earned by dropping content). The metric threshold
   is ≥ 0.90; measured 1.00. Hermetic — no network, no DB.
+
+### 2c. Realised conditional fetch and change detection (STORY-07.4)
+
+`internal/connector/webcrawl` closes the STORY-07.1 conditional-fetch seam (ADR-0046,
+ISSUE-0021, FR-ING-02): unchanged pages cost a 304 and no parse. The change is local
+to the crawler fetch/process path and the `PageStore` read of the prior validators;
+the egress guard (07.2), the extractor (07.3), the ingestion sink and the
+`connector.Sink` interface are untouched.
+
+- **Conditional GET, not HEAD.** When `crawl_pages` holds a prior ETag/Last-Modified
+  for a page, the fetch carries `If-None-Match`/`If-Modified-Since`. A conditional GET
+  is one round trip and returns no body when unchanged — strictly better than a
+  separate HEAD+GET (two round trips whenever the page changed); ADR-0046 records why.
+- **304 fast path.** A `304 Not Modified` means unchanged: the crawler does NOT
+  read/parse/extract/emit the page — it only bumps `last_fetched_at` (keeping the
+  stored ETag/Last-Modified/content-hash). Nothing reaches the sink.
+- **Content-hash fallback (no-validator case).** Many servers send no ETag/
+  Last-Modified. On a 200 the crawler compares `sha256(body)` to the stored hash;
+  identical bytes ⇒ unchanged ⇒ skip parse/emit. Only differing bytes are re-emitted,
+  and their new links re-enter the frontier. (This raw-body hash is distinct from and
+  complementary to the sink's normalised-markdown hash, SPEC-05 §1.)
+- **Store the validators.** On every 200 the new ETag/Last-Modified/content-hash are
+  persisted, so the NEXT crawl of that page is conditional.
+- **Re-visit model.** An **incremental** sync (`SyncRun.Full == false`) re-visits
+  previously-fetched pages conditionally (the cheap change-detection re-sync); a
+  **full** sync keeps the STORY-07.1 resume-skip.
+- **Deletion-detection reconciliation.** Conditional skip runs only on incremental
+  syncs, where the sink's `Complete` is a no-op (SPEC-05 §5), so an unchanged,
+  un-emitted page can never be soft-deleted; the page is still marked seen in
+  `crawl_pages`. A full sync's cheap-304-re-see for deletion detection additionally
+  needs a sink "mark seen" signal (an EPIC-09 `connector.Sink` change); until then
+  deletion detection is the periodic full re-enumeration (the §4 pattern). See
+  ADR-0046.
 
 ## 3. Sitemap connector
 Same as web crawl but frontier seeded from sitemap(s) (including sitemap index), no link following, `lastmod` used for incremental sync.

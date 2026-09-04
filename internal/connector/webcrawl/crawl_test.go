@@ -2,6 +2,7 @@ package webcrawl
 
 import (
 	"context"
+	"crypto/sha256"
 	"io"
 	"log/slog"
 	"net/http"
@@ -334,6 +335,157 @@ func TestCrawlPerHostDelay(t *testing.T) {
 	}
 	if sleeps[0] <= 0 || sleeps[0] > 300*time.Millisecond {
 		t.Fatalf("delay = %v, want (0, 300ms]", sleeps[0])
+	}
+}
+
+// syncRunIncremental is an incremental (non-full) SyncRun: deletion detection is
+// off, so a conditional re-crawl re-visits previously-fetched pages cheaply
+// (STORY-07.4). syncRun (Full: true) keeps the STORY-07.1 resume-skip semantics.
+func syncRunIncremental(state connector.StateStore) connector.SyncRun {
+	return connector.SyncRun{SourceID: uuid.New(), State: state, Full: false, Log: testLogger()}
+}
+
+// mustNorm normalises a raw URL for a test, failing on error.
+func mustNorm(t *testing.T, raw string) string {
+	t.Helper()
+	norm, _, err := parseAndNormalize(raw)
+	if err != nil {
+		t.Fatalf("normalise %q: %v", raw, err)
+	}
+	return norm
+}
+
+// TestCrawlConditional304SkipsParseAndEmit is the FR-ING-02 golden path: a page
+// with a prior ETag in crawl_pages is re-fetched with If-None-Match on an
+// incremental crawl; a 304 Not Modified means unchanged — NO parse, NO extract, NO
+// emit — only last_fetched_at is bumped (validators kept). Proof of "no parse": the
+// 304 response still carries a <a href="/trap"> body, and /trap must never be
+// crawled (the crawler did not read/parse the body).
+func TestCrawlConditional304SkipsParseAndEmit(t *testing.T) {
+	var condSeen, trapHits int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/robots.txt", func(_ http.ResponseWriter, _ *http.Request) {})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", "etag-1")
+		if r.Header.Get("If-None-Match") == "etag-1" {
+			atomic.AddInt32(&condSeen, 1)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		// A body with a trap link — if the crawler parses a 304, it would follow it.
+		_, _ = io.WriteString(w, `<html><body><a href="/trap">t</a>fresh</body></html>`)
+	})
+	mux.HandleFunc("/trap", func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&trapHits, 1)
+		_, _ = io.WriteString(w, "trap")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	norm := mustNorm(t, srv.URL+"/")
+	store := newMemPageStore()
+	// Prior crawl state: the page was fetched with ETag "etag-1" and some content hash.
+	_ = store.Upsert(context.Background(), Page{
+		URL: srv.URL + "/", NormalizedURL: norm, Depth: 0,
+		Fetched: true, Status: 200, ETag: "etag-1", ContentHash: []byte("prior-hash"),
+	})
+
+	cfg := config{StartURLs: []string{srv.URL + "/"}, MaxDepth: 2, MaxPages: 100, Concurrency: 1}.withDefaults()
+	sink := newRecSink()
+	cr := newCrawler(cfg, srv.Client())
+	if _, err := cr.run(context.Background(), syncRunIncremental(store), sink); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if atomic.LoadInt32(&condSeen) == 0 {
+		t.Fatal("crawler never sent a conditional If-None-Match request")
+	}
+	if n := len(sink.ids()); n != 0 {
+		t.Fatalf("a 304 page was emitted to the sink (%d docs); want none", n)
+	}
+	if atomic.LoadInt32(&trapHits) != 0 {
+		t.Fatal("304 body was parsed: the trap link was followed")
+	}
+	loaded, _ := store.Load(context.Background())
+	p := loaded[norm]
+	if !p.Fetched || p.ETag != "etag-1" || string(p.ContentHash) != "prior-hash" {
+		t.Fatalf("304 must keep fetched state + validators + hash; got %+v", p)
+	}
+}
+
+// TestCrawlConditionalContentHashSkipsReEmit covers the no-ETag case (FR-ING-02):
+// many servers send no ETag/Last-Modified, so change detection falls back to the
+// content hash. Identical bytes on a re-crawl must NOT re-emit and must NOT re-parse
+// (the trap link is not followed). Only changed bytes re-emit (next test).
+func TestCrawlConditionalContentHashSkipsReEmit(t *testing.T) {
+	const body = `<html><body><a href="/trap">t</a>unchanged</body></html>`
+	var rootHits, trapHits int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/robots.txt", func(_ http.ResponseWriter, _ *http.Request) {})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&rootHits, 1)
+		_, _ = io.WriteString(w, body) // no ETag, no Last-Modified
+	})
+	mux.HandleFunc("/trap", func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&trapHits, 1)
+		_, _ = io.WriteString(w, "trap")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	norm := mustNorm(t, srv.URL+"/")
+	sum := sha256.Sum256([]byte(body))
+	store := newMemPageStore()
+	_ = store.Upsert(context.Background(), Page{
+		URL: srv.URL + "/", NormalizedURL: norm, Depth: 0,
+		Fetched: true, Status: 200, ContentHash: sum[:], // no ETag
+	})
+
+	cfg := config{StartURLs: []string{srv.URL + "/"}, MaxDepth: 2, MaxPages: 100, Concurrency: 1}.withDefaults()
+	sink := newRecSink()
+	cr := newCrawler(cfg, srv.Client())
+	if _, err := cr.run(context.Background(), syncRunIncremental(store), sink); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if atomic.LoadInt32(&rootHits) != 1 {
+		t.Fatalf("root fetched %d times, want exactly 1 (a plain GET; no ETag)", atomic.LoadInt32(&rootHits))
+	}
+	if n := len(sink.ids()); n != 0 {
+		t.Fatalf("identical-bytes page re-emitted (%d docs); want none", n)
+	}
+	if atomic.LoadInt32(&trapHits) != 0 {
+		t.Fatal("unchanged page was parsed: the trap link was followed")
+	}
+}
+
+// TestCrawlConditionalReEmitsOnChange is the negative control: when the bytes differ
+// from the stored content hash, the page IS re-emitted (change detection must not
+// suppress real changes).
+func TestCrawlConditionalReEmitsOnChange(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/robots.txt", func(_ http.ResponseWriter, _ *http.Request) {})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `<html><body>brand new content</body></html>`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	norm := mustNorm(t, srv.URL+"/")
+	store := newMemPageStore()
+	_ = store.Upsert(context.Background(), Page{
+		URL: srv.URL + "/", NormalizedURL: norm, Depth: 0,
+		Fetched: true, Status: 200, ContentHash: []byte("a-different-old-hash"),
+	})
+
+	cfg := config{StartURLs: []string{srv.URL + "/"}, MaxDepth: 1, MaxPages: 100, Concurrency: 1}.withDefaults()
+	sink := newRecSink()
+	cr := newCrawler(cfg, srv.Client())
+	if _, err := cr.run(context.Background(), syncRunIncremental(store), sink); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !sink.ids()[srv.URL+"/"] {
+		t.Fatalf("changed page not re-emitted; got %v", sink.ids())
 	}
 }
 
