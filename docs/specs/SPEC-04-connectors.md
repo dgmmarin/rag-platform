@@ -47,6 +47,41 @@ type SyncRun struct {
 ```
 Registration: `connector.Register(Kind, func() Connector)` in each package `init`; the worker resolves by `sources.kind`.
 
+### 1a. Realised framework (STORY-06.1)
+
+`internal/connector` implements the interface above, the registry, and config
+validation (FR-SRC-13, NFR-MNT-01). The concrete connectors (upload STORY-06.3,
+web_crawl/sitemap/api EPIC-07) are separate stories; nothing in this package
+reaches a DB, object storage or the network.
+
+- **Registry.** `Registry` maps a `Kind` to a `func() Connector` factory (a fresh
+  instance per use, since a connector may hold per-sync state). `Register` panics
+  on a nil factory or duplicate kind (init-time misconfiguration fails loudly).
+  `Lookup` returns a fresh connector or `ok=false`; `Kinds` lists registered kinds.
+  A process-wide `DefaultRegistry()` backs the package-level `Register`/`Lookup`.
+- **Config validation.** `SchemaValidator` compiles a JSON Schema once and
+  `Validate(cfg)` returns a `*ConfigError` (a sorted `[]FieldError` list, no
+  secrets — config is non-credential data), mirroring tenant-settings validation
+  (STORY-03.5). A connector embeds its schema and calls it from `ValidateConfig`,
+  so validation is declarative and identical across connectors (SPEC-04 §7 step 2).
+- **Control-plane seam.** `SourcesValidator` adapts a `Registry` to the sources
+  API's `Validator` port (STORY-04.3) *structurally* — the sources package keeps
+  no connector import; the dependency is injected at the composition root
+  (`internal/cli`). `ValidateConfig(kind, cfg)` delegates to the registered
+  connector, or returns nil for an unregistered kind (kind-specific validation is
+  deferred until that connector exists; the sources package's generic validation
+  still applies). `Test(ctx, kind, cfg)` runs the connector's `Test` (with no
+  credentials yet — STORY-06.2), or returns an injected "unavailable" sentinel
+  (`sources.ErrConnectorUnavailable`) for an unregistered kind, so `/test` reports
+  the not_found seam until the connector lands. Wiring a new connector is its
+  package + one `Register` call — no change to the sources package or the router
+  (NFR-MNT-01).
+- **Provisional.** `StateStore` (per-source key/value, §1) is realised as a
+  minimal `Get`/`Set`; `Stats` carries the connector-reported enumeration counters.
+  Both are exercised only by `Sync`, which is EPIC-07, so their concrete shapes are
+  finalised when the first connector implements `Sync`. `SyncRun.Limiter` is
+  `*golang.org/x/time/rate.Limiter`.
+
 ## 2. Web crawl connector
 Config:
 ```json

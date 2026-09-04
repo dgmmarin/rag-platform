@@ -10,6 +10,7 @@ import (
 
 	"github.com/rag-platform/ragctl/internal/api"
 	"github.com/rag-platform/ragctl/internal/config"
+	"github.com/rag-platform/ragctl/internal/connector"
 	"github.com/rag-platform/ragctl/internal/cp/audit"
 	"github.com/rag-platform/ragctl/internal/cp/auth"
 	"github.com/rag-platform/ragctl/internal/cp/jobs"
@@ -95,11 +96,18 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	usageHandlers := usage.NewHandlers(usage.NewService(usage.FromPool(pool)))
 
 	// --- Sources (tenant-scoped CRUD + sync/delete enqueue, STORY-04.3). The
-	// connector-framework Validator is left nil until EPIC-06 (STORY-06.1) wires
-	// the registry: create/update run generic validation and /test reports the
-	// seam envelope. Sources are control-plane registry data (C-3), so this uses
-	// the control-plane pool — never a tenant pool. ---
-	sourceHandlers := sources.NewHandlers(sources.NewService(sources.FromPool(pool)))
+	// connector-framework Validator (EPIC-06 STORY-06.1) is now wired: create/update
+	// run the kind-specific ValidateConfig for any registered connector, and /test
+	// runs its "test connection". No connector is registered in v1 yet (upload is
+	// STORY-06.3, web_crawl/api/sitemap are EPIC-07), so an unregistered kind defers
+	// config validation (generic validation still applies) and /test reports the
+	// not_found seam envelope (connector.ErrUnsupportedKind -> ErrConnectorUnavailable).
+	// Adding a connector needs only its package + Register call — no change here
+	// (NFR-MNT-01). Sources are control-plane registry data (C-3): control-plane pool,
+	// never a tenant pool. ---
+	sourcesSvc := sources.NewService(sources.FromPool(pool))
+	sourcesSvc.Validator = connector.NewSourcesValidator(connector.DefaultRegistry(), sources.ErrConnectorUnavailable)
+	sourceHandlers := sources.NewHandlers(sourcesSvc)
 
 	// --- Documents (tenant-content list/get/chunks/soft-delete + upload enqueue,
 	// STORY-04.4). Reads reach the tenant database via the resolver (ADR-0003, C-3);

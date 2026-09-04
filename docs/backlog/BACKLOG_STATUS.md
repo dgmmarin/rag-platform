@@ -18,14 +18,14 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
-| EPIC-06 | Connector framework and upload connector | 13 | 0 | 🔲 Todo |
+| EPIC-06 | Connector framework and upload connector | 13 | 5 | 🚧 In progress |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **124** | **37%** |
+| **Total** | | **337** | **129** | **38%** |
 
 ---
 
@@ -806,13 +806,63 @@ the drain loop). `gofmt -l`/`go vet` clean; `go test ./internal/ingest/... ./int
 existing `created_at`/`deleted_at`/`last_fetched_at` columns and the schema's FK cascades, so the drift guard stays
 green (no ADR needed; references SPEC-03 §4, ADR-0008/0017). ISSUE-0014. **EPIC-05 → 42/42 ✅.**
 
-## EPIC-06 · Connector framework and upload connector — 🔲 0/13 pts
+## EPIC-06 · Connector framework and upload connector — 🚧 5/13 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
-| STORY-06.1 | Connector interface, registry, config validation | 5 | 🔲 Todo | FR-SRC-13, NFR-MNT-01, SPEC-04 §1 |
+| STORY-06.1 | Connector interface, registry, config validation | 5 | ✅ Done | FR-SRC-13, FR-SRC-14, NFR-MNT-01, SPEC-04 §1, ADR-0040 |
 | STORY-06.2 | Credential encryption and handling | 3 | 🔲 Todo | FR-SRC-10, SPEC-04 §6 |
 | STORY-06.3 | Upload connector and ingest_document job | 5 | 🔲 Todo | FR-SRC-02, SPEC-04 §5 |
+
+**Delivered (STORY-06.1):** the connector framework — a new `internal/connector`
+package (FR-SRC-13, FR-SRC-14, NFR-MNT-01, SPEC-04 §1/§7, ADR-0040) plus the wiring
+of its config validation / "test connection" into the sources API `Validator` seam
+STORY-04.3 left nil (ADR-0029). The full SPEC-04 §1 `Connector` interface
+(`Kind`/`ValidateConfig`/`Test`/`Sync`) and its supporting types (`Credentials`,
+`Document`, `Sink`, `SyncRun`, `StateStore`, `Stats`) are transcribed faithfully so
+EPIC-07 connectors have a frozen target (building the interface is the named
+deliverable, and NFR-MNT-01 wants the contract stable — not scope creep, since no
+connector is implemented); `StateStore`/`Stats` are minimal and documented
+provisional because only `Sync` (EPIC-07) exercises them (the canonical jobs.stats
+shape stays SPEC-05 §6). A `Registry` maps a kind to a `func() Connector` factory
+(fresh instance per `Lookup`, since a connector may hold per-sync state; duplicate/
+nil registration panics — init-time misconfiguration fails loudly), with a
+process-wide `DefaultRegistry()` behind package-level `Register`/`Lookup` connectors
+use from `init()` (SPEC-04 §1). Config validation is a `SchemaValidator` +
+`ConfigError`/`FieldError` reusing the STORY-03.5/ADR-0022 JSON-Schema pattern over
+`santhosh-tekuri/jsonschema/v6` (one validation approach, no new validation dep);
+connectors embed a schema and call it from `ValidateConfig` (SPEC-04 §7 step 2). The
+seam is bridged by a `SourcesValidator` adapter that satisfies the sources package's
+local `Validator` interface *structurally* — the sources package keeps no connector
+import (ADR-0029 preserved); the dependency is injected in `internal/cli`
+(`connector.NewSourcesValidator(connector.DefaultRegistry(), sources.ErrConnectorUnavailable)`).
+For an unregistered kind `ValidateConfig` returns nil (kind-specific validation
+deferred; generic validation still applies, so a source whose connector is not built
+yet can still be created) and `Test` returns the injected
+`sources.ErrConnectorUnavailable` sentinel (so `/test` keeps the not_found seam) —
+never a 500 or a fake 200 (AGENTS.md Integrity). No connector is registered in v1
+yet (upload is STORY-06.3, crawl/api/sitemap EPIC-07), so wiring a real connector is
+its package + one `Register` call — no change to `internal/connector`, the sources
+package, or the router (NFR-MNT-01). Credentials are still not threaded into `Test`
+(STORY-06.2) and no credential reaches this package (C-4); sources stay control-plane
+registry data and this package touches no database (C-3, ADR-0003). New direct
+dependency `golang.org/x/time` v0.3.0 for `SyncRun.Limiter *rate.Limiter` (SPEC-04
+§1). No schema/migration change and no new HTTP route (the `/test` route already
+existed), so `schemas/*.sql`, the drift guard and `api/openapi.yaml` are unchanged.
+TDD throughout (schema/registry/validator unit tests watched red before the package
+existed); `go test -cover ./internal/connector/` = **85.4%** (gate 70%). e2e
+(`test/e2e/connector_e2e_test.go`) over the real control-plane Postgres and the real
+`internal/api` router registers a fake `web_crawl` connector into a fresh registry,
+wires the real `SourcesValidator`, and proves through the API-key admin chain:
+invalid connector config → 400, valid → 201 (persisted), `/test` → 200 with the
+connector's `Test` called once, and an unregistered kind → 201 (deferred) with
+`/test` → 404 seam. ADR-0040; ISSUE-0015. _(Pre-existing, unrelated to this story:
+`docker compose exec` is wedged in this environment, so the `psql`-asserting
+`TestSourcesGoldenPath`/`TestTenantIsolationSuite` cannot complete here — ISSUE-0014;
+this story touched none of `internal/tenant`/`internal/api`/`internal/worker`.
+`golangci-lint` v2.13.1 needs Go ≥ 1.26 vs the local 1.22, so `mise run lint` uses
+its `go vet` offline fallback (clean); `internal/cli` unit tests pass with a clean
+environment and fail only under mise's leaked `.env`.)_
 
 ## EPIC-07 · Web crawl, sitemap and API connectors — 🔲 0/39 pts
 
