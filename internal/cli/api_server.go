@@ -107,6 +107,11 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	// never a tenant pool. ---
 	sourcesSvc := sources.NewService(sources.FromPool(pool))
 	sourcesSvc.Validator = connector.NewSourcesValidator(connector.DefaultRegistry(), sources.ErrConnectorUnavailable)
+	// Credentials (FR-SRC-10, SPEC-04 §6): sealed on write and decrypted only for a
+	// Test/Sync with the same platform Cipher the resolver/provisioner use (envelope
+	// encryption, SPEC-09 §2, C-4). Never returned by any response, never logged.
+	sourcesSvc.Encrypter = cipher
+	sourcesSvc.Decrypter = cipher
 	sourceHandlers := sources.NewHandlers(sourcesSvc)
 
 	// --- Documents (tenant-content list/get/chunks/soft-delete + upload enqueue,

@@ -20,6 +20,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,6 +35,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/cp/ratelimit"
 	"github.com/rag-platform/ragctl/internal/cp/sources"
 	"github.com/rag-platform/ragctl/internal/cp/tenants"
+	"github.com/rag-platform/ragctl/internal/crypto"
 	"github.com/rag-platform/ragctl/internal/obs"
 )
 
@@ -75,7 +77,19 @@ func TestSourcesGoldenPath(t *testing.T) {
 		Burst:       1000,
 		TenantBurst: 1000,
 	}
-	sh := sources.NewHandlers(sources.NewService(sources.FromPool(pool)))
+	// Credentials (STORY-06.2) are sealed with the real envelope Cipher.
+	dek := make([]byte, crypto.KeySize)
+	if _, err := rand.Read(dek); err != nil {
+		t.Fatalf("dek: %v", err)
+	}
+	cipher, err := crypto.NewCipher(1, dek)
+	if err != nil {
+		t.Fatalf("cipher: %v", err)
+	}
+	sourcesSvc := sources.NewService(sources.FromPool(pool))
+	sourcesSvc.Encrypter = cipher
+	sourcesSvc.Decrypter = cipher
+	sh := sources.NewHandlers(sourcesSvc)
 	deps := api.Deps{
 		Log:               obs.Logger("e2e", 0, bytes.NewBuffer(nil)),
 		Metrics:           obs.NewMetrics(),
@@ -153,10 +167,13 @@ func TestSourcesGoldenPath(t *testing.T) {
 		t.Fatalf("duplicate create = %d, want 409", code)
 	}
 
-	// --- Credentials in the body are rejected (STORY-06.2 defer) -> 400. ---
-	if code, _ := call(http.MethodPost, "/v1/sources",
-		`{"kind":"api","name":"x-`+suffix+`","credentials":{"token":"s"}}`, nil); code != http.StatusBadRequest {
-		t.Fatalf("create with credentials = %d, want 400", code)
+	// --- Credentials in the body are accepted, sealed on write, and never echoed
+	// (STORY-06.2, FR-SRC-10). Full round-trip is proven in credentials_e2e_test.go. ---
+	if code, out := call(http.MethodPost, "/v1/sources",
+		`{"kind":"api","name":"x-`+suffix+`","credentials":{"token":"s3cr3t"}}`, nil); code != http.StatusCreated {
+		t.Fatalf("create with credentials = %d, want 201; body=%s", code, out)
+	} else if strings.Contains(string(out), "s3cr3t") || strings.Contains(string(out), "credential") {
+		t.Fatalf("create-with-credentials response leaks credentials: %s", out)
 	}
 
 	// --- List returns the {items,next_cursor} envelope containing the source. ---

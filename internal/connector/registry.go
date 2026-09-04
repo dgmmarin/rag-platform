@@ -108,10 +108,14 @@ func (v SourcesValidator) ValidateConfig(kind string, cfg json.RawMessage) error
 	return c.ValidateConfig(cfg)
 }
 
-// Test runs the kind's connector "test connection" (FR-SRC-14). Credentials are
-// not threaded yet (STORY-06.2), so it passes none. When no connector is
-// registered for the kind it returns the injected unavailable sentinel.
-func (v SourcesValidator) Test(ctx context.Context, kind string, cfg json.RawMessage) error {
+// Test runs the kind's connector "test connection" (FR-SRC-14) with the source's
+// decrypted credentials (STORY-06.2, SPEC-04 §6). The sources package decrypts
+// credentials_enc and passes the plaintext map here; this adapter converts it to
+// the connector Credentials type and forwards it. When no connector is registered
+// for the kind it returns the injected unavailable sentinel and touches no
+// credentials. The sources package owns the credential lifecycle (it zeroes them
+// after Test returns), so this adapter neither logs nor retains them.
+func (v SourcesValidator) Test(ctx context.Context, kind string, cfg json.RawMessage, creds map[string]string) error {
 	c, ok := v.reg.Lookup(Kind(kind))
 	if !ok {
 		if v.unavailable != nil {
@@ -119,12 +123,12 @@ func (v SourcesValidator) Test(ctx context.Context, kind string, cfg json.RawMes
 		}
 		return ErrUnsupportedKind
 	}
-	return c.Test(ctx, cfg, nil)
+	return c.Test(ctx, cfg, Credentials(creds))
 }
 
 // Ensure the adapter keeps satisfying the shape the sources seam expects even as
 // this package evolves (compile-time guard against accidental signature drift).
 var _ interface {
 	ValidateConfig(kind string, cfg json.RawMessage) error
-	Test(ctx context.Context, kind string, cfg json.RawMessage) error
+	Test(ctx context.Context, kind string, cfg json.RawMessage, creds map[string]string) error
 } = SourcesValidator{}

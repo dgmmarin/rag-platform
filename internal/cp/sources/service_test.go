@@ -14,13 +14,26 @@ import (
 type fakeStore struct {
 	seq     int
 	src     map[string]Source // id -> source
+	creds   map[string][]byte // id -> credentials_enc (ciphertext)
 	jobs    []Job
 	failOn  string // method name to force an error on
 	nowFunc func() time.Time
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{src: map[string]Source{}, nowFunc: func() time.Time { return time.Unix(1_700_000_000, 0).UTC() }}
+	return &fakeStore{src: map[string]Source{}, creds: map[string][]byte{}, nowFunc: func() time.Time { return time.Unix(1_700_000_000, 0).UTC() }}
+}
+
+// GetCredentials returns the stored ciphertext for a tenant-scoped source.
+func (f *fakeStore) GetCredentials(_ context.Context, tenantID, id string) ([]byte, error) {
+	if f.failOn == "GetCredentials" {
+		return nil, errors.New("boom")
+	}
+	s, ok := f.src[id]
+	if !ok || s.TenantID != tenantID {
+		return nil, ErrNotFound
+	}
+	return f.creds[id], nil
 }
 
 func (f *fakeStore) List(_ context.Context, tenantID string, limit int, cur *Cursor) ([]Source, error) {
@@ -88,6 +101,9 @@ func (f *fakeStore) Create(_ context.Context, p CreateParams) (Source, error) {
 		UpdatedAt:    now,
 	}
 	f.src[s.ID] = s
+	if len(p.CredentialsEnc) > 0 {
+		f.creds[s.ID] = p.CredentialsEnc
+	}
 	return s, nil
 }
 
@@ -117,6 +133,9 @@ func (f *fakeStore) Update(_ context.Context, tenantID, id string, patch UpdateP
 		s.ScheduleCron = nil
 	} else if patch.ScheduleCron != nil {
 		s.ScheduleCron = patch.ScheduleCron
+	}
+	if len(patch.CredentialsEnc) > 0 {
+		f.creds[id] = patch.CredentialsEnc
 	}
 	s.UpdatedAt = f.nowFunc()
 	f.src[id] = s
@@ -454,7 +473,7 @@ func TestTestConnectionRunsValidator(t *testing.T) {
 	svc := newTestService(t, st)
 	s, _ := svc.Create(context.Background(), CreateParams{TenantID: tenantA, Kind: "web_crawl", Name: "n"})
 	called := false
-	svc.Validator = fakeValidator{test: func(_ context.Context, _ string, _ json.RawMessage) error {
+	svc.Validator = fakeValidator{test: func(_ context.Context, _ string, _ json.RawMessage, _ map[string]string) error {
 		called = true
 		return nil
 	}}
@@ -515,7 +534,7 @@ func TestListRejectsBadCursor(t *testing.T) {
 // fakeValidator is a stub connector-framework hook for the service tests.
 type fakeValidator struct {
 	validate func(kind string, cfg json.RawMessage) error
-	test     func(ctx context.Context, kind string, cfg json.RawMessage) error
+	test     func(ctx context.Context, kind string, cfg json.RawMessage, creds map[string]string) error
 }
 
 func (f fakeValidator) ValidateConfig(kind string, cfg json.RawMessage) error {
@@ -525,9 +544,9 @@ func (f fakeValidator) ValidateConfig(kind string, cfg json.RawMessage) error {
 	return f.validate(kind, cfg)
 }
 
-func (f fakeValidator) Test(ctx context.Context, kind string, cfg json.RawMessage) error {
+func (f fakeValidator) Test(ctx context.Context, kind string, cfg json.RawMessage, creds map[string]string) error {
 	if f.test == nil {
 		return nil
 	}
-	return f.test(ctx, kind, cfg)
+	return f.test(ctx, kind, cfg, creds)
 }

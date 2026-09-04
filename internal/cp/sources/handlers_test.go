@@ -49,19 +49,50 @@ func TestHandlerCreateRequiresTenant(t *testing.T) {
 	}
 }
 
-func TestHandlerCreateRejectsCredentials(t *testing.T) {
-	// Credential handling is STORY-06.2; the create body must reject credentials
-	// rather than silently drop or store plaintext (fail closed, C-4).
-	h := newTestHandlers(newFakeStore())
-	body := `{"kind":"api","name":"n","credentials":{"token":"secret"}}`
+func TestHandlerCreateSealsCredentials(t *testing.T) {
+	// STORY-06.2: credentials on the create body are accepted, sealed on write, and
+	// never echoed back (FR-SRC-10, SPEC-04 §6).
+	st := newFakeStore()
+	svc := NewService(st)
+	svc.now = st.nowFunc
+	svc.Encrypter = fakeCipher{}
+	h := NewHandlers(svc)
+	body := `{"kind":"api","name":"n","credentials":{"token":"super-secret"}}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/sources", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.Create(rr, r.WithContext(ctxWithTenant(r.Context())))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("want 201, got %d (body=%s)", rr.Code, rr.Body.String())
+	}
+	// The response never carries credentials (FR-SRC-10).
+	if strings.Contains(rr.Body.String(), "super-secret") || strings.Contains(rr.Body.String(), "credential") {
+		t.Fatalf("response leaks credentials: %s", rr.Body.String())
+	}
+	// The stored bytes are ciphertext, not the plaintext secret.
+	var s Source
+	if err := json.Unmarshal(rr.Body.Bytes(), &s); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	enc, _ := st.GetCredentials(r.Context(), tenantA, s.ID)
+	if len(enc) == 0 || strings.Contains(string(enc), "super-secret") {
+		t.Fatalf("credentials not sealed: %q", enc)
+	}
+}
+
+func TestHandlerCreateRejectsNonStringCredentials(t *testing.T) {
+	// A nested / non-string credentials value fails to decode into map[string]string
+	// and is a 400 (shape validated for free), never a partial store.
+	st := newFakeStore()
+	svc := NewService(st)
+	svc.now = st.nowFunc
+	svc.Encrypter = fakeCipher{}
+	h := NewHandlers(svc)
+	body := `{"kind":"api","name":"n","credentials":{"token":{"nested":true}}}`
 	r := httptest.NewRequest(http.MethodPost, "/v1/sources", strings.NewReader(body))
 	rr := httptest.NewRecorder()
 	h.Create(rr, r.WithContext(ctxWithTenant(r.Context())))
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d (body=%s)", rr.Code, rr.Body.String())
-	}
-	if code := decodeEnvelope(t, rr.Body.Bytes()); code != "validation" {
-		t.Fatalf("code=%q", code)
 	}
 }
 

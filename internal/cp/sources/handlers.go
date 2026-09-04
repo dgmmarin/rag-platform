@@ -20,25 +20,28 @@ type Handlers struct {
 // NewHandlers builds handlers over a sources service.
 func NewHandlers(svc *Service) *Handlers { return &Handlers{Service: svc} }
 
-// createRequest is the POST /v1/sources body. `credentials` is accepted only to
-// reject it: credential handling is STORY-06.2, so accepting it here would risk
-// storing plaintext (C-4). Failing closed is safer than silently dropping it.
+// createRequest is the POST /v1/sources body. `credentials` is a flat map of
+// secret name -> value (SPEC-04 §6); the service seals it (envelope encryption,
+// SPEC-09 §2) before it is stored and it is never echoed back (FR-SRC-10). A
+// non-string value or nested object fails to decode into map[string]string and is
+// a 400, so the shape is validated for free.
 type createRequest struct {
-	Kind         string          `json:"kind"`
-	Name         string          `json:"name"`
-	Config       json.RawMessage `json:"config,omitempty"`
-	ScheduleCron *string         `json:"schedule_cron,omitempty"`
-	Credentials  json.RawMessage `json:"credentials,omitempty"`
+	Kind         string            `json:"kind"`
+	Name         string            `json:"name"`
+	Config       json.RawMessage   `json:"config,omitempty"`
+	ScheduleCron *string           `json:"schedule_cron,omitempty"`
+	Credentials  map[string]string `json:"credentials,omitempty"`
 }
 
 // updateRequest is the PATCH /v1/sources/{id} body. Every field is optional; a
 // field present with a null value for schedule_cron clears it (manual-only).
+// `credentials`, when present, replaces the stored (sealed) credentials.
 type updateRequest struct {
-	Name         *string          `json:"name,omitempty"`
-	Config       *json.RawMessage `json:"config,omitempty"`
-	Status       *string          `json:"status,omitempty"`
-	ScheduleCron *json.RawMessage `json:"schedule_cron,omitempty"`
-	Credentials  json.RawMessage  `json:"credentials,omitempty"`
+	Name         *string           `json:"name,omitempty"`
+	Config       *json.RawMessage  `json:"config,omitempty"`
+	Status       *string           `json:"status,omitempty"`
+	ScheduleCron *json.RawMessage  `json:"schedule_cron,omitempty"`
+	Credentials  map[string]string `json:"credentials,omitempty"`
 }
 
 // syncRequest is the POST /v1/sources/{id}/sync body.
@@ -82,16 +85,13 @@ func (h *Handlers) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if len(req.Credentials) > 0 {
-		writeError(w, http.StatusBadRequest, "credential handling is not available yet (STORY-06.2); omit 'credentials'")
-		return
-	}
 	src, err := h.Service.Create(r.Context(), CreateParams{
 		TenantID:     tid.String(),
 		Kind:         req.Kind,
 		Name:         req.Name,
 		Config:       req.Config,
 		ScheduleCron: req.ScheduleCron,
+		Credentials:  req.Credentials,
 	})
 	if err != nil {
 		writeServiceError(w, err, "could not create source")
@@ -127,11 +127,7 @@ func (h *Handlers) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if len(req.Credentials) > 0 {
-		writeError(w, http.StatusBadRequest, "credential handling is not available yet (STORY-06.2); omit 'credentials'")
-		return
-	}
-	patch := UpdatePatch{Name: req.Name, Config: req.Config, Status: req.Status}
+	patch := UpdatePatch{Name: req.Name, Config: req.Config, Status: req.Status, Credentials: req.Credentials}
 	if req.ScheduleCron != nil {
 		// An explicit JSON null clears the schedule; a string sets it.
 		if string(*req.ScheduleCron) == "null" {

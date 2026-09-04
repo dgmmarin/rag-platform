@@ -14,6 +14,7 @@ type fakeConnector struct {
 	schema    *SchemaValidator
 	testErr   error
 	testCalls *int
+	gotCreds  *Credentials // if set, Test records the credentials it received
 }
 
 func (c fakeConnector) Kind() Kind { return c.kind }
@@ -25,9 +26,12 @@ func (c fakeConnector) ValidateConfig(cfg json.RawMessage) error {
 	return c.schema.Validate(cfg)
 }
 
-func (c fakeConnector) Test(_ context.Context, _ json.RawMessage, _ Credentials) error {
+func (c fakeConnector) Test(_ context.Context, _ json.RawMessage, creds Credentials) error {
 	if c.testCalls != nil {
 		*c.testCalls++
+	}
+	if c.gotCreds != nil {
+		*c.gotCreds = creds
 	}
 	return c.testErr
 }

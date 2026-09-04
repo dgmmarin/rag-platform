@@ -18,14 +18,14 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
-| EPIC-06 | Connector framework and upload connector | 13 | 5 | 🚧 In progress |
+| EPIC-06 | Connector framework and upload connector | 13 | 8 | 🚧 In progress |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **129** | **38%** |
+| **Total** | | **337** | **132** | **39%** |
 
 ---
 
@@ -806,12 +806,12 @@ the drain loop). `gofmt -l`/`go vet` clean; `go test ./internal/ingest/... ./int
 existing `created_at`/`deleted_at`/`last_fetched_at` columns and the schema's FK cascades, so the drift guard stays
 green (no ADR needed; references SPEC-03 §4, ADR-0008/0017). ISSUE-0014. **EPIC-05 → 42/42 ✅.**
 
-## EPIC-06 · Connector framework and upload connector — 🚧 5/13 pts
+## EPIC-06 · Connector framework and upload connector — 🚧 8/13 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-06.1 | Connector interface, registry, config validation | 5 | ✅ Done | FR-SRC-13, FR-SRC-14, NFR-MNT-01, SPEC-04 §1, ADR-0040 |
-| STORY-06.2 | Credential encryption and handling | 3 | 🔲 Todo | FR-SRC-10, SPEC-04 §6 |
+| STORY-06.2 | Credential encryption and handling | 3 | ✅ Done | FR-SRC-10, SPEC-04 §6, SPEC-09 §2, ADR-0041 |
 | STORY-06.3 | Upload connector and ingest_document job | 5 | 🔲 Todo | FR-SRC-02, SPEC-04 §5 |
 
 **Delivered (STORY-06.1):** the connector framework — a new `internal/connector`
@@ -863,6 +863,56 @@ this story touched none of `internal/tenant`/`internal/api`/`internal/worker`.
 `golangci-lint` v2.13.1 needs Go ≥ 1.26 vs the local 1.22, so `mise run lint` uses
 its `go vet` offline fallback (clean); `internal/cli` unit tests pass with a clean
 environment and fail only under mise's leaked `.env`.)_
+
+**Delivered (STORY-06.2):** source credential encryption and handling (FR-SRC-10,
+SPEC-04 §6, SPEC-09 §2, ADR-0041) — credentials sealed on write, never returned,
+decrypted only for a Test/Sync and zeroed after, with sanitised errors. It replaces
+the STORY-04.3 fail-closed `400` credentials stub with real encrypt-on-write and
+threads decrypted credentials into the connector `Test` seam STORY-06.1 left passing
+`nil`. **Reuse over new (C-4):** the same platform envelope `crypto.Cipher` the
+resolver/provisioner use (AES-256-GCM DEK wrapped by KMS, SPEC-09 §2) seals the
+credentials — no new crypto scheme or dependency — so `ragctl keys rotate-dek` covers
+`sources.credentials_enc` for free; the column already existed, so **no migration**.
+The sources `Service` gains injected `Encrypter`/`Decrypter` ports (`*crypto.Cipher`,
+wired in `internal/cli` from the startup cipher). **Write path:** the public
+`credentials` body is a flat `map[string]string` (a non-string/nested value fails to
+decode → `400`, shape-validated for free); the service marshals → encrypts → zeroes
+the plaintext JSON buffer → nils the plaintext map → hands the store only the
+ciphertext (`CredentialsEnc []byte`), so the store never sees plaintext, and a missing
+Encrypter with credentials present fails closed (never a plaintext store, C-4).
+**Never returned, structurally:** the public `Source` projection and `sourceColumns`
+keep omitting `credentials_enc`; a dedicated `Store.GetCredentials` is the *only* read
+of the column, used solely by the decrypt path. **Decrypt-and-zero:** `Test` reads the
+ciphertext, decrypts into a map, zeroes the decrypted `[]byte` immediately after
+unmarshalling, passes the map through the widened `Validator.Test(…, creds)` seam
+(`connector.SourcesValidator` forwards it as `connector.Credentials`), and `clear()`s
+the map the moment `Test` returns (`defer`) — the same helper feeds the future sync
+worker's `SyncRun.Creds` (EPIC-07/09); `Sync` itself is **not** implemented here (task
+scope). A new `crypto.Zero([]byte)` does the buffer wipe. _ponytail:_ Go strings (the
+map values) cannot be overwritten in place, so "zeroed" means the decrypted buffer is
+wiped and the map cleared (values GC-eligible); a `[]byte`-valued credential type is
+the upgrade path (ADR-0041). **Sanitised errors:** crypto/decrypt errors carry neither
+the ciphertext nor a secret value, a connector `Test` failure maps to the generic
+public envelope (never the raw error), and credentials are never logged. No OpenAPI
+change (the generator does not model request-body properties, so the drift guard stays
+green — mirroring STORY-06.1). TDD throughout (tests watched red before implementation:
+`crypto.Zero`; sources encrypt-on-write / fail-closed / decrypt-and-zero /
+zeroed-after-use / sanitised-error; connector creds-forwarding; handler seal +
+non-string rejection). `go test -cover ./internal/connector/` = **85.4%** (gate 70%);
+the sources store SQL for `credentials_enc` is e2e-covered (sources is not gated). e2e
+(`test/e2e/credentials_e2e_test.go`) over the real control-plane Postgres and the
+**real** Cipher registers a credentials-recording connector and proves through the
+API-key admin chain: create-with-credentials → 201 with no secret echoed; the stored
+`credentials_enc` is ciphertext (asserted != plaintext, round-trips via the cipher);
+GET returns no credentials; `/test` decrypts and hands the plaintext to the connector.
+`TestSourcesGoldenPath` (now wires the real Cipher, asserts credentials accepted +
+sealed + not echoed) and `TestConnectorFrameworkGoldenPath` stay green. ADR-0041;
+ISSUE-0016. _(Pre-existing, unrelated to this story: `docker compose exec` is wedged
+here — ISSUE-0014 — so the `psql`-asserting tail of `TestSourcesGoldenPath` cannot
+complete locally, though its credential assertions pass; `internal/cli` unit tests and
+`mise run coverage`/full `lint` remain red only for the documented mise `.env`-leak and
+golangci-lint/go1.26 toolchain drift on untouched files — verified this story added no
+new lint finding and touched none of `internal/tenant`/`internal/api`/`internal/worker`.)_
 
 ## EPIC-07 · Web crawl, sitemap and API connectors — 🔲 0/39 pts
 

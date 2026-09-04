@@ -95,14 +95,39 @@ func (p PoolDB) Create(ctx context.Context, cp CreateParams) (Source, error) {
 		cfg = json.RawMessage(`{}`)
 	}
 	s, err := scanSource(p.pool.QueryRow(ctx, `
-		insert into sources (tenant_id, kind, name, status, config, schedule_cron)
-		values ($1, $2::source_kind, $3, 'active', $4, $5)
+		insert into sources (tenant_id, kind, name, status, config, schedule_cron, credentials_enc)
+		values ($1, $2::source_kind, $3, 'active', $4, $5, $6)
 		returning `+sourceColumns,
-		cp.TenantID, cp.Kind, cp.Name, []byte(cfg), cp.ScheduleCron))
+		cp.TenantID, cp.Kind, cp.Name, []byte(cfg), cp.ScheduleCron, nullBytes(cp.CredentialsEnc)))
 	if isUniqueViolation(err) {
 		return Source{}, ErrDuplicateName
 	}
 	return s, err
+}
+
+// GetCredentials returns the sealed credentials_enc for one tenant-scoped source,
+// or nil if the column is null. This is the only place credentials_enc is read
+// (FR-SRC-10); the service decrypts the result only for a Test/Sync (SPEC-04 §6).
+func (p PoolDB) GetCredentials(ctx context.Context, tenantID, id string) ([]byte, error) {
+	if !validUUID(id) {
+		return nil, ErrNotFound
+	}
+	var enc []byte
+	err := p.pool.QueryRow(ctx,
+		`select credentials_enc from sources where tenant_id = $1 and id = $2`, tenantID, id).Scan(&enc)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return enc, err
+}
+
+// nullBytes maps an empty ciphertext to a SQL NULL so credentials_enc stays null
+// when no credentials are supplied (rather than an empty non-null bytea).
+func nullBytes(b []byte) []byte {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
 }
 
 // Update applies a patch to one tenant-scoped source. It builds the SET clause
@@ -132,6 +157,9 @@ func (p PoolDB) Update(ctx context.Context, tenantID, id string, patch UpdatePat
 		set += ", schedule_cron = null"
 	} else if patch.ScheduleCron != nil {
 		add("schedule_cron", *patch.ScheduleCron)
+	}
+	if len(patch.CredentialsEnc) > 0 {
+		add("credentials_enc", patch.CredentialsEnc)
 	}
 
 	s, err := scanSource(p.pool.QueryRow(ctx,

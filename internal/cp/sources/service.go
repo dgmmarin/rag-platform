@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/rag-platform/ragctl/internal/crypto"
 )
 
 const (
@@ -39,25 +41,36 @@ type Store interface {
 	// FindActiveSync returns an active sync_source job for the source whose payload
 	// idempotency_key equals key (empty key => not found), for idempotent replay.
 	FindActiveSync(ctx context.Context, tenantID, sourceID, idempotencyKey string) (Job, bool, error)
+	// GetCredentials returns the source's sealed credentials_enc ciphertext (nil if
+	// none). It is the ONLY read of that column (FR-SRC-10: never returned by the
+	// public projection), used by the decrypt-for-Test/Sync path (SPEC-04 §6).
+	GetCredentials(ctx context.Context, tenantID, id string) ([]byte, error)
 }
 
-// CreateParams is the input to Create.
+// CreateParams is the input to Create. Credentials is the plaintext secret map
+// from the request (nil = none); the service seals it and moves the ciphertext
+// into CredentialsEnc before calling the Store, so the Store only ever sees
+// ciphertext (FR-SRC-10, SPEC-04 §6).
 type CreateParams struct {
-	TenantID     string
-	Kind         string
-	Name         string
-	Config       json.RawMessage
-	ScheduleCron *string
+	TenantID       string
+	Kind           string
+	Name           string
+	Config         json.RawMessage
+	ScheduleCron   *string
+	Credentials    map[string]string // plaintext in (handler -> service); cleared before the Store call
+	CredentialsEnc []byte            // ciphertext out (service -> Store)
 }
 
 // UpdatePatch is the set of mutable fields on PATCH. A nil pointer means "leave
 // unchanged". ClearSchedule explicitly nulls schedule_cron (manual-only).
 type UpdatePatch struct {
-	Name          *string
-	Config        *json.RawMessage
-	Status        *string
-	ScheduleCron  *string
-	ClearSchedule bool
+	Name           *string
+	Config         *json.RawMessage
+	Status         *string
+	ScheduleCron   *string
+	ClearSchedule  bool
+	Credentials    map[string]string // plaintext in; sealed by the service (present = replace)
+	CredentialsEnc []byte            // ciphertext out (service -> Store); nil = leave unchanged
 }
 
 // UpdateParams is the input to Update.
@@ -102,6 +115,11 @@ type NewJob struct {
 type Service struct {
 	Store     Store
 	Validator Validator
+	// Encrypter/Decrypter seal and open source credentials with envelope encryption
+	// (SPEC-09 §2, C-4). Injected in internal/cli from the platform Cipher. A nil
+	// Encrypter with credentials on the write path fails closed.
+	Encrypter Encrypter
+	Decrypter Decrypter
 	now       func() time.Time
 }
 
@@ -181,6 +199,14 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (Source, error) {
 			return Source{}, invalid("connector config invalid: %v", err)
 		}
 	}
+	if len(p.Credentials) > 0 {
+		enc, err := s.sealCredentials(p.Credentials)
+		if err != nil {
+			return Source{}, err
+		}
+		p.CredentialsEnc = enc
+	}
+	p.Credentials = nil // drop the plaintext reference before the Store ever sees the params
 	return s.Store.Create(ctx, p)
 }
 
@@ -214,6 +240,14 @@ func (s *Service) Update(ctx context.Context, p UpdateParams) (Source, error) {
 			return Source{}, invalid("connector config invalid: %v", err)
 		}
 	}
+	if len(p.Patch.Credentials) > 0 {
+		enc, err := s.sealCredentials(p.Patch.Credentials)
+		if err != nil {
+			return Source{}, err
+		}
+		p.Patch.CredentialsEnc = enc
+	}
+	p.Patch.Credentials = nil // drop the plaintext reference before the Store ever sees the patch
 	return s.Store.Update(ctx, p.TenantID, p.ID, p.Patch)
 }
 
@@ -288,7 +322,68 @@ func (s *Service) Test(ctx context.Context, tenantID, id string) error {
 	if err != nil {
 		return err // ErrNotFound
 	}
-	return s.Validator.Test(ctx, src.Kind, src.Config)
+	enc, err := s.Store.GetCredentials(ctx, tenantID, id)
+	if err != nil {
+		return err
+	}
+	creds, zero, err := s.openCredentials(enc)
+	if err != nil {
+		return err
+	}
+	defer zero() // clear the decrypted secret the moment Test returns (SPEC-04 §6)
+	return s.Validator.Test(ctx, src.Kind, src.Config, creds)
+}
+
+// sealCredentials marshals a plaintext credential map and envelope-encrypts it
+// (SPEC-09 §2, C-4). The intermediate plaintext JSON buffer is zeroed as soon as
+// it is sealed. It fails closed when no Encrypter is wired.
+func (s *Service) sealCredentials(creds map[string]string) ([]byte, error) {
+	if s.Encrypter == nil {
+		return nil, fmt.Errorf("sources: credential encryption is not configured")
+	}
+	pt, err := json.Marshal(creds)
+	if err != nil {
+		// Never include the value in the error (sanitised, SPEC-04 §6).
+		return nil, fmt.Errorf("sources: marshal credentials")
+	}
+	enc, err := s.Encrypter.Encrypt(pt)
+	crypto.Zero(pt)
+	if err != nil {
+		return nil, fmt.Errorf("sources: seal credentials: %w", err)
+	}
+	return enc, nil
+}
+
+// openCredentials decrypts a source's sealed credentials into a map for the
+// duration of a Test/Sync (SPEC-04 §6). The returned zero func clears the map;
+// the caller MUST defer it. The decrypted JSON buffer is zeroed here immediately
+// after unmarshalling. Errors are sanitised: they never carry the ciphertext or a
+// secret value. An empty ciphertext yields a nil map and a no-op zero.
+//
+// ponytail: Go strings (the map values) cannot be overwritten in place, so
+// "zeroed after use" here means the decrypted []byte buffer is wiped and the map
+// is cleared (values become unreferenced and GC-eligible). Wiping the string
+// bytes themselves would need a []byte-valued credential type across the connector
+// interface — the upgrade path if a stronger guarantee is ever required.
+func (s *Service) openCredentials(enc []byte) (map[string]string, func(), error) {
+	noop := func() {}
+	if len(enc) == 0 {
+		return nil, noop, nil
+	}
+	if s.Decrypter == nil {
+		return nil, noop, fmt.Errorf("sources: credential decryption is not configured")
+	}
+	pt, err := s.Decrypter.Decrypt(enc)
+	if err != nil {
+		return nil, noop, fmt.Errorf("sources: open credentials")
+	}
+	creds := map[string]string{}
+	if err := json.Unmarshal(pt, &creds); err != nil {
+		crypto.Zero(pt)
+		return nil, noop, fmt.Errorf("sources: stored credentials malformed")
+	}
+	crypto.Zero(pt)
+	return creds, func() { clear(creds) }, nil
 }
 
 // encodeCursor serialises a Cursor to an opaque base64url token.

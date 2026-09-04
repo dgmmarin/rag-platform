@@ -133,6 +133,39 @@ Not scheduled. `POST /v1/documents` writes the file to object storage, creates a
 ## 6. Credentials
 `Credentials` is a decrypted `map[string]string` handed to the connector for the duration of a sync and zeroed afterwards. Never logged; `Test` errors are sanitised.
 
+### 6a. Realised handling (STORY-06.2)
+
+Source credentials (FR-SRC-10) are sealed on write and decrypted only for a
+`Test`/`Sync`, using the same platform envelope Cipher the resolver/provisioner use
+(AES-256-GCM DEK wrapped by KMS, SPEC-09 §2, C-4, ADR-0041). Nothing new in the
+crypto scheme — the write path reuses `crypto.Cipher`.
+
+- **On write (create/update).** The public API body carries `credentials` as a flat
+  `{name: value}` object (a non-string or nested value fails to decode into
+  `map[string]string`, so the shape is a 400 for free). The sources service marshals
+  it, encrypts it, zeroes the plaintext JSON buffer, and moves the ciphertext into
+  the row's `sources.credentials_enc` (`bytea`) — the store only ever sees ciphertext;
+  the service nils the plaintext map before the store call. A missing Encrypter with
+  credentials present fails closed (never a plaintext store). No column was added:
+  `credentials_enc` already exists.
+- **Never returned.** The public `Source` projection and the `sourceColumns` scan
+  deliberately omit `credentials_enc`; a dedicated `Store.GetCredentials` is the only
+  read of that column, used solely by the decrypt path. No response echoes credentials.
+- **Decrypt-and-zero (Test/Sync seam).** `Test` reads `credentials_enc`, decrypts it
+  into a `map[string]string`, zeroes the decrypted byte buffer immediately after
+  unmarshalling, passes the map to the connector via the `Validator.Test(…, creds)`
+  seam (the `connector.SourcesValidator` adapter forwards it as `connector.Credentials`),
+  and clears the map the moment `Test` returns (`defer`). The same decrypt helper feeds
+  the future sync worker's `SyncRun.Creds` (EPIC-07/09); `Sync` itself is not
+  implemented here.
+  - *ponytail:* Go strings (the map values) cannot be overwritten in place, so
+    "zeroed" means the decrypted `[]byte` buffer is wiped and the map is cleared
+    (values become GC-eligible). Wiping the string bytes would require a `[]byte`-valued
+    credential type across the connector interface — the upgrade path.
+- **Sanitised errors.** Crypto/decrypt errors carry neither the ciphertext nor a
+  secret value; a connector `Test` failure is mapped to the generic public envelope
+  (never the raw error), and credentials are never logged at any level.
+
 ## 7. Adding a connector (checklist)
 1. New package under `internal/connector/<kind>` implementing the interface.
 2. JSON schema for config; `ValidateConfig` uses it.

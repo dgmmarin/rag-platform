@@ -107,11 +107,27 @@ type Job struct {
 // Validator is the connector-framework hook (SPEC-04 §1, EPIC-06 STORY-06.1). It
 // validates kind-specific config and runs the connector's "test connection". It
 // is injected into Service; nil means the framework is not wired yet (the seam).
-// EPIC-06 will supply the concrete registry (and extend Test with decrypted
-// Credentials, STORY-06.2) without changing this package's HTTP surface.
+// The concrete adapter is connector.SourcesValidator, wired in internal/cli. Test
+// receives the source's decrypted credentials (STORY-06.2, SPEC-04 §6); the
+// sources package decrypts them and the adapter passes them to Connector.Test.
 type Validator interface {
 	ValidateConfig(kind string, config json.RawMessage) error
-	Test(ctx context.Context, kind string, config json.RawMessage) error
+	Test(ctx context.Context, kind string, config json.RawMessage, creds map[string]string) error
+}
+
+// Encrypter seals credential plaintext with envelope encryption (SPEC-09 §2, C-4).
+// *crypto.Cipher satisfies it; it is injected at the composition root so this
+// package keeps only the interface. A nil Encrypter with credentials on the write
+// path fails closed (never a plaintext store).
+type Encrypter interface {
+	Encrypt(plaintext []byte) ([]byte, error)
+}
+
+// Decrypter opens a sealed credential ciphertext (SPEC-09 §2). *crypto.Cipher
+// satisfies it. Credentials are decrypted only for the duration of a Test/Sync and
+// zeroed afterwards (SPEC-04 §6).
+type Decrypter interface {
+	Decrypt(ciphertext []byte) ([]byte, error)
 }
 
 // validateKind checks a source kind against the enum.
