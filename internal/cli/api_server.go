@@ -20,6 +20,11 @@ import (
 	"github.com/rag-platform/ragctl/internal/cp/usage"
 	"github.com/rag-platform/ragctl/internal/crypto"
 	"github.com/rag-platform/ragctl/internal/documents"
+	// Register the upload connector (kind "upload") into the default registry so
+	// the sources API's config-validation / test-connection seams resolve it and
+	// the "upload" kind is no longer an unregistered seam (SPEC-04 §5, STORY-06.3).
+	_ "github.com/rag-platform/ragctl/internal/connector/upload"
+	"github.com/rag-platform/ragctl/internal/objectstore"
 	"github.com/rag-platform/ragctl/internal/obs"
 	"github.com/rag-platform/ragctl/internal/provision"
 	"github.com/rag-platform/ragctl/internal/tenant"
@@ -114,13 +119,38 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	sourcesSvc.Decrypter = cipher
 	sourceHandlers := sources.NewHandlers(sourcesSvc)
 
-	// --- Documents (tenant-content list/get/chunks/soft-delete + upload enqueue,
-	// STORY-04.4). Reads reach the tenant database via the resolver (ADR-0003, C-3);
-	// the ingest_document enqueue writes the control-plane jobs table. Object
-	// storage is the EPIC-06 seam: Storage is left nil, so POST /v1/documents
-	// returns the not_found seam envelope until STORY-06.x wires it. ---
+	// Settings service (control-plane): used by the rate limiter, the admin-tenant
+	// surface, and the per-tenant upload ceiling (STORY-06.3).
+	settingsSvc := tenants.NewSettingsService(tenants.SettingsFromPool(pool))
+
+	// --- Documents (tenant-content list/get/chunks/soft-delete + upload,
+	// STORY-04.4/06.3). Reads reach the tenant database via the resolver
+	// (ADR-0003, C-3); the ingest_document enqueue writes the control-plane jobs
+	// table. STORY-06.3 wires the three upload seams: object storage for the raw
+	// bytes (MinIO/S3), the implicit upload-source resolver, and the per-tenant
+	// size ceiling from settings. Object storage is optional — an unset endpoint (or
+	// an unreachable store at boot) leaves Storage nil so uploads report the
+	// not_found seam while reads keep working. ---
 	docSvc := documents.NewService(resolver, documents.NewTenantStore(), documents.JobsFromPool(pool))
 	docSvc.MaxBytes = cfg.MaxUploadBytes
+	docSvc.UploadSource = documents.UploadSourceFromPool(pool)
+	docSvc.Limits = documents.SettingsUploadLimits{Settings: settingsSvc}
+	if cfg.ObjectStoreEndpoint != "" {
+		store, oerr := objectstore.New(ctx, objectstore.Config{
+			Endpoint:  cfg.ObjectStoreEndpoint,
+			AccessKey: cfg.ObjectStoreAccessKey,
+			SecretKey: cfg.ObjectStoreSecretKey,
+			Bucket:    cfg.ObjectStoreBucket,
+			Region:    cfg.ObjectStoreRegion,
+		})
+		if oerr != nil {
+			// Do not couple API liveness to object storage: log and leave uploads on
+			// the seam. Reads (which never touch object storage) keep working.
+			log.Warn("object storage unavailable; POST /v1/documents will report the not_found seam", "err", oerr)
+		} else {
+			docSvc.Storage = store
+		}
+	}
 	docHandlers := documents.NewHandlers(docSvc)
 
 	// --- Jobs (tenant-scoped list/get/cancel over the control-plane jobs table,
@@ -133,7 +163,6 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 
 	// --- Rate limiting (per key + per tenant, credential-keyed). ---
 	limiter := ratelimit.New(nil)
-	settingsSvc := tenants.NewSettingsService(tenants.SettingsFromPool(pool))
 
 	// --- Admin tenant lifecycle (platform scope, STORY-04.6, FR-TEN-01/05/07). It
 	// orchestrates the existing provisioner (enrol) and lifecycle (suspend/resume/

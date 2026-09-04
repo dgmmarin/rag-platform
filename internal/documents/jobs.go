@@ -46,13 +46,28 @@ type JobEnqueuer interface {
 	FindActiveIngest(ctx context.Context, tenantID, idempotencyKey string) (Job, bool, error)
 }
 
-// Storage is the object-storage seam for the raw upload bytes (EPIC-06). It is
-// nil until STORY-06.x wires MinIO/S3; while nil, Ingest fails closed with the
-// ErrStorageUnavailable seam. Adding the real backend requires no change outside
-// its own package (NFR-MNT-01/02).
+// Storage is the object-storage seam for the raw upload bytes. STORY-06.3 wires
+// a MinIO/S3 backend (internal/objectstore) behind it; the ingest_document worker
+// reads the bytes back through the wider objectstore.Fetcher. Adding/replacing the
+// backend requires no change outside its own package (NFR-MNT-01/02).
 type Storage interface {
 	// Put stores the raw bytes under key with the given content type.
 	Put(ctx context.Context, key, contentType string, r io.Reader) error
+}
+
+// UploadSource resolves (lazily creating on first use) the tenant's implicit
+// "upload" source so an uploaded document has a source_id (SPEC-04 §5). Sources
+// are control-plane registry data (C-3), so the implementation runs on the
+// control-plane pool — never a tenant database.
+type UploadSource interface {
+	Resolve(ctx context.Context, tenantID string) (sourceID string, err error)
+}
+
+// UploadLimits reads a tenant's configured upload ceiling in bytes
+// (settings.limits.max_upload_mb, SPEC-02 §5) so POST /v1/documents enforces the
+// per-tenant size limit (FR-SRC-02). Settings are control-plane data (C-3).
+type UploadLimits interface {
+	MaxUploadBytes(ctx context.Context, tenantID string) (int64, error)
 }
 
 // ControlJobs implements JobEnqueuer over the control-plane pgx pool.

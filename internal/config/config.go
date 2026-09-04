@@ -97,6 +97,18 @@ type Config struct {
 	// configured, so those formats are skipped (the Go parsers still handle
 	// HTML/Markdown/text/CSV/JSON). Compose sets it to http://parser:8081.
 	ParserURL string
+
+	// Object storage (STORY-06.3, SPEC-04 §5, ADR-0042). The S3-compatible backend
+	// for raw document bytes; locally MinIO (docker-compose). An empty endpoint
+	// leaves POST /v1/documents on its not_found seam (no bytes can be stored).
+	// The secret key is confidential and never logged.
+	ObjectStoreEndpoint  string
+	ObjectStoreAccessKey string
+	ObjectStoreSecretKey string
+	// ObjectStoreBucket holds the uploaded objects; default "rag-uploads".
+	ObjectStoreBucket string
+	// ObjectStoreRegion is the S3 region label (MinIO ignores it); default "us-east-1".
+	ObjectStoreRegion string
 }
 
 // Load reads configuration, overlaying the optional config file (if filePath is
@@ -206,6 +218,14 @@ func Load(filePath string) (Config, error) {
 
 	// Parsing sidecar (STORY-05.3, ADR-0006). Empty leaves the sidecar unconfigured.
 	cfg.ParserURL = mustGet(get, "PARSER_URL")
+
+	// Object storage (STORY-06.3, SPEC-04 §5). Empty endpoint leaves uploads on the
+	// not_found seam. Bucket/region carry sensible defaults for the local MinIO stack.
+	cfg.ObjectStoreEndpoint = mustGet(get, "OBJECT_STORE_ENDPOINT")
+	cfg.ObjectStoreAccessKey = mustGet(get, "OBJECT_STORE_ACCESS_KEY")
+	cfg.ObjectStoreSecretKey = mustGet(get, "OBJECT_STORE_SECRET_KEY")
+	cfg.ObjectStoreBucket = firstNonEmpty(mustGet(get, "OBJECT_STORE_BUCKET"), "rag-uploads")
+	cfg.ObjectStoreRegion = firstNonEmpty(mustGet(get, "OBJECT_STORE_REGION"), "us-east-1")
 
 	return cfg, nil
 }

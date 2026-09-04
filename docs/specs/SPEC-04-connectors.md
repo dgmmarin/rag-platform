@@ -128,7 +128,47 @@ Config:
 - Rate limiting via `Limiter` and `Retry-After` handling.
 
 ## 5. Upload connector
-Not scheduled. `POST /v1/documents` writes the file to object storage, creates a document row with `source_id` = the tenant's implicit upload source, and enqueues an `ingest_document` job. Re-upload with same filename creates a new version.
+Not scheduled. `POST /v1/documents` writes the file to object storage, attributes it to `source_id` = the tenant's implicit upload source, and enqueues an `ingest_document` job. Re-upload with same filename creates a new version.
+
+### 5a. Realised handling (STORY-06.3)
+
+The upload path is completed by three pieces (ADR-0042; ISSUE-0017):
+
+- **Object storage.** `internal/objectstore` is an S3-compatible client
+  (`aws-sdk-go-v2/service/s3`, reusing the vendored SDK core — no `minio-go`), backing
+  the documents `Storage` seam (upload writes) and the ingest handler's read-back
+  (`Get`). Locally the backend is MinIO; in production any S3-compatible store. The
+  raw bytes are keyed `uploads/<tenant>/<uuid>-<filename>`.
+- **Upload connector.** `internal/connector/upload` registers the `upload` kind so the
+  sources API's config-validation / test-connection seams resolve it. Upload is **not
+  scheduled** (documents are pushed one `ingest_document` job at a time), so
+  `ValidateConfig` accepts any JSON object, `Test` is a no-op success, and `Sync`
+  returns `ErrNotScheduled` — the scheduler never creates a `sync_source` job for an
+  upload source.
+- **`ingest_document` handler.** `internal/ingest/ingestdoc` is the directly-callable
+  handler (the River worker that dispatches to it is EPIC-09 STORY-09.1). Given a
+  queued job it fetches the bytes, loads tenant settings, builds the Embedder, and
+  runs one INCREMENTAL `Sink.Put` (parse → chunk → embed → commit) — so ingesting one
+  upload never soft-deletes the tenant's other documents. Identity is `(upload source,
+  filename)`; a re-upload with new content produces a new immutable version and flips
+  `current_version` (SPEC-05 §5, STORY-05.1).
+
+**Where the document row is created (reconciliation).** The prose above says the
+upload path "creates a document row," but an *active* document must have a non-null
+`current_version` and there is no pending status (SPEC-03 §2 invariant 1, ADR-0008).
+So the HTTP handler creates **no row** — it only writes bytes and enqueues the job
+(ADR-0030). The row **and** its first version are built together, atomically, by the
+`ingest_document` handler's `TenantStore.Put` (ADR-0008/0033), so a query on
+`live_chunks` never sees a half-built or version-less document. The `202` response
+carries the queued job as the client's handle. The invariant governs (ADR-0042).
+
+**API-layer gates.** `POST /v1/documents` sniffs the file's leading bytes
+(`http.DetectContentType`) and requires them to match the extension allowlist — the
+client `Content-Type` is never trusted — and enforces the per-tenant ceiling
+`settings.limits.max_upload_mb` (SPEC-02 §5), failing safe to the global
+`MAX_UPLOAD_BYTES` (SPEC-07 §2b). The implicit upload source is an ordinary `sources`
+row (kind `upload`, `(tenant_id, name)` unique), resolved by an idempotent upsert on
+the control-plane pool — no schema change.
 
 ## 6. Credentials
 `Credentials` is a decrypted `map[string]string` handed to the connector for the duration of a sync and zeroed afterwards. Never logged; `Test` errors are sanitised.

@@ -18,14 +18,14 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-03 | Control plane services | 34 | 34 | ✅ Complete |
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
-| EPIC-06 | Connector framework and upload connector | 13 | 8 | 🚧 In progress |
+| EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **132** | **39%** |
+| **Total** | | **337** | **137** | **41%** |
 
 ---
 
@@ -806,13 +806,13 @@ the drain loop). `gofmt -l`/`go vet` clean; `go test ./internal/ingest/... ./int
 existing `created_at`/`deleted_at`/`last_fetched_at` columns and the schema's FK cascades, so the drift guard stays
 green (no ADR needed; references SPEC-03 §4, ADR-0008/0017). ISSUE-0014. **EPIC-05 → 42/42 ✅.**
 
-## EPIC-06 · Connector framework and upload connector — 🚧 8/13 pts
+## EPIC-06 · Connector framework and upload connector — ✅ 13/13 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-06.1 | Connector interface, registry, config validation | 5 | ✅ Done | FR-SRC-13, FR-SRC-14, NFR-MNT-01, SPEC-04 §1, ADR-0040 |
 | STORY-06.2 | Credential encryption and handling | 3 | ✅ Done | FR-SRC-10, SPEC-04 §6, SPEC-09 §2, ADR-0041 |
-| STORY-06.3 | Upload connector and ingest_document job | 5 | 🔲 Todo | FR-SRC-02, SPEC-04 §5 |
+| STORY-06.3 | Upload connector and ingest_document job | 5 | ✅ Done | FR-SRC-02, SPEC-04 §5, SPEC-05, ADR-0042 |
 
 **Delivered (STORY-06.1):** the connector framework — a new `internal/connector`
 package (FR-SRC-13, FR-SRC-14, NFR-MNT-01, SPEC-04 §1/§7, ADR-0040) plus the wiring
@@ -913,6 +913,61 @@ complete locally, though its credential assertions pass; `internal/cli` unit tes
 `mise run coverage`/full `lint` remain red only for the documented mise `.env`-leak and
 golangci-lint/go1.26 toolchain drift on untouched files — verified this story added no
 new lint finding and touched none of `internal/tenant`/`internal/api`/`internal/worker`.)_
+
+**Delivered (STORY-06.3):** the upload connector and the `ingest_document` job handler
+(FR-SRC-02, SPEC-04 §5/§5a, SPEC-05, SPEC-07 §2, ADR-0042; ISSUE-0017) — **this
+completes EPIC-06 (13/13)**. The story fills the three STORY-04.4 upload seams and adds
+the handler that turns a queued job into a document. **(1) Object storage:** a new
+`internal/objectstore` S3-compatible client (`aws-sdk-go-v2/service/s3`, reusing the
+already-vendored SDK core — no `minio-go`; one client path for local MinIO and prod),
+path-style + custom endpoint, bucket-ensure, `Put`/`Get`, fail-closed on missing config;
+wired behind the documents `Storage` seam in `internal/cli` (an unset/unreachable store
+at boot logs a warning and leaves uploads on the not_found seam — reads keep working).
+**(2) MIME sniffing + size from settings:** the handler now sniffs the file's leading
+bytes (`http.DetectContentType`) and requires them to match the extension allowlist —
+the client `Content-Type` is never trusted, so a mislabelled/hostile file (an executable
+as `.txt`, a non-PDF `.pdf`, a non-zip `.docx`) is rejected `400` before storage; the
+size ceiling is the per-tenant `settings.limits.max_upload_mb` (SPEC-02 §5) read via a
+new `UploadLimits` port, failing safe to the global `MAX_UPLOAD_BYTES`. **(3) Implicit
+upload source:** a new `UploadSource` port resolves (idempotently upserts) the tenant's
+`upload` source on the control-plane pool (C-3) so an upload with no explicit `?source`
+still has a `source_id` — an ordinary `sources` row (kind `upload`, `(tenant_id, name)`
+unique), **no schema change**. **(4) Upload connector:** `internal/connector/upload`
+registers the `upload` kind (so the sources `/test` and config-validation seams resolve
+it), with `ValidateConfig` accepting any object, a no-op `Test`, and a `Sync` that fails
+loudly (`ErrNotScheduled`) — upload is not scheduled (SPEC-04 §5); blank-imported at the
+composition root (NFR-MNT-01). **(5) `ingest_document` handler:** a new
+`internal/ingest/ingestdoc` package — a directly-callable `Ingestor.Dispatch`/`Run` (the
+River worker that dispatches to it is EPIC-09 STORY-09.1, deliberately NOT built) that
+fetches the bytes, loads tenant settings, builds the Embedder (an injected
+`EmbedderFactory` seam — the production factory with provider keys is EPIC-09; tests
+inject a deterministic stub, as the provider is external, matching the sink e2e), and
+runs one INCREMENTAL `Sink.Put` (parse→chunk→embed→commit) so ingesting one upload never
+soft-deletes the tenant's other documents. **Doc-row-creation boundary (the SPEC
+tension), resolved:** SPEC-04 §5 prose says the upload path "creates a document row," but
+an active document must have a non-null `current_version` and there is no pending status
+(SPEC-03 §2 invariant 1, ADR-0008); the invariant wins (README-vs-ADR convention) — the
+HTTP handler creates **no row**, and the `ingest_document` handler builds the row **and**
+its first version together in the one `TenantStore.Put` transaction, so `live_chunks`
+never shows a half-built document. A re-upload of the same filename (identity `(upload
+source, filename)`) hashes to a new immutable version and flips `current_version`
+(STORY-05.1). No OpenAPI change (the route/response already existed, STORY-04.4), so the
+served spec and its drift guard stay green; no migration, so the schema drift guard stays
+green. TDD throughout (tests watched red before implementation): `sniffUpload`
+match/mismatch/unknown-ext; service implicit-source resolution + per-tenant limit; handler
+byte-sniff rejection + per-tenant oversize; the upload connector kind/validate/test/sync/
+registration; objectstore fail-closed; `ingestdoc` `parseSettings`/`JobFromPayload`/`Run`;
+`SettingsUploadLimits` extraction. e2e (`test/e2e/upload_ingest_e2e_test.go`) against the
+real stack (real MinIO, real control-plane Postgres, a real enrolled tenant DB; embedding
+provider stubbed): the bytes land in MinIO (read back via the S3 client), a real
+`ingest_document` job is enqueued, `Dispatch` creates the document + first version +
+chunks, and a re-upload creates a second version and flips `current_version` — asserted
+via the pgxpool / S3 client directly, never `docker compose exec` (ISSUE-0014). ADR-0042;
+ISSUE-0017. _(Pre-existing, unrelated: `internal/cli` unit tests fail only under mise's
+`.env` injection — `CONTROL_PLANE_URL`/age-key leak — and pass with a clean env;
+`docker compose`/container creation is wedged here (ISSUE-0014), so the local MinIO host
+port had to be published out of band to run the e2e; no gated package's behaviour
+regressed and no new lint finding was introduced.)_
 
 ## EPIC-07 · Web crawl, sitemap and API connectors — 🔲 0/39 pts
 

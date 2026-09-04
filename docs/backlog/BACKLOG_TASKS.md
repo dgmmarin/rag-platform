@@ -259,9 +259,9 @@ breakdown, tasks are derived from the acceptance criteria.
 - [ ] error messages sanitised
 
 ### STORY-06.3 — Upload connector and ingest_document job (FR-SRC-02, SPEC-04 §5)
-- [ ] upload → object storage → job → document
-- [ ] re-upload creates new version
-- [ ] size limit from settings; MIME sniffing
+- [x] upload → object storage → job → document — `internal/objectstore` (S3-compatible, MinIO locally) behind the documents `Storage` seam; `POST /v1/documents` writes the bytes + enqueues a real `ingest_document` job; `internal/ingest/ingestdoc` fetches the bytes and runs parse→chunk→embed→commit, creating the document + first version atomically (ADR-0008 — the row is built by the ingest handler, not on upload; SPEC-03 §2 invariant 1 wins over SPEC-04 §5 prose, ADR-0042). The River worker that dispatches the job is EPIC-09 (STORY-09.1); the handler is a plain function it will call.
+- [x] re-upload creates new version — identity `(implicit upload source, filename)`; new content hashes to a new immutable version and flips `current_version` (STORY-05.1). The implicit `upload` source is resolved/created via an idempotent upsert (no migration).
+- [x] size limit from settings; MIME sniffing — ceiling from `settings.limits.max_upload_mb` (per tenant, fail-safe to `MAX_UPLOAD_BYTES`); content type sniffed from the bytes (`http.DetectContentType`) and matched to the extension allowlist, never the client `Content-Type` (a mislabelled/hostile file is rejected `400`). Upload connector registered (kind `upload`, `Sync`=`ErrNotScheduled`).
 
 ---
 

@@ -22,6 +22,14 @@ type Service struct {
 	Store    Store
 	Jobs     JobEnqueuer
 	Storage  Storage // nil until EPIC-06 wires object storage; Ingest fails closed
+	// UploadSource resolves the tenant's implicit upload source so an uploaded
+	// document has a source_id (SPEC-04 §5, STORY-06.3). Nil until wired; an
+	// upload with no explicit source then fails closed rather than enqueue a
+	// job with a null source.
+	UploadSource UploadSource
+	// Limits reads the tenant's configured upload ceiling (settings.limits.max_upload_mb,
+	// SPEC-02 §5). Nil falls back to MaxBytes (the global MAX_UPLOAD_BYTES ceiling).
+	Limits   UploadLimits
 	MaxBytes int64
 	now      func() time.Time
 }
@@ -33,12 +41,27 @@ func NewService(resolver tenant.Resolver, store Store, jobs JobEnqueuer) *Servic
 	return &Service{Resolver: resolver, Store: store, Jobs: jobs, now: time.Now}
 }
 
-// maxBytes returns the configured upload ceiling or the FR-SRC-02 default.
+// maxBytes returns the configured global upload ceiling or the FR-SRC-02 default.
 func (s *Service) maxBytes() int64 {
 	if s.MaxBytes > 0 {
 		return s.MaxBytes
 	}
 	return defaultMaxUploadBytes
+}
+
+// MaxBytesForTenant returns the per-tenant upload ceiling from settings
+// (settings.limits.max_upload_mb, SPEC-02 §5, FR-SRC-02). It fails safe to the
+// global configured ceiling when the Limits port is absent, errors, or returns a
+// non-positive value — the size limit is never left unbounded by a settings hiccup.
+func (s *Service) MaxBytesForTenant(ctx context.Context, tenantID string) int64 {
+	if s.Limits == nil {
+		return s.maxBytes()
+	}
+	n, err := s.Limits.MaxUploadBytes(ctx, tenantID)
+	if err != nil || n <= 0 {
+		return s.maxBytes()
+	}
+	return n
 }
 
 // open resolves the tenant to its *tenant.DB, mapping the resolver's lifecycle
@@ -200,6 +223,21 @@ func (s *Service) Ingest(ctx context.Context, p IngestParams) (Job, error) {
 		}
 	}
 
+	// Resolve the source: an explicit ?source, or the tenant's implicit upload
+	// source (SPEC-04 §5). Without either we fail closed — an ingest_document job
+	// must carry a source so the built document row has a source_id (Invariant 4).
+	sourceID := p.SourceID
+	if sourceID == nil {
+		if s.UploadSource == nil {
+			return Job{}, fmt.Errorf("documents: no upload source configured")
+		}
+		id, err := s.UploadSource.Resolve(ctx, p.TenantID)
+		if err != nil {
+			return Job{}, fmt.Errorf("documents: resolve upload source: %w", err)
+		}
+		sourceID = &id
+	}
+
 	// Object key namespaced by tenant; the worker reads it back to fetch the bytes.
 	objectKey := fmt.Sprintf("uploads/%s/%s-%s", p.TenantID, uuid.NewString(), p.Filename)
 	if err := s.Storage.Put(ctx, objectKey, p.ContentType, p.Reader); err != nil {
@@ -214,15 +252,15 @@ func (s *Service) Ingest(ctx context.Context, p IngestParams) (Job, error) {
 		"object_key":   objectKey,
 		"uploaded_via": "api",
 	}
-	if p.SourceID != nil {
-		payload["source_id"] = *p.SourceID
+	if sourceID != nil {
+		payload["source_id"] = *sourceID
 	}
 	if p.IdempotencyKey != "" {
 		payload["idempotency_key"] = p.IdempotencyKey
 	}
 	body, _ := json.Marshal(payload)
 
-	job, err := s.Jobs.EnqueueIngest(ctx, NewIngestJob{TenantID: p.TenantID, SourceID: p.SourceID, Payload: body})
+	job, err := s.Jobs.EnqueueIngest(ctx, NewIngestJob{TenantID: p.TenantID, SourceID: sourceID, Payload: body})
 	if err != nil {
 		return Job{}, fmt.Errorf("documents: enqueue ingest: %w", err)
 	}

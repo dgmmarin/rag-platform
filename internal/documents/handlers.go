@@ -3,6 +3,7 @@ package documents
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -104,7 +105,9 @@ func (h *Handlers) Ingest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "no tenant resolved")
 		return
 	}
-	maxBytes := h.Service.maxBytes()
+	// The ceiling comes from the tenant's settings (settings.limits.max_upload_mb,
+	// SPEC-02 §5), falling back to the global MAX_UPLOAD_BYTES (FR-SRC-02).
+	maxBytes := h.Service.MaxBytesForTenant(r.Context(), tid.String())
 	// Hard-cap the whole request body so an oversize upload cannot exhaust memory;
 	// +1 KB tolerance for the multipart envelope around the file part itself.
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes+1<<10)
@@ -129,9 +132,24 @@ func (h *Handlers) Ingest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "upload exceeds the maximum size")
 		return
 	}
-	contentType, allowed := uploadContentType(header.Filename)
-	if !allowed {
-		writeError(w, http.StatusBadRequest, "unsupported file type; allowed: pdf, docx, md, html, txt, csv")
+
+	// Sniff the leading bytes (never the client Content-Type) and require them to
+	// match the extension's canonical type, so a mislabelled or hostile file is
+	// rejected before it reaches storage or a parser (SPEC-04 §5). Rewind after.
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(file, head)
+	contentType, err := sniffUpload(header.Filename, head[:n])
+	if err != nil {
+		var ve *ValidationError
+		msg := "invalid upload"
+		if errors.As(err, &ve) {
+			msg = ve.Msg
+		}
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not read upload")
 		return
 	}
 
