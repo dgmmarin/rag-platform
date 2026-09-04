@@ -54,9 +54,13 @@ var configSchema = connector.MustSchemaValidator([]byte(`{
   }
 }`))
 
-// config is the decoded web-crawl configuration (SPEC-04 §2).
+// config is the decoded web-crawl configuration (SPEC-04 §2). It is shared with the
+// sitemap connector (SPEC-04 §3, STORY-07.5), which populates SitemapURLs instead of
+// StartURLs and drives the same crawl core; a field unused by a given kind is simply
+// absent from that kind's JSON Schema (additionalProperties:false rejects a stray one).
 type config struct {
 	StartURLs        []string `json:"start_urls"`
+	SitemapURLs      []string `json:"sitemap_urls"` // STORY-07.5 (sitemap connector)
 	Allow            []string `json:"allow"`
 	Deny             []string `json:"deny"`
 	MaxDepth         int      `json:"max_depth"`
@@ -80,6 +84,24 @@ func (c config) withDefaults() config {
 	if c.MaxDepth <= 0 {
 		c.MaxDepth = defaultMaxDepth
 	}
+	if c.MaxPages <= 0 {
+		c.MaxPages = defaultMaxPages
+	}
+	if c.Concurrency <= 0 {
+		c.Concurrency = defaultConcurrency
+	}
+	if c.DelayMS < 0 {
+		c.DelayMS = 0
+	}
+	return c
+}
+
+// withSitemapDefaults returns a copy of the config prepared for a sitemap sync: the
+// frontier is exactly the sitemap's URLs with NO link following, so max_depth is
+// pinned to 0 (seeds live at depth 0). The remaining politeness/limit defaults match
+// the web crawler.
+func (c config) withSitemapDefaults() config {
+	c.MaxDepth = 0 // no link following; the frontier is exactly the sitemap URLs
 	if c.MaxPages <= 0 {
 		c.MaxPages = defaultMaxPages
 	}

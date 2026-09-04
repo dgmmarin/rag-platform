@@ -210,6 +210,55 @@ the egress guard (07.2), the extractor (07.3), the ingestion sink and the
 ## 3. Sitemap connector
 Same as web crawl but frontier seeded from sitemap(s) (including sitemap index), no link following, `lastmod` used for incremental sync.
 
+Config:
+```json
+{"sitemap_urls":["https://acme.com/sitemap_index.xml"],
+ "deny":["/tag/","?replytocom="],
+ "max_pages":50000,"delay_ms":500,"concurrency":8,
+ "include_selectors":["main","article"],"exclude_selectors":["nav","footer"]}
+```
+
+### 3a. Realised sitemap connector (STORY-07.5)
+
+The `sitemap` connector (SPEC-04 §3, FR-SRC-06) lives in
+`internal/connector/webcrawl` and drives the SAME crawl core as `web_crawl`
+(ADR-0047, ISSUE-0022), differing only in the three ways this section names. It
+registers `sitemap` from the same package `init()`, so the existing composition-root
+blank import of `webcrawl` wires both kinds (no `internal/cli` change).
+
+- **Shared core, three seams.** STORY-07.1's crawl engine (`crawl.go`) is
+  parameterised with (a) a **frontier source** — a non-nil `crawler.seeds` supplies
+  the depth-0 URLs instead of `start_urls` — and (b) a **`followLinks`** flag. The
+  sitemap connector sets `followLinks=false` and pins `max_depth=0`, so the frontier
+  is exactly the sitemap's URLs and no on-page link is ever enqueued. Everything
+  else is the identical shared code: the SSRF-guarded egress `Doer` (07.2), the
+  conditional GET / 304 / content-hash change detection (07.4), the HTML→markdown
+  extraction with include/exclude selectors and the readability fallback (07.3),
+  `<link rel=canonical>`→`ExternalID` de-dup, robots.txt, per-host politeness, the
+  size/timeout caps, and the `crawl_pages` `PageStore` over `tenant.DB` (ADR-0003).
+- **Sitemap parsing (`sitemap.go`).** `<urlset>`/`<sitemapindex>` are decoded with
+  stdlib `encoding/xml` (no new dependency); a `<sitemapindex>` is expanded
+  recursively into its child sitemaps. Gzipped sitemaps (`.xml.gz`) are detected by
+  the gzip magic bytes and transparently inflated with stdlib `compress/gzip`,
+  regardless of `Content-Type`/`Content-Encoding`. The recursion is bounded
+  (`maxSitemapDepth`/`maxSitemapDocs`/`maxSitemapURLs`) so a hostile or huge sitemap
+  tree cannot fetch/allocate without limit (a `ponytail:` ceiling). A single
+  unreachable/malformed sitemap is logged and skipped; only context cancellation
+  aborts.
+- **`lastmod` incremental (two layers).** `<lastmod>` is parsed as W3C-datetime /
+  ISO-8601 (down to date-only). On an **incremental** sync (`SyncRun.Full == false`),
+  if a URL's sitemap `lastmod` is **not newer** than the page's recorded
+  `crawl_pages.last_fetched_at`, it is skipped with **no HTTP request at all** —
+  cheaper than even the 07.4 conditional GET. A full sync fetches everything. When a
+  `lastmod` says maybe-changed (or is absent), the request is made and the 07.4
+  conditional GET / content-hash still suppress a re-emit if the bytes are unchanged,
+  so the two layers compose.
+
+**Deletion detection** follows the same reconciliation as the crawler (SPEC-04 §2c,
+ADR-0046): the `lastmod`/conditional skip runs only on incremental syncs where the
+sink's `Complete` is a no-op, so an unfetched-because-unchanged page is never
+soft-deleted; a periodic full re-enumeration re-emits everything (the §4 pattern).
+
 ## 4. HTTP API connector
 Config:
 ```json

@@ -288,10 +288,10 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] unchanged pages cost a 304 and no parse (conditional GET → 304: no read/parse/extract/emit, `last_fetched_at` bumped; content-hash fallback for the no-validator case; conditional GET over HEAD per ADR-0046)
 - [x] deletion-detection reconciliation: conditional skip only on incremental syncs (sink `Complete` no-op), unchanged page still marked seen — no false deletions
 
-### STORY-07.5 — Sitemap connector (FR-SRC-06)
-- [ ] sitemap + sitemap index parsing
-- [ ] `lastmod` incremental
-- [ ] shares fetch/extract code with crawler
+### STORY-07.5 — Sitemap connector (FR-SRC-06) — ✅ Done (ADR-0047, ISSUE-0022)
+- [x] sitemap + sitemap index parsing (stdlib `encoding/xml`, recursive index expansion; gzip `.xml.gz` via stdlib `compress/gzip`; bounded tree; no new dependency)
+- [x] `lastmod` incremental (parsed W3C-datetime; on an incremental sync a URL whose `lastmod` is not newer than `crawl_pages.last_fetched_at` is skipped with no request — a cheaper layer before the 07.4 conditional GET)
+- [x] shares fetch/extract code with crawler (drives the SAME crawl core via a `crawler.seeds` frontier source + `followLinks` flag; egress/extraction/conditional/pagestore all shared, not forked; `newSitemapCrawler`/`runSitemap`)
 
 ### STORY-07.6 — HTTP API connector: auth and pagination (FR-SRC-07, SPEC-04 §4)
 - [ ] api_key_header, bearer, basic, oauth2 client-credentials (token refresh)

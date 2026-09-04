@@ -3,6 +3,7 @@ package webcrawl
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -25,6 +26,10 @@ type Page struct {
 	LastModified  string
 	ContentHash   []byte
 	Err           string
+	// LastFetchedAt is when the page was last successfully fetched (crawl_pages
+	// last_fetched_at). It is the baseline the sitemap connector's <lastmod>
+	// incremental skip compares against (STORY-07.5); zero when never fetched.
+	LastFetchedAt time.Time
 }
 
 // PageStore persists per-source crawl state to make a crawl resumable (SPEC-04 §2,
@@ -74,6 +79,13 @@ func (m *memPageStore) Load(_ context.Context) (map[string]Page, error) {
 }
 
 func (m *memPageStore) Upsert(_ context.Context, p Page) error {
+	// Mirror the tenant store's `last_fetched_at = now()` so the in-memory store is a
+	// faithful stand-in for the sitemap lastmod baseline: a freshly-fetched page with
+	// no explicit timestamp records the fetch time. An explicit LastFetchedAt (a test
+	// seeding a known prior fetch) is preserved.
+	if p.Fetched && p.LastFetchedAt.IsZero() {
+		p.LastFetchedAt = time.Now()
+	}
 	m.mu.Lock()
 	m.pages[p.NormalizedURL] = p
 	m.mu.Unlock()
@@ -105,7 +117,7 @@ func NewTenantPageStore(db *tenant.DB, sourceID uuid.UUID) CrawlState {
 
 func (s *tenantPageStore) Load(ctx context.Context) (map[string]Page, error) {
 	rows, err := s.db.Query(ctx,
-		`select url, normalized_url, depth, last_fetched_at is not null, coalesce(last_status,0),
+		`select url, normalized_url, depth, last_fetched_at, coalesce(last_status,0),
 		        coalesce(etag,''), coalesce(last_modified,''), content_hash, coalesce(error,'')
 		   from crawl_pages where source_id = $1`, s.sourceID)
 	if err != nil {
@@ -115,9 +127,14 @@ func (s *tenantPageStore) Load(ctx context.Context) (map[string]Page, error) {
 	out := map[string]Page{}
 	for rows.Next() {
 		var p Page
-		if err := rows.Scan(&p.URL, &p.NormalizedURL, &p.Depth, &p.Fetched, &p.Status,
+		var lastFetched *time.Time // null when discovered-but-unfetched (pending)
+		if err := rows.Scan(&p.URL, &p.NormalizedURL, &p.Depth, &lastFetched, &p.Status,
 			&p.ETag, &p.LastModified, &p.ContentHash, &p.Err); err != nil {
 			return nil, err
+		}
+		if lastFetched != nil {
+			p.Fetched = true
+			p.LastFetchedAt = *lastFetched
 		}
 		out[p.NormalizedURL] = p
 	}

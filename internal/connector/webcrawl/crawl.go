@@ -21,9 +21,21 @@ import (
 
 // item is one frontier entry: a URL to (maybe) fetch at a BFS depth.
 type item struct {
-	norm  string // normalised URL — the visited/crawl_pages key
-	raw   string // URL actually requested (pre-normalisation)
-	depth int
+	norm    string // normalised URL — the visited/crawl_pages key
+	raw     string // URL actually requested (pre-normalisation)
+	depth   int
+	lastmod time.Time // sitemap <lastmod>, zero for web_crawl (STORY-07.5 incremental skip)
+}
+
+// seed is a depth-0 frontier entry supplied by the connector before the BFS runs.
+// web_crawl derives its seeds from start_urls (lastmod zero); the sitemap connector
+// derives them from parsed sitemap XML, carrying each URL's <lastmod> (STORY-07.5).
+// A non-nil crawler.seeds tells run to use these instead of cfg.StartURLs — the one
+// seam the two connectors differ on for frontier seeding.
+type seed struct {
+	norm    string
+	raw     string
+	lastmod time.Time
 }
 
 // hostGate serialises and spaces fetches to one host (SPEC-04 §2 per-host delay).
@@ -57,6 +69,13 @@ type crawler struct {
 	allowPrefixes []string
 	seedHosts     map[string]bool
 
+	// seeds, when non-nil, is the depth-0 frontier the connector supplies (STORY-07.5
+	// sitemap); nil means "derive seeds from cfg.StartURLs" (web_crawl). followLinks
+	// gates BFS frontier expansion: web_crawl follows discovered links, the sitemap
+	// connector does NOT (its frontier is exactly the sitemap's URLs).
+	seeds       []seed
+	followLinks bool
+
 	fetched int32 // atomic: fetch attempts admitted (max_pages cap)
 
 	mu      sync.Mutex
@@ -72,20 +91,29 @@ type crawler struct {
 }
 
 // newCrawler builds a crawler with defaults; tests override now/sleep and the Doer.
+// followLinks defaults true (the web_crawl behaviour); the sitemap connector clears
+// it via newSitemapCrawler.
 func newCrawler(cfg config, doer Doer) *crawler {
 	return &crawler{
-		cfg:      cfg,
-		doer:     doer,
-		ua:       userAgent,
-		maxBytes: maxResponseBytes,
-		now:      time.Now,
-		sleep:    func(d time.Duration) { time.Sleep(d) },
-		visited:  map[string]bool{},
-		emitted:  map[string]bool{},
-		robots:   map[string]*robotsRules{},
-		gates:    map[string]*hostGate{},
+		cfg:         cfg,
+		doer:        doer,
+		ua:          userAgent,
+		maxBytes:    maxResponseBytes,
+		now:         time.Now,
+		sleep:       func(d time.Duration) { time.Sleep(d) },
+		followLinks: true,
+		log:         discardLogger(),
+		visited:     map[string]bool{},
+		emitted:     map[string]bool{},
+		robots:      map[string]*robotsRules{},
+		gates:       map[string]*hostGate{},
 	}
 }
+
+// discardLogger is a no-op slog logger used as the crawler's default until run wires
+// the run-scoped logger; it also keeps pre-run helpers (sitemap seed collection)
+// safe to log through.
+func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // run performs the crawl: it resolves the resume state, seeds the frontier, and
 // walks it breadth-first honouring depth/pages limits, allow/deny, robots and the
@@ -94,7 +122,7 @@ func newCrawler(cfg config, doer Doer) *crawler {
 func (c *crawler) run(ctx context.Context, sr connector.SyncRun, sink connector.Sink) (connector.Stats, error) {
 	c.log = sr.Log
 	if c.log == nil {
-		c.log = slog.New(slog.NewTextHandler(io.Discard, nil))
+		c.log = discardLogger()
 	}
 	c.limiter = sr.Limiter
 	c.full = sr.Full
@@ -120,22 +148,31 @@ func (c *crawler) run(ctx context.Context, sr connector.SyncRun, sink connector.
 
 	frontier := map[int][]item{}
 	alreadyFetched := map[string]bool{}
-	add := func(norm, raw string, depth int) {
+	add := func(norm, raw string, depth int, lastmod time.Time) {
 		if c.visited[norm] {
 			return
 		}
 		c.visited[norm] = true
-		frontier[depth] = append(frontier[depth], item{norm: norm, raw: raw, depth: depth})
+		frontier[depth] = append(frontier[depth], item{norm: norm, raw: raw, depth: depth, lastmod: lastmod})
 	}
 
-	// Seeds (depth 0). Explicitly configured, so they bypass the allowlist but still
-	// respect deny.
-	for _, s := range c.cfg.StartURLs {
-		norm, u, err := parseAndNormalize(s)
-		if err != nil || c.denied(norm) {
+	// Seeds (depth 0). The frontier source is the one seam the two connectors differ
+	// on: a non-nil c.seeds (the sitemap connector) supplies the URLs directly; else
+	// they are derived from cfg.StartURLs (web_crawl). Either way seeds are explicitly
+	// configured, so they bypass the allowlist but still respect deny.
+	seeds := c.seeds
+	if seeds == nil {
+		for _, s := range c.cfg.StartURLs {
+			if norm, u, err := parseAndNormalize(s); err == nil {
+				seeds = append(seeds, seed{norm: norm, raw: u.String()})
+			}
+		}
+	}
+	for _, s := range seeds {
+		if c.denied(s.norm) {
 			continue
 		}
-		add(norm, u.String(), 0)
+		add(s.norm, s.raw, 0, s.lastmod)
 	}
 
 	// Merge persisted pages. Pending pages (discovered but not fetched) are always
@@ -189,7 +226,10 @@ func (c *crawler) run(ctx context.Context, sr connector.SyncRun, sink connector.
 				if err != nil {
 					return err
 				}
-				if it.depth+1 > c.cfg.MaxDepth {
+				// Frontier expansion is web_crawl-only: the sitemap connector clears
+				// followLinks so a fetched page's links never enter the frontier
+				// (STORY-07.5: the frontier is exactly the sitemap's URLs).
+				if !c.followLinks || it.depth+1 > c.cfg.MaxDepth {
 					return nil
 				}
 				nextMu.Lock()
@@ -223,6 +263,23 @@ func (c *crawler) process(ctx context.Context, it item, sink connector.Sink) ([]
 		return nil, nil
 	}
 	host := u.Host
+
+	// lastmod incremental skip (STORY-07.5, FR-SRC-06): on an incremental sync, if the
+	// sitemap declares this URL's last-modified time is no newer than our last
+	// successful fetch, skip it with NO request at all — cheaper than even the
+	// STORY-07.4 conditional GET, which still costs a round trip. Only fires with a
+	// sitemap-supplied lastmod and a recorded prior fetch time; web_crawl items carry a
+	// zero lastmod, so this is behaviour-preserving for the crawler. The page is counted
+	// as seen (not changed); its crawl_pages row is left untouched (its prior
+	// last_fetched_at stands — the page was not re-fetched).
+	if !c.full && !it.lastmod.IsZero() {
+		if p, ok := c.prior[it.norm]; ok && p.Fetched && !p.LastFetchedAt.IsZero() && !it.lastmod.After(p.LastFetchedAt) {
+			c.mu.Lock()
+			c.stats.DocsSeen++
+			c.mu.Unlock()
+			return nil, nil
+		}
+	}
 
 	// robots.txt (fetched once per host, cached).
 	if !c.robotsFor(ctx, u).allowed(u.RequestURI()) {

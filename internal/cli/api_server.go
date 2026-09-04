@@ -24,8 +24,10 @@ import (
 	// the sources API's config-validation / test-connection seams resolve it and
 	// the "upload" kind is no longer an unregistered seam (SPEC-04 §5, STORY-06.3).
 	_ "github.com/rag-platform/ragctl/internal/connector/upload"
-	// Register the web_crawl connector (kind "web_crawl") so the sources API resolves
-	// its JSON-Schema config validation and test-connection (SPEC-04 §2, STORY-07.1).
+	// Register the web_crawl AND sitemap connectors (SPEC-04 §2/§3, STORY-07.1/07.5):
+	// both kinds live in and register from the webcrawl package (the sitemap connector
+	// drives the same crawl core, ADR-0047), so this one blank import wires both — the
+	// sources API resolves their JSON-Schema config validation and test-connection.
 	_ "github.com/rag-platform/ragctl/internal/connector/webcrawl"
 	"github.com/rag-platform/ragctl/internal/objectstore"
 	"github.com/rag-platform/ragctl/internal/obs"
