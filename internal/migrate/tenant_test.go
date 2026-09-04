@@ -73,10 +73,10 @@ func TestExpectedTenantVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExpectedTenantVersion: %v", err)
 	}
-	// Migration 00001_initial_schema.sql is version 1; bump this alongside a new
-	// migration file.
-	if got != 1 {
-		t.Fatalf("ExpectedTenantVersion = %d, want 1", got)
+	// Highest embedded tenant migration: 00002_connector_state.sql (STORY-07.7);
+	// bump this alongside a new migration file.
+	if got != 2 {
+		t.Fatalf("ExpectedTenantVersion = %d, want 2", got)
 	}
 }
 

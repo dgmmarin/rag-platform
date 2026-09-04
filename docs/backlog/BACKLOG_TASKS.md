@@ -299,11 +299,11 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] rate limiting and Retry-After — `SyncRun.Limiter` + bounded retry on 429/503 (delta-seconds or HTTP-date)
 - [x] fixture server tests for each combination — httptest 4×5 auth×pagination matrix through real `Sync`, plus oauth2-refresh, SSRF token block, and 429/Retry-After tests (hermetic)
 
-### STORY-07.7 — HTTP API connector: templating and incremental sync (FR-SRC-07/08)
-- [ ] `text/template` rendering with helpers; `uri_template`
-- [ ] metadata JSONPath extraction
-- [ ] `incremental_param` with cursor in State
-- [ ] weekly full sync for deletion detection
+### STORY-07.7 — HTTP API connector: templating and incremental sync (FR-SRC-07/08) — ✅ Done (ADR-0049, ISSUE-0024)
+- [x] `text/template` rendering with helpers (`join`/`money`/`date`, total funcs); `uri_template` — templates parsed once per endpoint (`docMapper`); missing fields render `<no value>` (default `missingkey`); parse error = config error, execution error records-and-skips one item
+- [x] metadata JSONPath extraction — reuses the 07.6 dot-path evaluator (no JSONPath dep) → `Document.Metadata`; `id_path`→ExternalID, `updated_path`→ModifiedAt
+- [x] `incremental_param` with cursor in State — cursor baked onto the endpoint Path (paginate.go untouched), verbatim max `updated_at` persisted; NEW generic `connector_state` tenant table (migration 00002, schema v2) via `tenantStateStore` over `*tenant.DB` (ADR-0003; no `tenant_id`); hermetic round-trip tests + a DB-backed e2e
+- [x] weekly full sync for deletion detection — connector supports full (`SyncRun.Full` ⇒ full enumeration + `Complete`) and incremental modes and records `api:last_full_sync`; the weekly CADENCE (setting `Full` + full-mode sink) is the EPIC-09 scheduler's job (ADR-0049)
 
 ### STORY-07.8 — Source "test connection" for all kinds (FR-SRC-14)
 - [ ] each connector's `Test` validates reachability and credentials within 10 s with actionable errors

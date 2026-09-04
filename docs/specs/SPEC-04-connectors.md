@@ -324,6 +324,61 @@ and incremental sync (`incremental_param` + cursor in `State`, weekly full sync)
   token-endpoint block, and the 429+`Retry-After` retry. No DB, no object storage, no
   network. No migration, no OpenAPI change; coverage 80.2%.
 
+### 4b. Realised mapping and incremental sync (STORY-07.7)
+
+`internal/connector/api` fills the 07.6 `buildDocument` seam with the per-item MAPPING
+and adds incremental sync (ADR-0049, ISSUE-0024, FR-SRC-07/08). Auth/pagination/egress/
+jsonpath (07.6) are unchanged.
+
+- **Templates (`mapping.go`).** `template` and `uri_template` are Go `text/template`,
+  parsed ONCE per endpoint (`docMapper`) and executed per item with the item's decoded
+  JSON as the dot context: `template`→`Document.Text` (`MimeType text/markdown`),
+  `uri_template`→`Document.URI`. Helpers (`FuncMap`): `join` (join a decoded list with a
+  separator), `money` (a numeric amount — `json.Number`/number/numeric-string — to two
+  decimals, optional currency suffix), `date` (parse an RFC3339/naive/date-only string or
+  epoch seconds, reformat with a Go layout; default RFC3339). Helpers are total (never
+  error), so predictable fallbacks handle malformed input. With no `template` configured
+  the item falls back to the raw-JSON body (the 07.6 behaviour), so the auth×pagination
+  matrix stays valid.
+- **Missing fields render `<no value>`** — the `text/template` default (`missingkey` left
+  at `invalid`). Predictable and visible; `missingkey=zero` renders `<nil>` for a decoded
+  `map[string]any` and `missingkey=error` would drop a whole document for one missing
+  optional field (ADR-0049).
+- **Template errors.** A PARSE error is a config error (caught in `ValidateConfig`/`Test`
+  and re-checked in `Sync`); an EXECUTION error is per-item — recorded and the item
+  skipped, never aborting the sync. Errors carry only the author's template path and Go
+  type names, never item content (SPEC-10: no content logged).
+- **Metadata + id/updated.** Each `metadata` entry `{key: "$.a.b"}` is resolved with the
+  07.6 dot-path evaluator into `Document.Metadata[key]` (no JSONPath dependency);
+  `id_path`→`ExternalID` (namespaced by endpoint), `updated_path`→`ModifiedAt`.
+- **Incremental (`incremental_param` + cursor in `State`).** On a non-full run with an
+  `incremental_param` and a stored cursor, the connector sends `incremental_param=<cursor>`
+  on every page request (the cursor is baked onto the endpoint Path; the paginator's
+  `withQuery` preserves it — no paginate.go change). As items stream it tracks the max
+  `updated_at` and, after a successful enumeration, `Set`s the VERBATIM source value back
+  into `State` so the next run resumes in the API's own format. A first run (no cursor) or
+  a full run sends no `incremental_param`. `SyncRun.Full` reconciles the mode: `Full==true`
+  ⇒ full enumeration + `sink.Complete` deletion detection; `Full==false` ⇒ incremental,
+  `Complete` a no-op (SPEC-05 §5). The cursor advances on both.
+- **State backing (`statestore.go` + migration 00002).** `SyncRun.State` is backed by a
+  NEW generic tenant table `connector_state (source_id, key, value, updated_at, primary
+  key (source_id, key))` — the generic per-source key/value the SPEC-04 §1 `StateStore`
+  promised (distinct from the crawler's dedicated `crawl_pages`). `tenantStateStore`
+  (`NewTenantStateStore`) reaches it only through `*tenant.DB` (ADR-0003, C-3); no
+  `tenant_id` (C-1), no cross-DB FK (source_id is an informational copy, SPEC-03 §2 inv.
+  4). Tenant schema version → 2; the drift guard stays green.
+- **Weekly full sync — the split.** This connector supports both modes and records
+  `api:last_full_sync` in `connector_state` after a full run, but does NOT self-promote an
+  incremental run to full: deletion detection is the sink's `Complete`, whose full/
+  incremental mode is chosen by the worker from `SyncRun.Full`, so a connector cannot flip
+  it. The weekly cadence that sets `SyncRun.Full` and builds a full-mode sink is the
+  EPIC-09 scheduler's job (ADR-0049), mirroring the crawler's reconciliation (SPEC-04 §2c).
+- **Tests.** Hermetic unit tests (template golden mapping, each helper, missing-field,
+  parse/execution errors, cursor round trip, full-vs-incremental, nil-State) with an
+  in-memory `StateStore`; a DB-backed e2e (`test/e2e/api_e2e_test.go`) proves the cursor
+  persists to and reloads from `connector_state` in a REAL tenant DB across two runs. No
+  OpenAPI change, no new dependency; api-package coverage 79.3%.
+
 ## 5. Upload connector
 Not scheduled. `POST /v1/documents` writes the file to object storage, attributes it to `source_id` = the tenant's implicit upload source, and enqueues an `ingest_document` job. Re-upload with same filename creates a new version.
 

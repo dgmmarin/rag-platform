@@ -19,13 +19,13 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
-| EPIC-07 | Web crawl, sitemap and API connectors | 39 | 30 | 🚧 In progress |
+| EPIC-07 | Web crawl, sitemap and API connectors | 39 | 35 | 🚧 In progress |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **164** | **49%** |
+| **Total** | | **337** | **169** | **50%** |
 
 ---
 
@@ -969,7 +969,7 @@ ISSUE-0017. _(Pre-existing, unrelated: `internal/cli` unit tests fail only under
 port had to be published out of band to run the e2e; no gated package's behaviour
 regressed and no new lint finding was introduced.)_
 
-## EPIC-07 · Web crawl, sitemap and API connectors — 🚧 30/39 pts
+## EPIC-07 · Web crawl, sitemap and API connectors — 🚧 35/39 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -979,7 +979,7 @@ regressed and no new lint finding was introduced.)_
 | STORY-07.4 | Conditional fetch and change detection | 3 | ✅ Done | FR-ING-02, SPEC-04 §2c, ADR-0046 |
 | STORY-07.5 | Sitemap connector | 3 | ✅ Done | FR-SRC-06, SPEC-04 §3/§3a, ADR-0047 |
 | STORY-07.6 | HTTP API connector: auth and pagination | 8 | ✅ Done | FR-SRC-07, SPEC-04 §4/§4a, ADR-0048 |
-| STORY-07.7 | HTTP API connector: templating and incremental sync | 5 | 🔲 Todo | FR-SRC-07/08 |
+| STORY-07.7 | HTTP API connector: templating and incremental sync | 5 | ✅ Done | FR-SRC-07/08, SPEC-04 §4/§4b, ADR-0049 |
 | STORY-07.8 | Source "test connection" for all kinds | 2 | 🔲 Todo | FR-SRC-14 |
 | STORY-07.9 | Connector documentation | 2 | 🔲 Todo | — |
 
@@ -1102,6 +1102,40 @@ oauth2 cache-then-refresh test, the SSRF token-endpoint block, and the 429+`Retr
 retry — all httptest/in-process (hermetic; the story touches no DB). `go vet` clean,
 `gofmt` clean, drift guard green; api-package coverage 80.2%. Remaining EPIC-07 stories
 (07.7–07.9) are Todo.
+
+**Delivered (STORY-07.7):** the HTTP API connector's per-item MAPPING + incremental sync
+(`internal/connector/api`, ADR-0049, ISSUE-0024, FR-SRC-07/08), filling the 07.6
+`buildDocument` seam. **Templates** (`mapping.go`): `template` and `uri_template` are Go
+`text/template` parsed ONCE per endpoint (`docMapper`) and executed per item with the
+item's decoded JSON as the dot context → `Document.Text` (`text/markdown`) and
+`Document.URI`; helper `FuncMap` `join`/`money`/`date` are total (never error, predictable
+fallbacks). Missing fields render `<no value>` (the `text/template` default; `missingkey`
+left at `invalid` — `zero` gives `<nil>` for a `map[string]any`, `error` would drop a whole
+doc). A template PARSE error is a config error (caught in `ValidateConfig`/`Test`); an
+EXECUTION error records-and-skips ONE item (never aborts the sync) and carries only the
+author path + Go types, no item content. **Metadata** reuses the 07.6 dot-path evaluator
+(no JSONPath dep) → `Document.Metadata`; `id_path`→`ExternalID`, `updated_path`→
+`ModifiedAt`. **Incremental** (`incremental_param` + cursor in `State`): a non-full run
+with a stored cursor sends `updated_since=<cursor>` on every page (baked onto the endpoint
+Path — paginate.go untouched), tracks the max `updated_at`, and persists the VERBATIM
+source value back so the next run resumes in the API's own format; a first run / full run
+sends none. `SyncRun.Full` reconciles the mode (full ⇒ full enumeration + `sink.Complete`
+deletion detection; incremental ⇒ `Complete` no-op, SPEC-05 §5); the cursor advances on
+both. **State backing**: a NEW generic tenant table `connector_state` (migration
+00002_connector_state.sql; schema version → 2) via `tenantStateStore`/`NewTenantStateStore`
+over `*tenant.DB` (ADR-0003, C-3; no `tenant_id`, no cross-DB FK) — the generic per-source
+KV the SPEC-04 §1 `StateStore` promised, distinct from the crawler's `crawl_pages`. The
+**weekly full sync** cadence (setting `SyncRun.Full` + a full-mode sink) is the EPIC-09
+scheduler's job; the connector supports both modes and records `api:last_full_sync` as a
+breadcrumb, without self-promoting (the sink mode is the worker's — ADR-0049, mirroring
+ADR-0046). TDD: `mapping_test.go` + `incremental_test.go` RED first, then GREEN (template
+golden mapping, each helper, missing-field, parse/execution errors, cursor round trip,
+full-vs-incremental, nil-State) with an in-memory `StateStore`; the golden-path e2e
+(`test/e2e/api_e2e_test.go`) proves the cursor persists to and reloads from
+`connector_state` in a REAL enrolled tenant DB across two runs (PASS). Lint clean
+(golangci-lint v2.13.1, 0 issues), tenant drift + version guards green; api-package
+coverage 79.3%. No control-plane/OpenAPI change, no new dependency. Remaining EPIC-07
+stories (07.8–07.9) are Todo.
 
 ## EPIC-08 · Retrieval and answering — 🔲 0/39 pts
 

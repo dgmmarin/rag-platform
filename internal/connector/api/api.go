@@ -7,27 +7,40 @@
 // (`_ ".../internal/connector/api"`) at the composition root wires it with no other
 // change (NFR-MNT-01), exactly like the upload and web_crawl/sitemap connectors.
 //
-// STORY BOUNDARY (07.6 vs 07.7, ADR-0048). This story (07.6) builds the fetch/auth/
-// pagination/rate-limit engine. Each enumerated item is emitted as a PLACEHOLDER
-// Document — the raw item JSON as the body/text, id_path→ExternalID — which makes the
-// pagination testable end to end. STORY-07.7 replaces the placeholder mapping with
-// text/template rendering (template + helpers), uri_template, metadata JSONPath
-// extraction (updated_path/metadata) and incremental sync (incremental_param + a
-// cursor persisted in SyncRun.State, weekly full sync). The single seam 07.7 plugs
-// into is buildDocument (below); everything else (auth.go, paginate.go, jsonpath.go,
-// egress.go) is shared and complete. The config schema already accepts the 07.7
-// fields so a full source config validates today.
+// STORY BOUNDARY (07.6 vs 07.7). STORY-07.6 (ADR-0048) built the fetch/auth/
+// pagination/rate-limit engine (auth.go, paginate.go, jsonpath.go, egress.go).
+// STORY-07.7 (ADR-0049) adds the per-item MAPPING — text/template rendering with
+// helpers, uri_template, metadata JSONPath extraction, updated_path→ModifiedAt
+// (mapping.go) — and INCREMENTAL sync — incremental_param + a cursor persisted in
+// SyncRun.State (statestore.go / the tenant connector_state table). The weekly full
+// sync that drives deletion detection is set by the EPIC-09 scheduler (SyncRun.Full);
+// this connector supports both modes and records last_full_sync for it (ADR-0049).
 package api
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/rag-platform/ragctl/internal/connector"
 )
+
+// State keys the connector persists in SyncRun.State (SPEC-04 §1/§4, ADR-0049). The
+// incremental cursor is per endpoint (one source may enumerate several); the
+// last-full-sync marker is per source. Keys are namespaced so the store is safe to
+// share with any other per-source scratch a future connector adds.
+const (
+	stateCursorPrefix    = "api:cursor:"
+	stateLastFullSyncKey = "api:last_full_sync"
+)
+
+// cursorKey is the per-endpoint incremental-cursor State key.
+func cursorKey(endpointName string) string { return stateCursorPrefix + endpointName }
 
 // Credential keys the connector reads from the decrypted connector.Credentials map
 // (SPEC-04 §6, STORY-06.2). Secrets NEVER come from config and are never logged.
@@ -56,9 +69,9 @@ type authConfig struct {
 	Scopes   []string `json:"scopes"`    // oauth2_cc: optional scopes
 }
 
-// endpoint is one collection to enumerate. The 07.7 mapping fields (IDPath is used
-// as a placeholder in 07.6; UpdatedPath/IncrementalParam/Template/URITemplate/
-// Metadata are validated but unused until 07.7).
+// endpoint is one collection to enumerate. ItemsPath/IDPath/pagination drive the
+// engine (07.6); the mapping/incremental fields drive the per-item Document mapping
+// and incremental fetch (07.7, mapping.go).
 type endpoint struct {
 	Name       string     `json:"name"`
 	Path       string     `json:"path"`
@@ -66,12 +79,12 @@ type endpoint struct {
 	Pagination pagination `json:"pagination"`
 	ItemsPath  string     `json:"items_path"`
 	IDPath     string     `json:"id_path"`
-	// --- STORY-07.7 mapping/incremental fields (validated, not used in 07.6) ---
-	UpdatedPath      string            `json:"updated_path"`
-	IncrementalParam string            `json:"incremental_param"`
-	Template         string            `json:"template"`
-	URITemplate      string            `json:"uri_template"`
-	Metadata         map[string]string `json:"metadata"`
+	// --- STORY-07.7 mapping/incremental fields ---
+	UpdatedPath      string            `json:"updated_path"`      // → Document.ModifiedAt + incremental cursor
+	IncrementalParam string            `json:"incremental_param"` // updated-since query param name
+	Template         string            `json:"template"`          // text/template → Document.Text
+	URITemplate      string            `json:"uri_template"`      // text/template → Document.URI
+	Metadata         map[string]string `json:"metadata"`          // key → JSONPath → Document.Metadata[key]
 }
 
 // pagination describes how to walk an endpoint's pages (SPEC-04 §4).
@@ -190,6 +203,12 @@ func validateSemantics(c apiConfig) error {
 		if ep.Pagination.Type == "cursor" && strings.TrimSpace(ep.Pagination.CursorPath) == "" {
 			fields = append(fields, connector.FieldError{Field: fmt.Sprintf("endpoints.%d.pagination.cursor_path", i), Message: "cursor pagination requires cursor_path"})
 		}
+		// A malformed template/uri_template is a config error, caught here so
+		// ValidateConfig/Test reject it rather than every item failing at sync time
+		// (STORY-07.7, ADR-0049).
+		if _, err := newDocMapper(ep); err != nil {
+			fields = append(fields, connector.FieldError{Field: fmt.Sprintf("endpoints.%d.template", i), Message: "template does not parse"})
+		}
 	}
 	if len(fields) > 0 {
 		return &connector.ConfigError{Fields: fields}
@@ -222,54 +241,111 @@ func (apiConnector) Sync(ctx context.Context, run connector.SyncRun, sink connec
 
 	cl := newClient(c.BaseURL, ac, run.Limiter, run.Log)
 
+	log := run.Log
+	if log == nil {
+		log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+
 	var stats connector.Stats
 	for _, ep := range c.Endpoints {
+		mapper, err := newDocMapper(ep)
+		if err != nil {
+			return stats, err // template parse error: a config problem, fail loud
+		}
+
+		// Incremental fetch (FR-SRC-08, SPEC-04 §4): on a NON-full run with an
+		// incremental_param configured and a stored cursor, pass the cursor as the
+		// updated-since query value so the upstream returns only newer records. A full
+		// run (or a first run with no cursor) enumerates everything.
+		fetch := ep
+		if !run.Full && strings.TrimSpace(ep.IncrementalParam) != "" && run.State != nil {
+			cur, ok, err := run.State.Get(ctx, cursorKey(ep.Name))
+			if err != nil {
+				return stats, fmt.Errorf("api: read cursor for endpoint %q: %w", ep.Name, err)
+			}
+			if ok && cur != "" {
+				fetch = withIncrementalParam(ep, ep.IncrementalParam, cur)
+			}
+		}
+
+		var maxRaw string
+		var maxTime time.Time
 		seq := 0
 		emit := func(item any) error {
-			doc := buildDocument(ep, item, seq)
+			stats.DocsSeen++
+			res, berr := mapper.build(item, seq)
 			seq++
-			changed, err := sink.Put(ctx, doc)
+			if berr != nil {
+				// Record and skip one malformed item; never abort the whole sync. The
+				// item's content is not logged (SPEC-10: no content at info level).
+				log.Warn("api: skipping item after template error", "endpoint", ep.Name, "seq", seq-1)
+				return nil
+			}
+			changed, err := sink.Put(ctx, res.doc)
 			if err != nil {
 				return err
 			}
-			stats.DocsSeen++
 			if changed {
 				stats.DocsChanged++
 			}
+			if res.hasUpdated && res.updatedTime.After(maxTime) {
+				maxTime = res.updatedTime
+				maxRaw = res.updatedRaw
+			}
 			return nil
 		}
-		n, err := cl.enumerate(ctx, ep, emit)
+
+		n, err := cl.enumerate(ctx, fetch, emit)
 		stats.BytesFetched += n
 		if err != nil {
 			return stats, fmt.Errorf("api: enumerate endpoint %q: %w", ep.Name, err)
 		}
+
+		// After a successful enumeration, advance the cursor to the max updated_at seen
+		// so the next incremental run resumes from here (on both full and incremental
+		// runs, whenever updated_path is configured and we saw a timestamp).
+		if run.State != nil && strings.TrimSpace(ep.UpdatedPath) != "" && maxRaw != "" {
+			if err := run.State.Set(ctx, cursorKey(ep.Name), maxRaw); err != nil {
+				return stats, fmt.Errorf("api: persist cursor for endpoint %q: %w", ep.Name, err)
+			}
+		}
+	}
+
+	// Record when the last full enumeration happened so the EPIC-09 scheduler can
+	// decide when the next weekly full sync is due (SPEC-04 §4). Best-effort: a
+	// failed breadcrumb must not fail the sync.
+	if run.Full && run.State != nil {
+		if err := run.State.Set(ctx, stateLastFullSyncKey, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			log.Warn("api: could not record last_full_sync", "err", err)
+		}
 	}
 
 	// Full enumeration finished: let the sink reconcile deletions (SPEC-04 §1). The
-	// sink itself no-ops Complete on an incremental run (SPEC-05 §5).
+	// sink itself no-ops Complete on an incremental run (SPEC-05 §5). The weekly
+	// cadence that sets run.Full (and the matching full-mode sink) is the EPIC-09
+	// scheduler's job, not the connector's (ADR-0049).
 	if err := sink.Complete(ctx); err != nil {
 		return stats, fmt.Errorf("api: sink complete: %w", err)
 	}
 	return stats, nil
 }
 
-// buildDocument is the SEAM STORY-07.7 replaces. In 07.6 it emits a placeholder
-// Document: the raw item JSON as the body text, ExternalID from id_path (namespaced
-// by endpoint), so pagination is testable end to end. 07.7 renders template →
-// Document.Text, uri_template → URI, metadata JSONPath → Metadata, updated_path →
-// ModifiedAt.
-func buildDocument(ep endpoint, item any, seq int) connector.Document {
-	raw, _ := json.Marshal(item)
-	id, ok := evalString(item, ep.IDPath)
-	if !ok || id == "" {
-		id = fmt.Sprintf("%d", seq)
+// withIncrementalParam returns a copy of ep whose Path carries an extra query param
+// (the incremental updated-since cursor). It merges into any query already on Path
+// and leaves the pagination engine (paginate.go) untouched: withQuery there
+// preserves existing query params on every page request, so the cursor rides along
+// on all pages of an incremental fetch.
+func withIncrementalParam(ep endpoint, param, value string) endpoint {
+	u, err := url.Parse(ep.Path)
+	if err != nil {
+		return ep // a malformed path fails later in enumerate; don't mask it here
 	}
-	return connector.Document{
-		ExternalID: ep.Name + "/" + id,
-		MimeType:   "application/json",
-		Text:       string(raw),
-		RawJSON:    json.RawMessage(raw),
-	}
+	q := u.Query()
+	q.Set(param, value)
+	u.RawQuery = q.Encode()
+	out := ep
+	out.Path = u.String()
+	return out
 }
 
 func init() {
