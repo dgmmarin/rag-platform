@@ -6,6 +6,7 @@ require (
 	filippo.io/age v1.2.1
 	github.com/alecthomas/kong v1.16.1
 	github.com/andybalholm/cascadia v1.3.2
+	github.com/anthropics/anthropic-sdk-go v1.9.0
 	github.com/aws/aws-sdk-go-v2/config v1.29.14
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.67
 	github.com/aws/aws-sdk-go-v2/service/kms v1.38.3
@@ -24,7 +25,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.31.0
 	golang.org/x/net v0.33.0
 	golang.org/x/oauth2 v0.24.0
-	golang.org/x/time v0.3.0
+	golang.org/x/time v0.5.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -53,6 +54,10 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/common v0.55.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
+	github.com/tidwall/gjson v1.14.4 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.31.0 // indirect
 	go.opentelemetry.io/otel/metric v1.31.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect

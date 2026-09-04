@@ -23,7 +23,8 @@
       "properties": {
         "provider": {"type": "string", "minLength": 1},
         "model": {"type": "string", "minLength": 1},
-        "max_tokens": {"type": "integer", "minimum": 1, "maximum": 32768}
+        "max_tokens": {"type": "integer", "minimum": 1, "maximum": 32768},
+        "models_allowed": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
       }
     },
     "reranker": {

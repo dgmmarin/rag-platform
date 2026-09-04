@@ -20,7 +20,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 39 | ✅ Complete |
-| EPIC-08 | Retrieval and answering | 39 | 10 | 🚧 In progress |
+| EPIC-08 | Retrieval and answering | 39 | 15 | 🚧 In progress |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
@@ -1183,18 +1183,48 @@ but is not yet consulted by the crawler (the effective cap is per-source `max_pa
 Docs-only: `go build ./...` green, no code/schema/OpenAPI/migration change. **EPIC-07
 is complete (39/39 pts).**
 
-## EPIC-08 · Retrieval and answering — 🚧 10/39 pts
+## EPIC-08 · Retrieval and answering — 🚧 15/39 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-08.1 | Hybrid retrieval query | 8 | ✅ Done | FR-RET-01/02/08, ADR-0007, ADR-0051, SPEC-06 §2 |
 | STORY-08.2 | Retrieve endpoint | 2 | ✅ Done | FR-RET-08, ADR-0052, SPEC-06 §2, SPEC-07 §2e |
 | STORY-08.3 | Reranker interface and providers | 5 | 🔲 Todo | FR-RET-03 |
-| STORY-08.4 | LLM provider interface | 5 | 🔲 Todo | NFR-MNT-02, NFR-REL-04 |
+| STORY-08.4 | LLM provider interface | 5 | ✅ Done | NFR-MNT-02, NFR-REL-04 |
 | STORY-08.5 | Prompt assembly, citations and grounding refusal | 8 | 🔲 Todo | FR-RET-04/05, SPEC-06 §4–5 |
 | STORY-08.6 | Query endpoint with streaming | 5 | 🔲 Todo | FR-RET-06, SPEC-06 §6 |
 | STORY-08.7 | Conversation history and question rewrite | 3 | 🔲 Todo | FR-RET-07 |
 | STORY-08.8 | Query log and feedback | 3 | 🔲 Todo | FR-RET-09/10 |
+
+**Delivered (STORY-08.4):** the LLM provider seam — a new `internal/llm` package (NFR-MNT-02, NFR-REL-04,
+SPEC-06 §5.1, ADR-0053), the pure client library the answering stage generates through. **Built before
+STORY-08.3 (a deliberate, user-approved reorder — the LLM-based reranker depends on this seam).** A
+provider-neutral `Provider` exposes non-streaming `Complete` and streaming `Stream` (a pull iterator: `Recv →
+Event`, `io.EOF` at end) over `Request{Model,System,Messages,MaxTokens,Temperature?,TopP?,Effort?}` →
+`Response{Text,Usage{InputTokens,OutputTokens},FinishReason,Model}`. Three providers sit behind a `registry`
+(a fourth is one file + one entry): **Anthropic via the official `anthropic-sdk-go`** (pinned **v1.9.0** — the
+newest release whose `go` directive is ≤ 1.22-compatible; every ≥ v1.9.1 requires go ≥ 1.23, so a newer pin
+would force the toolchain bump the story refuses — `go mod tidy` stayed on `go 1.22`), with the SDK's own retry
+disabled so our wrapper is the single authority; **OpenAI + OpenAI-compatible (vLLM/Ollama) via raw
+`net/http`** on `/v1/chat/completions`, one implementation parameterised by base URL (no OpenAI SDK, C-2).
+Streaming works for all three (Anthropic SDK SSE; OpenAI SSE `data:` with `stream_options.include_usage`),
+surfacing a uniform delta/done shape 08.6 will emit. Resilience (NFR-REL-04) — bounded exponential backoff
+honouring `Retry-After` on 429/5xx (other 4xx terminal) + a per-provider circuit breaker — is **reused from
+`internal/ingest/embed` (ADR-0037), copied not shared** (ponytail: extract `internal/resilience` on a third
+consumer). Provider-normalised token `Usage` rides every response/terminal event for 08.5 to fold into
+`usage_daily` (ADR-0024). A **two-level fail-closed allowlist** gates access: the provider must be in
+`settings.providers_allowed` (SPEC-09 §2) and, when set, the model must match `settings.llm.models_allowed`
+(exact or `gpt-*` wildcard). Sampling is sent only to OpenAI (current Claude models reject it); thinking is not
+hardcoded (`Effort` → OpenAI `reasoning_effort`, a no-op on Anthropic v1.9.0). Default answer model →
+`claude-sonnet-5`; per-provider platform keys `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`OPENAI_BASE_URL` (C-4,
+never logged; errors carry only the sanitised HTTP status, never prompt content). Only `settings_defaults.json`
+/`settings_schema.json` (new `llm.models_allowed`) and `internal/config`/`.env.example` changed — no migration,
+no OpenAPI change, drift/validation green. TDD throughout with a hermetic `httptest` suite (the SDK pointed at
+the test server via `option.WithBaseURL`): per provider — non-streaming + streaming text/usage/finish, request
+shape, retry-then-succeed on 5xx/429, terminal-400-not-retried + error sanitisation, breaker opens +
+short-circuits, provider + model allowlist fail-closed, unknown provider, factory key selection. Like the
+embedding provider (ADR-0037), the golden-path **e2e is deferred to the query endpoint (STORY-08.6)** since
+`internal/llm` has no HTTP/worker path of its own. ADR-0053, ISSUE-0030.
 
 ## EPIC-09 · Jobs, scheduling and maintenance — 🔲 0/21 pts
 

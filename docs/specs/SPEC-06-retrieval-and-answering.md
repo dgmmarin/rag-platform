@@ -1,6 +1,6 @@
 # SPEC-06: Retrieval and answering
 
-**Implements:** FR-RET-01..10, NFR-PERF-01/02, NFR-REL-04 · **Decisions:** ADR-0004, ADR-0007, ADR-0051, ADR-0052
+**Implements:** FR-RET-01..10, NFR-PERF-01/02, NFR-REL-04 · **Decisions:** ADR-0004, ADR-0007, ADR-0051, ADR-0052, ADR-0053
 
 ## 1. Pipeline
 ```
@@ -138,6 +138,50 @@ If no chunk passes `min_score`, respond with `grounded=false`, a fixed message (
 - History: last N turns (default 6) if provided; optional rewrite step turns a follow-up into a standalone question before retrieval.
 - Answer post-processing: map `[n]` markers to chunk IDs → citations `[{n, document_id, title, uri, heading_path, snippet}]`; unreferenced chunks are dropped from citations.
 
+## 5.1 LLM provider seam (STORY-08.4, ADR-0053)
+Generation goes through `internal/llm`, a provider-neutral seam consumed by the
+LLM-based reranker (§3, STORY-08.3), prompt assembly (§5, STORY-08.5) and the query
+endpoint's SSE (§6, STORY-08.6):
+
+```
+Provider.Complete(ctx, Request) (Response, error)   // non-streaming
+Provider.Stream(ctx, Request)   (Stream, error)     // streaming (pull iterator: Recv → Event, io.EOF)
+Request{Model, System, Messages[], MaxTokens, Temperature?, TopP?, Effort?}
+Response{Text, Usage{InputTokens, OutputTokens}, FinishReason, Model}
+```
+
+- **Providers** (one interface each, NFR-MNT-02): `anthropic` via the official
+  `anthropic-sdk-go`; `openai` and `openai-compatible` via raw `net/http` against
+  the OpenAI `POST /v1/chat/completions` shape, one implementation with a `base_url`
+  override serving vLLM/Ollama/any compatible endpoint (no OpenAI SDK, C-2). A
+  `registry` is the single place a fourth provider is added.
+- **Streaming** for every provider: Anthropic via the SDK's SSE stream, OpenAI via
+  the SSE `data:` chat/completions stream (`stream_options.include_usage` for
+  streamed usage). `Stream.Recv` yields text deltas then one terminal `Done` event
+  carrying final `Usage`/`FinishReason` — the uniform shape §6 emits as SSE
+  `delta`/`done`.
+- **Resilience** (NFR-REL-04): bounded exponential backoff honouring `Retry-After`
+  on 429/5xx (other 4xx terminal, not retried) plus a per-provider circuit breaker,
+  reusing `internal/ingest/embed`'s approach (ADR-0037). The SDK's own retry is
+  disabled so the wrapper is the single authority. `ErrCircuitOpen` lets §6 degrade
+  to retrieval-only.
+- **Token accounting** (FR-RET-04): every `Response`/terminal event carries a
+  provider-normalised `Usage`; 08.5 folds it into `usage_daily` (ADR-0024) and the
+  response `usage` object.
+- **Allowlist, fail-closed** (SPEC-09 §2): the provider must be in
+  `settings.providers_allowed` (`ErrProviderNotAllowed`) and, when
+  `settings.llm.models_allowed` is set, the model must match it (exact or `gpt-*`
+  wildcard; `ErrModelNotAllowed`). Platform keys are per provider
+  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`), never logged/returned;
+  errors carry only the sanitised HTTP status, never prompt content (C-4).
+- **Sampling/thinking**: `temperature`/`top_p` are sent only to providers that
+  accept them (OpenAI; current Claude models reject sampling). Thinking policy is
+  the caller's (08.5), not hardcoded here: `Request.Effort` maps to OpenAI
+  `reasoning_effort` and is a no-op for the Anthropic provider on the pinned SDK.
+- **Default answer model**: `settings.llm.model` defaults to `claude-sonnet-5`;
+  `settings.llm.models_allowed` defaults to `claude-opus-5`, `claude-sonnet-5`,
+  `claude-haiku-4-5`, `gpt-*`.
+
 ## 6. API contracts (see SPEC-07 for transport)
 `POST /v1/query` request:
 ```json
@@ -150,7 +194,7 @@ Response:
 {"id":"q_...","answer":"...","grounded":true,
  "citations":[{"n":1,"document_id":"...","title":"X200 manual","uri":"https://...","heading_path":["Reset"],"snippet":"..."}],
  "usage":{"retrieval_ms":120,"generation_ms":1400,"in_tokens":3200,"out_tokens":180},
- "model":"claude-sonnet-4-6"}
+ "model":"claude-sonnet-5"}
 ```
 Streaming: SSE events `retrieval` (citations first), `delta` (text), `done` (usage).
 

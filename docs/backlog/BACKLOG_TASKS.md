@@ -332,10 +332,11 @@ breakdown, tasks are derived from the acceptance criteria.
 - [ ] per-tenant toggle
 - [ ] fallback to fused order on provider failure
 
-### STORY-08.4 — LLM provider interface (NFR-MNT-02, NFR-REL-04)
-- [ ] Anthropic, OpenAI, OpenAI-compatible (vLLM/Ollama)
-- [ ] streaming and non-streaming; retries
-- [ ] token accounting; allowlist enforced
+### STORY-08.4 — LLM provider interface (NFR-MNT-02, NFR-REL-04) ✅
+> Built before STORY-08.3 (deliberate, user-approved reorder — the LLM-based reranker depends on this seam). ADR-0053, ISSUE-0030.
+- [x] Anthropic (official anthropic-sdk-go v1.9.0, pinned for go-1.22 compat), OpenAI + OpenAI-compatible (vLLM/Ollama, raw HTTP one impl by base_url)
+- [x] streaming and non-streaming for each; bounded-backoff retries + circuit breaker reused from embed (ADR-0037)
+- [x] provider-normalised token accounting surfaced; two-level fail-closed allowlist (providers_allowed + settings.llm.models_allowed)
 
 ### STORY-08.5 — Prompt assembly, citations and grounding refusal (FR-RET-04/05, SPEC-06 §4–5)
 - [ ] answers cite `[n]`; citations mapped to chunks; unreferenced chunks dropped

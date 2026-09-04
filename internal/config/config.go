@@ -121,6 +121,19 @@ type Config struct {
 	// endpoint for a self-hosted/proxy deployment (e.g. TEI).
 	EmbeddingAPIKey  string
 	EmbeddingBaseURL string
+
+	// LLM answering (STORY-08.4, SPEC-06 §5–6, NFR-MNT-02/REL-04, ADR-0053). The
+	// per-provider platform keys the answering layer (STORY-08.5/08.6) uses to reach
+	// the tenant's configured LLM provider. Anthropic uses its own key; OpenAI and
+	// OpenAI-compatible (vLLM/Ollama) share OpenAIAPIKey, with OpenAIBaseURL
+	// overriding the endpoint for a compatible server. An empty key leaves that
+	// provider unusable (the provider fails with a clean auth error rather than
+	// reaching anything). Keys are confidential and never logged (C-4). ponytail:
+	// one key per provider per deployment (C-5 single-region-per-tenant); make it a
+	// tenant→key map only if a deployment serves tenants on heterogeneous accounts.
+	AnthropicAPIKey string
+	OpenAIAPIKey    string
+	OpenAIBaseURL   string
 }
 
 // Load reads configuration, overlaying the optional config file (if filePath is
@@ -243,6 +256,12 @@ func Load(filePath string) (Config, error) {
 	// on its clean-error path (no provider reached).
 	cfg.EmbeddingAPIKey = mustGet(get, "EMBEDDING_API_KEY")
 	cfg.EmbeddingBaseURL = mustGet(get, "EMBEDDING_BASE_URL")
+
+	// LLM answering providers (STORY-08.4, SPEC-06 §5–6). Empty leaves a provider
+	// unusable; never logged (C-4).
+	cfg.AnthropicAPIKey = mustGet(get, "ANTHROPIC_API_KEY")
+	cfg.OpenAIAPIKey = mustGet(get, "OPENAI_API_KEY")
+	cfg.OpenAIBaseURL = mustGet(get, "OPENAI_BASE_URL")
 
 	return cfg, nil
 }
