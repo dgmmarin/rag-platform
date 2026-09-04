@@ -293,11 +293,11 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] `lastmod` incremental (parsed W3C-datetime; on an incremental sync a URL whose `lastmod` is not newer than `crawl_pages.last_fetched_at` is skipped with no request — a cheaper layer before the 07.4 conditional GET)
 - [x] shares fetch/extract code with crawler (drives the SAME crawl core via a `crawler.seeds` frontier source + `followLinks` flag; egress/extraction/conditional/pagestore all shared, not forked; `newSitemapCrawler`/`runSitemap`)
 
-### STORY-07.6 — HTTP API connector: auth and pagination (FR-SRC-07, SPEC-04 §4)
-- [ ] api_key_header, bearer, basic, oauth2 client-credentials (token refresh)
-- [ ] pagination none/page/offset/cursor/link-header
-- [ ] rate limiting and Retry-After
-- [ ] fixture server tests for each combination
+### STORY-07.6 — HTTP API connector: auth and pagination (FR-SRC-07, SPEC-04 §4) — ✅ Done (ADR-0048, ISSUE-0023)
+- [x] api_key_header, bearer, basic, oauth2 client-credentials (token refresh) — secrets from decrypted `connector.Credentials`, oauth2 reuses `x/oauth2/clientcredentials` (no new dep), token endpoint + API calls both SSRF-guarded
+- [x] pagination none/page/offset/cursor/link-header — each with a `max_pages` ceiling (ponytail)
+- [x] rate limiting and Retry-After — `SyncRun.Limiter` + bounded retry on 429/503 (delta-seconds or HTTP-date)
+- [x] fixture server tests for each combination — httptest 4×5 auth×pagination matrix through real `Sync`, plus oauth2-refresh, SSRF token block, and 429/Retry-After tests (hermetic)
 
 ### STORY-07.7 — HTTP API connector: templating and incremental sync (FR-SRC-07/08)
 - [ ] `text/template` rendering with helpers; `uri_template`

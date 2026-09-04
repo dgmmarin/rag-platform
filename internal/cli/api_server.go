@@ -29,6 +29,11 @@ import (
 	// drives the same crawl core, ADR-0047), so this one blank import wires both — the
 	// sources API resolves their JSON-Schema config validation and test-connection.
 	_ "github.com/rag-platform/ragctl/internal/connector/webcrawl"
+	// Register the HTTP API connector (kind "api", SPEC-04 §4, STORY-07.6): auth
+	// (api_key_header/bearer/basic/oauth2_cc), pagination (none/page/offset/cursor/
+	// link-header) and rate-limit/Retry-After handling. One blank import wires it —
+	// no other change to the sources API or router (NFR-MNT-01).
+	_ "github.com/rag-platform/ragctl/internal/connector/api"
 	"github.com/rag-platform/ragctl/internal/objectstore"
 	"github.com/rag-platform/ragctl/internal/obs"
 	"github.com/rag-platform/ragctl/internal/provision"

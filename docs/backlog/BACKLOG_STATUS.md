@@ -19,13 +19,13 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
-| EPIC-07 | Web crawl, sitemap and API connectors | 39 | 22 | 🚧 In progress |
+| EPIC-07 | Web crawl, sitemap and API connectors | 39 | 30 | 🚧 In progress |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **156** | **46%** |
+| **Total** | | **337** | **164** | **49%** |
 
 ---
 
@@ -969,7 +969,7 @@ ISSUE-0017. _(Pre-existing, unrelated: `internal/cli` unit tests fail only under
 port had to be published out of band to run the e2e; no gated package's behaviour
 regressed and no new lint finding was introduced.)_
 
-## EPIC-07 · Web crawl, sitemap and API connectors — 🚧 22/39 pts
+## EPIC-07 · Web crawl, sitemap and API connectors — 🚧 30/39 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -978,7 +978,7 @@ regressed and no new lint finding was introduced.)_
 | STORY-07.3 | HTML content extraction quality | 5 | ✅ Done | FR-SRC-05, SPEC-04 §2b, ADR-0045 |
 | STORY-07.4 | Conditional fetch and change detection | 3 | ✅ Done | FR-ING-02, SPEC-04 §2c, ADR-0046 |
 | STORY-07.5 | Sitemap connector | 3 | ✅ Done | FR-SRC-06, SPEC-04 §3/§3a, ADR-0047 |
-| STORY-07.6 | HTTP API connector: auth and pagination | 8 | 🔲 Todo | FR-SRC-07, SPEC-04 §4 |
+| STORY-07.6 | HTTP API connector: auth and pagination | 8 | ✅ Done | FR-SRC-07, SPEC-04 §4/§4a, ADR-0048 |
 | STORY-07.7 | HTTP API connector: templating and incremental sync | 5 | 🔲 Todo | FR-SRC-07/08 |
 | STORY-07.8 | Source "test connection" for all kinds | 2 | 🔲 Todo | FR-SRC-14 |
 | STORY-07.9 | Connector documentation | 2 | 🔲 Todo | — |
@@ -1075,7 +1075,33 @@ a real-Postgres e2e (`TestSitemapSyncAndLastmodIncremental`: index→child→pag
 sync emits all/records `crawl_pages`/follows no link; incremental lastmod-older sync
 re-fetches and emits nothing); the 07.1/07.4 web_crawl e2e still pass. No schema, no
 migration, no OpenAPI change; drift guard green; `go vet` clean; webcrawl coverage
-79.3%. Remaining EPIC-07 stories (07.6–07.9) are Todo.
+79.3%. Remaining EPIC-07 stories (07.7–07.9) are Todo.
+
+**Delivered (STORY-07.6):** the HTTP API connector engine (`internal/connector/api`,
+ADR-0048, ISSUE-0023, FR-SRC-07) — the third real `Connector.Sync`. **Auth (4 types)**:
+`buildAuthedClient` composes the SSRF-guarded egress client with the source's auth shape
+and the decrypted `connector.Credentials` (secrets NEVER from config, C-4/ADR-0041,
+fails closed, errors name only the missing key): api_key_header, bearer, basic, and
+`oauth2_cc` **reusing `golang.org/x/oauth2/clientcredentials`** (no hand-rolled refresh,
+**no new dependency** — a sub-package of the already-required `x/oauth2`). The guarded
+`*http.Client` is threaded into the oauth2 ctx (`oauth2.HTTPClient`), so the **token
+endpoint AND every API call are SSRF-guarded** (ADR-0044); a test with the real guard
+proves a loopback `token_url` is blocked. **Pagination (5 types)** — none/page/offset/
+cursor/link-header — each with a `max_pages` ceiling (`ponytail:`) so a broken API that
+never signals the end still terminates; `SyncRun.Limiter` politeness + `429`/`503`
+`Retry-After` (delta-seconds or HTTP-date) bounded retry; a 20 MB response cap and
+query-redacted error/log URLs. **JSON paths** are a hand-rolled dot-path evaluator over
+`encoding/json` (`$.data`/`$.next_cursor`/`$.category.name`, `UseNumber` for exact
+numeric cursors) — no dependency, reused by 07.7. The **07.6/07.7 seam** is the single
+`buildDocument` (a placeholder raw-JSON document now; 07.7 adds template/uri/metadata
+mapping and incremental sync), and the config schema already accepts the 07.7 fields.
+One blank import at the composition root registers `api` (NFR-MNT-01); `source_kind`
+already has `api` — no migration, no OpenAPI change. TDD: jsonpath/auth/paginate unit
+tests RED first, then the **4×5 auth×pagination matrix** through the real `Sync`, the
+oauth2 cache-then-refresh test, the SSRF token-endpoint block, and the 429+`Retry-After`
+retry — all httptest/in-process (hermetic; the story touches no DB). `go vet` clean,
+`gofmt` clean, drift guard green; api-package coverage 80.2%. Remaining EPIC-07 stories
+(07.7–07.9) are Todo.
 
 ## EPIC-08 · Retrieval and answering — 🔲 0/39 pts
 

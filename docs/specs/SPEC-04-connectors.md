@@ -281,6 +281,49 @@ Config:
 - Incremental: stores last max `updated_at` in `State`; full sync weekly (configurable) for deletion detection.
 - Rate limiting via `Limiter` and `Retry-After` handling.
 
+### 4a. Realised engine — auth, pagination, rate limiting (STORY-07.6)
+
+`internal/connector/api` implements the API connector's fetch/auth/pagination/
+rate-limit engine (ADR-0048, ISSUE-0023, FR-SRC-07). It registers `api` via `init()`
+(blank-imported at the composition root), so the sources API runs its JSON-Schema
+`ValidateConfig` and config-level `Test`. FR-SRC-07 is split: **07.6** builds the
+engine; the per-item MAPPING (`template`/`uri_template`/metadata JSONPath/`updated_path`)
+and incremental sync (`incremental_param` + cursor in `State`, weekly full sync) are
+**STORY-07.7**.
+
+- **Auth (4 types, secrets from `Credentials`, never config).** `buildAuthedClient`
+  composes the SSRF-guarded egress client with the source's auth shape and the decrypted
+  `connector.Credentials`: `api_key_header` (a configured header name carrying the
+  `api_key` secret; default header `X-API-Key`), `bearer` (`Authorization: Bearer` +
+  `token`), `basic` (`username`/`password`), and `oauth2_cc`. It fails closed on a
+  missing secret and names only the missing *key*, never a value (C-4, ADR-0041).
+- **oauth2_cc reuses `golang.org/x/oauth2/clientcredentials`** (no new dependency — a
+  sub-package of the already-required `x/oauth2`; no hand-rolled refresh). Its
+  `TokenSource` fetches/caches/refreshes the token; the guarded `*http.Client` is threaded
+  in via `context.WithValue(ctx, oauth2.HTTPClient, guarded)`, so the **token endpoint
+  AND every API call dial through the SSRF guard** (ADR-0044, NFR-SEC-04). A test with
+  the real guard proves a loopback `token_url` is blocked (`egress.ErrBlocked`).
+- **Pagination (5 types), each with a `max_pages` ceiling** (`ponytail:` — a broken API
+  that never signals the end still terminates): `none` (one request); `page` (increment
+  a page number until an empty/short page); `offset` (advance offset/limit until a
+  short/empty page); `cursor` (read `cursor_path`, pass as `cursor_param` until absent);
+  `link-header` (follow RFC 5988 `rel="next"`, resolving relative next URLs).
+- **Rate limiting + `Retry-After`.** Each request waits on `SyncRun.Limiter`; a `429`
+  or `503` carrying `Retry-After` (delta-seconds or HTTP-date) is honoured with a bounded
+  retry (5 attempts, delay capped at 60 s).
+- **JSON path extraction.** A hand-rolled dot-path evaluator over `encoding/json`
+  (`$.data`, `$.next_cursor`, `$.category.name`, bare `$` root) — no dependency; decoded
+  with `UseNumber` so a numeric cursor/id keeps exact text. Reused by 07.7's metadata
+  extraction. See ADR-0048 for why not a JSONPath library.
+- **07.6/07.7 seam.** Each item is emitted as a **placeholder** `Document` (raw item
+  JSON as `Text`/`RawJSON`, `id_path`→`ExternalID` namespaced by endpoint) so pagination
+  is testable end to end; 07.7 replaces the single `buildDocument` function with the
+  template/uri/metadata mapping. The config schema already accepts the 07.7 fields.
+- **Hermetic tests.** httptest fixture servers for the auth×pagination matrix (all 4×5
+  combinations through the real `Sync`), the oauth2 cache-then-refresh path, the SSRF
+  token-endpoint block, and the 429+`Retry-After` retry. No DB, no object storage, no
+  network. No migration, no OpenAPI change; coverage 80.2%.
+
 ## 5. Upload connector
 Not scheduled. `POST /v1/documents` writes the file to object storage, attributes it to `source_id` = the tenant's implicit upload source, and enqueues an `ingest_document` job. Re-upload with same filename creates a new version.
 
