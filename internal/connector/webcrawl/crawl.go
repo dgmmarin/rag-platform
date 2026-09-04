@@ -36,11 +36,12 @@ type hostGate struct {
 // crawler is one web-crawl run. It is constructed per Sync; its fields carry the
 // config, the egress seam and injectable clock/sleep for deterministic tests.
 type crawler struct {
-	cfg   config
-	doer  Doer
-	ua    string
-	now   func() time.Time
-	sleep func(time.Duration)
+	cfg      config
+	doer     Doer
+	ua       string
+	maxBytes int // per-response size cap (SPEC-09 §4); tests set a small value
+	now      func() time.Time
+	sleep    func(time.Duration)
 
 	// per-run wiring (set in run)
 	store   PageStore
@@ -67,15 +68,16 @@ type crawler struct {
 // newCrawler builds a crawler with defaults; tests override now/sleep and the Doer.
 func newCrawler(cfg config, doer Doer) *crawler {
 	return &crawler{
-		cfg:     cfg,
-		doer:    doer,
-		ua:      userAgent,
-		now:     time.Now,
-		sleep:   func(d time.Duration) { time.Sleep(d) },
-		visited: map[string]bool{},
-		emitted: map[string]bool{},
-		robots:  map[string]*robotsRules{},
-		gates:   map[string]*hostGate{},
+		cfg:      cfg,
+		doer:     doer,
+		ua:       userAgent,
+		maxBytes: maxResponseBytes,
+		now:      time.Now,
+		sleep:    func(d time.Duration) { time.Sleep(d) },
+		visited:  map[string]bool{},
+		emitted:  map[string]bool{},
+		robots:   map[string]*robotsRules{},
+		gates:    map[string]*hostGate{},
 	}
 }
 
@@ -235,7 +237,15 @@ func (c *crawler) process(ctx context.Context, it item, sink connector.Sink) ([]
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	// Size cap (SPEC-09 §4: "max response size 20 MB"). Read at most cap+1 bytes so
+	// an over-cap body is REJECTED rather than silently truncated into a half-parsed
+	// document; capping the read also bounds memory against a hostile/huge response.
+	limit := int64(c.maxBytes)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if int64(len(body)) > limit {
+		c.recordError(ctx, it, resp.StatusCode, "response exceeds size cap")
+		return nil, nil
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		c.recordError(ctx, it, resp.StatusCode, "http status "+resp.Status)
 		return nil, nil

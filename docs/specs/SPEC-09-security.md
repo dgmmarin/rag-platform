@@ -68,6 +68,21 @@ end against real Postgres; router wiring is STORY-04.1.
 - Allowlist enforced on scheme+host+path prefix; max response size 20 MB; timeouts 30 s.
 - Outbound egress from workers ideally via a proxy with the same deny rules.
 
+The IP-layer guard is implemented by `internal/egress` (STORY-07.2, NFR-SEC-04,
+ADR-0044): a `net.Dialer.Control` hook validates the concrete resolved IP at connect
+time, so a hostname that resolves — or **rebinds** — to a private address is refused
+(TOCTOU/DNS-rebinding safe), and because each redirect hop re-dials through the same
+guarded transport the check re-runs per hop for free. `IsBlocked` classifies loopback,
+RFC1918, IPv6 unique-local `fc00::/7`, link-local (including the `169.254.169.254`
+metadata IP), multicast, IPv4 broadcast, unspecified and IPv4-mapped-private addresses
+over stdlib `net.IP`, allowing only global unicast (fail closed). The guard is the
+web-crawl connector's **fail-closed default** egress (tests inject a permissive Doer),
+and the package is reused by the sitemap (07.5) and HTTP API (07.6) connectors. The
+scheme+host+path-prefix allowlist is the crawler's **frontier** gate (STORY-07.1); the
+two layers compose as defence-in-depth (ADR-0044 §4). The 20 MB cap is enforced by
+rejecting an over-cap body in the crawler read path; the 30 s timeout is on the client.
+The egress *proxy* deployment remains an operational option.
+
 ## 5. Provider data handling
 - `settings.providers_allowed` gates which embedding/LLM providers a tenant's data may be sent to.
 - Provider requests include no tenant identifiers beyond what the provider needs; logs redact prompt content above a configurable size unless debug is enabled for a tenant by a platform admin (audited).

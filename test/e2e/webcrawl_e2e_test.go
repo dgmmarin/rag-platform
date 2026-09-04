@@ -140,6 +140,11 @@ func TestWebCrawlPersistsAndResumes(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
+	// Sync's egress default is the SSRF guard (STORY-07.2), which blocks the loopback
+	// httptest server. Inject the server's permissive client so the e2e reaches it —
+	// the guard itself is unit-tested in internal/egress and internal/connector/webcrawl.
+	webcrawl.SetEgressDoerForTest(srv.Client())
+
 	sourceID := uuid.New()
 	store := webcrawl.NewTenantPageStore(db, sourceID)
 

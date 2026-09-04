@@ -150,7 +150,7 @@ func (webCrawlConnector) Sync(ctx context.Context, run connector.SyncRun, sink c
 	if err := validateSemantics(c); err != nil {
 		return connector.Stats{}, err
 	}
-	cr := newCrawler(c.withDefaults(), defaultDoer())
+	cr := newCrawler(c.withDefaults(), syncDoer)
 	return cr.run(ctx, run, sink)
 }
 

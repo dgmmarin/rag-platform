@@ -19,13 +19,13 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
-| EPIC-07 | Web crawl, sitemap and API connectors | 39 | 8 | 🚧 In progress |
+| EPIC-07 | Web crawl, sitemap and API connectors | 39 | 11 | 🚧 In progress |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **145** | **43%** |
+| **Total** | | **337** | **148** | **44%** |
 
 ---
 
@@ -969,12 +969,12 @@ ISSUE-0017. _(Pre-existing, unrelated: `internal/cli` unit tests fail only under
 port had to be published out of band to run the e2e; no gated package's behaviour
 regressed and no new lint finding was introduced.)_
 
-## EPIC-07 · Web crawl, sitemap and API connectors — 🚧 8/39 pts
+## EPIC-07 · Web crawl, sitemap and API connectors — 🚧 11/39 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-07.1 | Web crawler core | 8 | ✅ Done | FR-SRC-03/04, SPEC-04 §2, ADR-0043 |
-| STORY-07.2 | SSRF protection and egress rules | 3 | 🔲 Todo | NFR-SEC-04, SPEC-09 §4 |
+| STORY-07.2 | SSRF protection and egress rules | 3 | ✅ Done | NFR-SEC-04, SPEC-09 §4, ADR-0044 |
 | STORY-07.3 | HTML content extraction quality | 5 | 🔲 Todo | FR-SRC-05 |
 | STORY-07.4 | Conditional fetch and change detection | 3 | 🔲 Todo | FR-ING-02 |
 | STORY-07.5 | Sitemap connector | 3 | 🔲 Todo | FR-SRC-06 |
@@ -994,7 +994,22 @@ de-dup (no `purell`/`temoto` dependency). Crawl state persists to `crawl_pages` 
 ADR-0003) so an interrupted crawl **resumes** — proven by an e2e over the real tenant
 DB. Egress (`Doer`, 07.2), extraction (raw `Body`, 07.3) and conditional-fetch state
 (etag/last-modified/hash persisted, 07.4) are left as clean seams. No migration, no
-OpenAPI change; coverage 78.2%. Remaining EPIC-07 stories (07.2–07.9) are Todo.
+OpenAPI change; coverage 78.2%.
+
+**Delivered (STORY-07.2):** the SSRF egress guard (`internal/egress`, ADR-0044,
+ISSUE-0019) closing the STORY-07.1 `Doer` seam (NFR-SEC-04, SPEC-09 §4). Enforcement
+is a `net.Dialer.Control` hook that validates the concrete resolved IP at connect —
+so DNS rebinding/TOCTOU is structurally closed and every redirect hop re-validates for
+free. `IsBlocked` refuses loopback, RFC1918, IPv6 ULA `fc00::/7`, link-local (incl.
+the `169.254.169.254` metadata IP), multicast, broadcast, unspecified and IPv4-mapped
+private addresses over stdlib `net.IP` (no dependency), allowing only global unicast.
+The guard is the connector's **fail-closed default** (`defaultDoer` → `egress.GuardedClient`;
+tests inject a permissive Doer via `SetEgressDoerForTest`), so production is safe with
+no `internal/cli` change and the sitemap (07.5)/API (07.6) connectors can reuse the
+package. The 20 MB response cap is enforced by rejection in the crawler read path; the
+30 s timeout is on the client. A table test covers **each** blocked class; a
+redirect-to-metadata test proves per-hop blocking. No migration, no OpenAPI change;
+coverage 82.1% (egress) / 79.9% (webcrawl). Remaining EPIC-07 stories (07.3–07.9) are Todo.
 
 ## EPIC-08 · Retrieval and answering — 🔲 0/39 pts
 

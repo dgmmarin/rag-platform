@@ -273,10 +273,10 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] URL normalisation, canonical handling
 - [x] crawl state persisted; resumable
 
-### STORY-07.2 — SSRF protection and egress rules (NFR-SEC-04, SPEC-09 §4)
-- [ ] private ranges blocked incl. on redirects and DNS rebinding
-- [ ] tests for each class
-- [ ] size/timeout limits
+### STORY-07.2 — SSRF protection and egress rules (NFR-SEC-04, SPEC-09 §4) — ✅ Done (ADR-0044, ISSUE-0019)
+- [x] private ranges blocked incl. on redirects and DNS rebinding (`net.Dialer.Control` hook on the resolved IP; `internal/egress`)
+- [x] tests for each class (`TestIsBlockedPerClass` table + redirect-to-metadata test)
+- [x] size/timeout limits (20 MB rejected in the read path; 30 s client timeout)
 
 ### STORY-07.3 — HTML content extraction quality (FR-SRC-05)
 - [ ] include/exclude selectors; readability fallback; title extraction

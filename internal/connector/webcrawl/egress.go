@@ -3,48 +3,51 @@ package webcrawl
 import (
 	"net/http"
 	"time"
+
+	"github.com/rag-platform/ragctl/internal/egress"
 )
 
 // Doer is the HTTP egress seam the crawler fetches through. It is the ENTIRE
 // surface the crawler uses to reach the network, so hardening egress needs no
 // change to crawl logic.
 //
-// EGRESS/SSRF SEAM (STORY-07.2): the SSRF guard — resolve DNS and reject
-// private/loopback/link-local/metadata ranges, re-validated on every redirect hop
-// (SPEC-09 §4, NFR-SEC-04) — is a later story. It will be installed by replacing
-// this Doer (or the *http.Transport it wraps) with a guarded one; the crawler is
-// structured so that swap touches nothing here.
-//
-// ponytail: defaultDoer permits loopback so the httptest-based unit tests can
-// reach 127.0.0.1. The 07.2 guard MUST block loopback in production; the upgrade
-// path is a build/config-selected guarded transport injected at the composition
-// root, with tests overriding it with a permissive one.
+// EGRESS/SSRF SEAM (STORY-07.2, SPEC-09 §4, NFR-SEC-04): the SSRF guard lives in
+// internal/egress. defaultDoer wires egress.GuardedClient, whose net.Dialer.Control
+// hook rejects private/loopback/link-local/metadata ranges AFTER DNS resolution on
+// the concrete dialed IP — TOCTOU/DNS-rebinding safe — and re-validates every
+// redirect hop (each hop re-dials through the same guarded transport). The guard is
+// the connector's fail-closed default: production Sync blocks private ranges with no
+// further wiring. See ADR-0044.
 type Doer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
 // Egress limits applied to every fetch (SPEC-09 §4: "max response size 20 MB;
-// timeouts 30 s"). The size cap is enforced in the crawler's read path; the
-// timeout is on the client here.
+// timeouts 30 s"). The timeout is on the guarded client; the size cap is enforced
+// in the crawler's read path (crawl.go: an over-cap body is rejected, not parsed,
+// so a huge response cannot exhaust memory).
 const (
 	maxResponseBytes = 20 << 20 // 20 MB
 	fetchTimeout     = 30 * time.Second
 	maxRedirects     = 10
 )
 
-// defaultDoer returns the crawler's default HTTP client: bounded timeout and a
-// redirect cap. STORY-07.2 replaces the Transport's DialContext with an SSRF-
-// guarded dialer (each redirect hop re-dials, so the guard re-validates per hop
-// automatically).
+// defaultDoer returns the crawler's production egress client: the SSRF-guarded
+// transport (internal/egress) with the 30 s request timeout and the redirect cap.
+// It is fail-closed — a real binary blocks private ranges without any composition-
+// root wiring. httptest-based e2e tests, which must reach a 127.0.0.1 server,
+// install a permissive Doer via SetEgressDoerForTest.
 func defaultDoer() Doer {
-	return &http.Client{
-		Timeout: fetchTimeout,
-		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
-				return http.ErrUseLastResponse
-			}
-			return nil
-		},
-		// Transport left as http.DefaultTransport; 07.2 swaps in the guarded one.
-	}
+	return egress.GuardedClient(fetchTimeout, maxRedirects)
 }
+
+// syncDoer is the egress client the connector's Sync uses. It defaults to the
+// SSRF-guarded client (fail-closed, SPEC-09 §4); tests override it with a permissive
+// Doer via SetEgressDoerForTest. Unit crawl tests bypass it entirely by building the
+// crawler with newCrawler(cfg, doer) directly.
+var syncDoer = defaultDoer()
+
+// SetEgressDoerForTest overrides the egress client Sync uses so httptest-based e2e
+// tests can reach a loopback server past the default SSRF guard. Production never
+// calls it. Not safe for concurrent use; call it once from test setup.
+func SetEgressDoerForTest(d Doer) { syncDoer = d }
