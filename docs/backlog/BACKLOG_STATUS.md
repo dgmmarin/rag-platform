@@ -19,7 +19,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
-| EPIC-07 | Web crawl, sitemap and API connectors | 39 | 37 | 🚧 In progress |
+| EPIC-07 | Web crawl, sitemap and API connectors | 39 | 39 | ✅ Complete |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
@@ -969,7 +969,7 @@ ISSUE-0017. _(Pre-existing, unrelated: `internal/cli` unit tests fail only under
 port had to be published out of band to run the e2e; no gated package's behaviour
 regressed and no new lint finding was introduced.)_
 
-## EPIC-07 · Web crawl, sitemap and API connectors — 🚧 37/39 pts
+## EPIC-07 · Web crawl, sitemap and API connectors — ✅ 39/39 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -981,7 +981,7 @@ regressed and no new lint finding was introduced.)_
 | STORY-07.6 | HTTP API connector: auth and pagination | 8 | ✅ Done | FR-SRC-07, SPEC-04 §4/§4a, ADR-0048 |
 | STORY-07.7 | HTTP API connector: templating and incremental sync | 5 | ✅ Done | FR-SRC-07/08, SPEC-04 §4/§4b, ADR-0049 |
 | STORY-07.8 | Source "test connection" for all kinds | 2 | ✅ Done | FR-SRC-14, NFR-SEC-04, SPEC-04 §1b, ADR-0050 |
-| STORY-07.9 | Connector documentation | 2 | 🔲 Todo | — |
+| STORY-07.9 | Connector documentation | 2 | ✅ Done | SPEC-04, ISSUE-0027 |
 
 **Delivered (STORY-07.1):** the `web_crawl` connector and crawl core
 (`internal/connector/webcrawl`, ADR-0043, ISSUE-0018) — the first real
@@ -1169,8 +1169,19 @@ fix wraps a failed `Connector.Test` in `sources.ValidationError` so `POST
 actionable message (422 rejected for consistency with the create path); the seam sentinels
 (unregistered kind → 404 seam, unknown source → 404) and the credential decrypt/zero
 lifecycle are unchanged, and the `sourceTest` OpenAPI operation gains a 400 response
-(drift/contract guards green). This completes FR-SRC-14 end-to-end. Remaining EPIC-07 story
-(07.9) is Todo.
+(drift/contract guards green). This completes FR-SRC-14 end-to-end.
+
+**Delivered (STORY-07.9):** tenant-admin-facing connector reference docs
+(`docs/connectors/`, ISSUE-0027) — an index (`README.md`) plus one page per kind
+(`upload`, `web_crawl`, `sitemap`, `api`), each with a config reference AND a
+copy-pasteable example grounded in the code as built (config structs / JSON Schemas /
+defaults, credential key names, egress and size/timeout/retry limits). Two doc-vs-code
+gaps were documented as "Spec-vs-code note" rather than changed: the web_crawl
+`withDefaults` values differ from SPEC-04 §2's illustrative example (`3/1000/0/4` vs
+`5/5000/500/8`), and `settings.limits.max_pages_per_crawl` exists in tenant settings
+but is not yet consulted by the crawler (the effective cap is per-source `max_pages`).
+Docs-only: `go build ./...` green, no code/schema/OpenAPI/migration change. **EPIC-07
+is complete (39/39 pts).**
 
 ## EPIC-08 · Retrieval and answering — 🔲 0/39 pts
 

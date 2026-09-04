@@ -311,8 +311,8 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] actionable + sanitised errors via a shared `egress.ClassifyError(err, host)` (SSRF-block / DNS / timeout / refused / generic) that never echoes the raw error or the URL query (C-4); SSRF guard enforced on every probe (NFR-SEC-04)
 - [x] TDD RED-first, hermetic (httptest + the real egress guard for SSRF-block); no migration, no OpenAPI change, no new dependency
 
-### STORY-07.9 — Connector documentation
-- [ ] `docs/connectors/*.md` with config reference and examples per kind
+### STORY-07.9 — Connector documentation — ✅ Done (ISSUE-0027)
+- [x] `docs/connectors/*.md` with config reference and examples per kind — index (`README.md`) + one page per kind (`upload`, `web_crawl`, `sitemap`, `api`), each grounded in the code as built; two doc-vs-code gaps documented as notes (web_crawl defaults vs SPEC example; `max_pages_per_crawl` not wired). Docs-only: `go build ./...` green, no code/schema/OpenAPI/migration change
 
 ---
 
