@@ -102,6 +102,41 @@ Behaviour:
 - Non-HTML responses (PDF etc.) within allowlist are passed as `Body` for the parsing pipeline.
 - `render_js=true` (v2) routes through a headless-browser service.
 
+### 2a. Realised crawl core (STORY-07.1)
+
+`internal/connector/webcrawl` implements the FIRST real `Connector.Sync` (ADR-0043).
+It registers `web_crawl` via `init()` (blank-imported at the composition root), so
+the sources API runs its JSON-Schema `ValidateConfig` and config-level `Test`.
+
+- **BFS + limits.** Level-synchronous breadth-first crawl: depth *d* URLs fetched
+  concurrently (bounded by `concurrency` via `errgroup`), their links enqueued at
+  *d+1*, barrier, advance — so `max_depth` is exact and the `max_pages` cap (an
+  atomic pre-check) admits at most N fetches whatever the concurrency. Allow (prefix)
+  and deny (substring) gate frontier expansion; with no `allow` configured the crawl
+  stays on the seed hosts. A per-page fetch/parse failure is recorded and swallowed
+  (the crawl continues); only context cancellation aborts.
+- **Politeness.** robots.txt is fetched once per host and honoured (a small
+  hand-rolled parser; allow-all on error/non-2xx); the `User-Agent` names the platform
+  and a contact URL. Per-host delay is enforced by a `hostGate` (mutex held across the
+  `delay_ms` sleep) in addition to `SyncRun.Limiter` when the worker supplies one.
+- **Normalisation + canonical.** URLs are normalised (lowercase scheme/host, drop
+  default port + fragment, strip `utm_*`/known trackers, sort query) and de-duplicated;
+  `<link rel=canonical>` becomes the Document `ExternalID`, and URLs sharing a
+  canonical emit one Document.
+- **State + resume.** Crawl state persists to `crawl_pages` through a `PageStore`
+  reached as a `CrawlState` capability of `SyncRun.State` (`NewTenantPageStore`, a
+  tenant.DB adapter — the only path to tenant data, ADR-0003; no `tenant_id`, no
+  cross-DB FK). Discovered URLs are stored *pending* (`last_fetched_at` NULL) at their
+  depth; fetched URLs record `last_fetched_at`, status, ETag, Last-Modified and
+  content hash. A re-run skips already-fetched URLs and continues the pending
+  frontier, so an interrupted crawl **resumes**.
+- **Seams left for the rest of EPIC-07 (ADR-0043).** *Egress/SSRF (07.2):* every fetch
+  goes through the injectable `Doer`; the default permits loopback for tests, and 07.2
+  drops the SSRF-guarded transport in with no crawl-logic change. *Extraction (07.3):*
+  pages are emitted as raw `Body`; only title/canonical/links are parsed here.
+  *Conditional fetch (07.4):* ETag/Last-Modified/content-hash are persisted but no
+  304/HEAD-skip is done yet.
+
 ## 3. Sitemap connector
 Same as web crawl but frontier seeded from sitemap(s) (including sitemap index), no link following, `lastmod` used for incremental sync.
 

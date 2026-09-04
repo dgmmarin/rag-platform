@@ -267,11 +267,11 @@ breakdown, tasks are derived from the acceptance criteria.
 
 ## EPIC-07 · Web crawl, sitemap and API connectors
 
-### STORY-07.1 — Web crawler core (FR-SRC-03/04, SPEC-04 §2)
-- [ ] BFS with depth/pages limits, allow/deny rules, robots.txt
-- [ ] per-host delay, concurrency
-- [ ] URL normalisation, canonical handling
-- [ ] crawl state persisted; resumable
+### STORY-07.1 — Web crawler core (FR-SRC-03/04, SPEC-04 §2) — ✅ Done (ADR-0043, ISSUE-0018)
+- [x] BFS with depth/pages limits, allow/deny rules, robots.txt
+- [x] per-host delay, concurrency
+- [x] URL normalisation, canonical handling
+- [x] crawl state persisted; resumable
 
 ### STORY-07.2 — SSRF protection and egress rules (NFR-SEC-04, SPEC-09 §4)
 - [ ] private ranges blocked incl. on redirects and DNS rebinding

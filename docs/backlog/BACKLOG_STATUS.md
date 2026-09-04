@@ -19,13 +19,13 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-04 | Public API surface | 21 | 21 | ✅ Complete |
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
-| EPIC-07 | Web crawl, sitemap and API connectors | 39 | 0 | 🔲 Todo |
+| EPIC-07 | Web crawl, sitemap and API connectors | 39 | 8 | 🚧 In progress |
 | EPIC-08 | Retrieval and answering | 39 | 0 | 🔲 Todo |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **137** | **41%** |
+| **Total** | | **337** | **145** | **43%** |
 
 ---
 
@@ -969,11 +969,11 @@ ISSUE-0017. _(Pre-existing, unrelated: `internal/cli` unit tests fail only under
 port had to be published out of band to run the e2e; no gated package's behaviour
 regressed and no new lint finding was introduced.)_
 
-## EPIC-07 · Web crawl, sitemap and API connectors — 🔲 0/39 pts
+## EPIC-07 · Web crawl, sitemap and API connectors — 🚧 8/39 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
-| STORY-07.1 | Web crawler core | 8 | 🔲 Todo | FR-SRC-03/04, SPEC-04 §2 |
+| STORY-07.1 | Web crawler core | 8 | ✅ Done | FR-SRC-03/04, SPEC-04 §2, ADR-0043 |
 | STORY-07.2 | SSRF protection and egress rules | 3 | 🔲 Todo | NFR-SEC-04, SPEC-09 §4 |
 | STORY-07.3 | HTML content extraction quality | 5 | 🔲 Todo | FR-SRC-05 |
 | STORY-07.4 | Conditional fetch and change detection | 3 | 🔲 Todo | FR-ING-02 |
@@ -982,6 +982,19 @@ regressed and no new lint finding was introduced.)_
 | STORY-07.7 | HTTP API connector: templating and incremental sync | 5 | 🔲 Todo | FR-SRC-07/08 |
 | STORY-07.8 | Source "test connection" for all kinds | 2 | 🔲 Todo | FR-SRC-14 |
 | STORY-07.9 | Connector documentation | 2 | 🔲 Todo | — |
+
+**Delivered (STORY-07.1):** the `web_crawl` connector and crawl core
+(`internal/connector/webcrawl`, ADR-0043, ISSUE-0018) — the first real
+`Connector.Sync`. Level-synchronous BFS with `max_depth`/`max_pages` limits (the
+cap is an atomic pre-check that actually stops the crawl), allow(prefix)/deny(substring)
+frontier gating, bounded concurrency, robots.txt honoured per host, per-host delay +
+`SyncRun.Limiter`, hand-rolled URL normalisation and `<link rel=canonical>`→ExternalID
+de-dup (no `purell`/`temoto` dependency). Crawl state persists to `crawl_pages` via a
+`CrawlState` capability on `SyncRun.State` (`NewTenantPageStore`, a tenant.DB adapter,
+ADR-0003) so an interrupted crawl **resumes** — proven by an e2e over the real tenant
+DB. Egress (`Doer`, 07.2), extraction (raw `Body`, 07.3) and conditional-fetch state
+(etag/last-modified/hash persisted, 07.4) are left as clean seams. No migration, no
+OpenAPI change; coverage 78.2%. Remaining EPIC-07 stories (07.2–07.9) are Todo.
 
 ## EPIC-08 · Retrieval and answering — 🔲 0/39 pts
 
