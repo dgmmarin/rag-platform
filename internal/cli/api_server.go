@@ -20,6 +20,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/cp/usage"
 	"github.com/rag-platform/ragctl/internal/crypto"
 	"github.com/rag-platform/ragctl/internal/documents"
+	"github.com/rag-platform/ragctl/internal/llm"
 	// Register the upload connector (kind "upload") into the default registry so
 	// the sources API's config-validation / test-connection seams resolve it and
 	// the "upload" kind is no longer an unregistered seam (SPEC-04 §5, STORY-06.3).
@@ -181,6 +182,22 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	// layer on later (08.3/08.5). ---
 	retrieveSvc := retrieve.NewService(resolver, settingsSvc,
 		retrieve.KeyedEmbedderFactory{APIKey: cfg.EmbeddingAPIKey, BaseURL: cfg.EmbeddingBaseURL})
+	// Reranking (STORY-08.3, SPEC-06 §3, FR-RET-03). Off by default per tenant
+	// (settings.reranker.enabled); when on, the fused top_n are reranked (Cohere or
+	// an LLM listwise call) and reordered by reranker score. The Cohere key is the
+	// platform COHERE_API_KEY (fail-closed on providers_allowed inside rerank.New);
+	// the LLM reranker reuses the tenant's llm.Provider built from the per-provider
+	// LLM keys (allowlist enforced by llm.New). Any reranker failure falls back to
+	// fused order — the query never fails on it (NFR-REL-04).
+	retrieveSvc.Reranker = retrieve.KeyedRerankerFactory{
+		CohereAPIKey:  cfg.CohereAPIKey,
+		CohereBaseURL: cfg.CohereBaseURL,
+		LLM: llm.Factory{Keys: llm.Keys{
+			Anthropic:     cfg.AnthropicAPIKey,
+			OpenAI:        cfg.OpenAIAPIKey,
+			OpenAIBaseURL: cfg.OpenAIBaseURL,
+		}},
+	}
 	retrieveHandlers := retrieve.NewHandlers(retrieveSvc)
 
 	// --- Rate limiting (per key + per tenant, credential-keyed). ---

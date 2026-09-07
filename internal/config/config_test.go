@@ -40,6 +40,25 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 }
 
+// TestLoadRerankerKey proves the Cohere reranker key + base URL are read (STORY-08.3,
+// FR-RET-03). They are confidential and never logged (C-4).
+func TestLoadRerankerKey(t *testing.T) {
+	setEnv(t, map[string]string{
+		"COHERE_API_KEY":  "co-secret",
+		"COHERE_BASE_URL": "https://rerank.internal",
+	})
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CohereAPIKey != "co-secret" {
+		t.Fatalf("CohereAPIKey = %q", cfg.CohereAPIKey)
+	}
+	if cfg.CohereBaseURL != "https://rerank.internal" {
+		t.Fatalf("CohereBaseURL = %q", cfg.CohereBaseURL)
+	}
+}
+
 // TestDefaults proves sensible defaults when env is unset: local KMS, version 1.
 func TestDefaults(t *testing.T) {
 	// Ensure a clean environment for the keys under test. An empty value is

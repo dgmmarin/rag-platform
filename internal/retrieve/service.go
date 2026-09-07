@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/rag-platform/ragctl/internal/ingest/embed"
+	"github.com/rag-platform/ragctl/internal/llm"
+	"github.com/rag-platform/ragctl/internal/rerank"
 	"github.com/rag-platform/ragctl/internal/tenant"
 )
 
@@ -28,6 +31,13 @@ import (
 // a fixed ceiling, not a per-tenant setting; lift it into settings.retrieval if a
 // tenant ever needs a larger page.
 const defaultMaxTopK = 100
+
+// defaultRerankTopN is the fused-candidate count sent to the reranker when a
+// tenant enables reranking without setting reranker.top_n (mirrors the
+// settings_defaults.json default). The service over-fetches this many fused
+// results (SPEC-06 §1: rerank top_n → take final_k), reorders them, then truncates
+// to final_k.
+const defaultRerankTopN = 20
 
 // Errors surfaced by Search, all checkable with errors.Is so the HTTP layer maps
 // them to the SPEC-07 §1 envelope without string matching.
@@ -55,6 +65,22 @@ type Settings struct {
 	KVector           int
 	KText             int
 	FinalK            int
+
+	// Reranker (SPEC-06 §3, STORY-08.3). Enabled is the per-tenant toggle (default
+	// off); Provider selects cohere|llm; Model is the Cohere rerank model; TopN is
+	// how many fused results to rerank. RerankLLMModel is the optional
+	// reranker.llm_model override for the LLM reranker (absent → reuse LLMModel).
+	RerankEnabled  bool
+	RerankProvider string
+	RerankModel    string
+	RerankTopN     int
+	RerankLLMModel string
+
+	// LLM (settings.llm) — the LLM reranker reuses the tenant's configured LLM
+	// provider/model and model allowlist, built through the llm.Factory.
+	LLMProvider      string
+	LLMModel         string
+	LLMModelsAllowed []string
 }
 
 // SettingsSource returns a tenant's resolved settings document (SPEC-02 §5).
@@ -70,6 +96,16 @@ type SettingsSource interface {
 // KeyedEmbedderFactory.
 type EmbedderFactory interface {
 	Embedder(ctx context.Context, s Settings) (embed.Embedder, error)
+}
+
+// RerankerFactory builds a Reranker for a tenant's settings (SPEC-06 §3,
+// STORY-08.3). It returns a nil Reranker (no error) when reranking is disabled, so
+// the service simply skips reranking. A build error (e.g. a missing key,
+// fail-closed) is treated by the service as a reranker failure — logged, then
+// fallback to fused order (FR-RET-03 AC). Tests inject a fake; production wires
+// KeyedRerankerFactory.
+type RerankerFactory interface {
+	Reranker(ctx context.Context, s Settings) (rerank.Reranker, error)
 }
 
 // Request is one /v1/retrieve call: the query text, optional filters (FR-RET-02)
@@ -91,6 +127,10 @@ type Service struct {
 	// package-level Retrieve; tests inject a fake so Search is exercised without a
 	// database (the ranking SQL itself is covered by the e2e suite).
 	Retriever func(ctx context.Context, db *tenant.DB, p Params) ([]Result, error)
+	// Reranker builds the per-tenant reranker (STORY-08.3, SPEC-06 §3). Nil means
+	// reranking is never applied (the /v1/retrieve default before this story). When
+	// set, it is consulted per request and honoured only if settings.reranker.enabled.
+	Reranker RerankerFactory
 	// MaxTopK overrides the top_k ceiling; 0 uses defaultMaxTopK.
 	MaxTopK int
 }
@@ -131,19 +171,122 @@ func (s *Service) Search(ctx context.Context, tid tenant.ID, req Request) ([]Res
 		return nil, fmt.Errorf("%w: provider returned no vector", ErrEmbedding)
 	}
 
+	// Reranking (SPEC-06 §3, STORY-08.3): when enabled, the hybrid query must
+	// over-fetch top_n fused candidates (not just final_k) so the reranker reorders
+	// the wider set; final_k is applied AFTER reranking. min_score/grounding refusal
+	// is STORY-08.5 — not applied here.
+	finalK := s.finalK(req.TopK, st.FinalK)
+	rr, topN := s.buildReranker(ctx, tid, st)
+	fetchK := finalK
+	if rr != nil && topN > fetchK {
+		fetchK = topN
+	}
+
 	p := Params{
 		Embedding: out.Vectors[0],
 		QueryText: req.Query,
 		KVector:   st.KVector,
 		KText:     st.KText,
-		K:         s.finalK(req.TopK, st.FinalK),
+		K:         fetchK,
 		Filters:   req.Filters,
 	}
 	retrieve := s.Retriever
 	if retrieve == nil {
 		retrieve = Retrieve
 	}
-	return retrieve(ctx, db, p)
+	results, err := retrieve(ctx, db, p)
+	if err != nil {
+		return nil, err
+	}
+
+	if rr != nil {
+		results = s.applyRerank(ctx, tid, rr, req.Query, results, topN)
+	}
+	if len(results) > finalK {
+		results = results[:finalK]
+	}
+	return results, nil
+}
+
+// buildReranker resolves the tenant's reranker (SPEC-06 §3). It returns (nil, 0)
+// when reranking is disabled or no factory is wired, or when the factory fails
+// (fail-closed build error, e.g. a missing key) — in which case it logs and the
+// caller proceeds with the fused order (FR-RET-03 AC, NFR-REL-04). The second
+// return is the top_n candidate count to over-fetch and rerank.
+func (s *Service) buildReranker(ctx context.Context, tid tenant.ID, st Settings) (rerank.Reranker, int) {
+	if s.Reranker == nil || !st.RerankEnabled {
+		return nil, 0
+	}
+	rr, err := s.Reranker.Reranker(ctx, st)
+	if err != nil {
+		// The reranker errors carry only sanitised provider status, never query or
+		// content (C-4); safe to log at warn. The query still succeeds on fused order.
+		slog.WarnContext(ctx, "reranker unavailable; falling back to fused order",
+			"tenant", tid.String(), "provider", st.RerankProvider, "err", err)
+		return nil, 0
+	}
+	if rr == nil { // factory reported the reranker disabled
+		return nil, 0
+	}
+	topN := st.RerankTopN
+	if topN <= 0 {
+		topN = defaultRerankTopN
+	}
+	return rr, topN
+}
+
+// applyRerank sends the top headN fused results to the reranker and reorders them
+// by reranker score (SPEC-06 §3). ANY reranker failure falls back to the original
+// fused order (the query never fails on it, FR-RET-03 AC). Results beyond headN
+// (only when final_k > top_n) keep their fused position.
+func (s *Service) applyRerank(ctx context.Context, tid tenant.ID, rr rerank.Reranker, query string, results []Result, topN int) []Result {
+	headN := topN
+	if headN > len(results) {
+		headN = len(results)
+	}
+	if headN == 0 {
+		return results
+	}
+	docs := make([]rerank.Doc, headN)
+	for i := 0; i < headN; i++ {
+		docs[i] = rerank.Doc{ID: results[i].ChunkID, Text: results[i].Content}
+	}
+	scored, err := rr.Rerank(ctx, query, docs)
+	if err != nil {
+		slog.WarnContext(ctx, "reranker failed; falling back to fused order",
+			"tenant", tid.String(), "err", err)
+		return results
+	}
+	return reorderByScore(results, scored, headN)
+}
+
+// reorderByScore rebuilds the result slice in the reranker's returned order,
+// replacing each reranked result's Score with its reranker relevance score
+// (SPEC-06 §3: "min_score then applies to reranker score"). Head results the
+// reranker omitted are appended after the ranked ones (defence — rerank providers
+// return every doc); the untouched tail (beyond headN) follows unchanged.
+func reorderByScore(results []Result, scored []rerank.Scored, headN int) []Result {
+	byID := make(map[string]Result, headN)
+	for _, r := range results[:headN] {
+		byID[r.ChunkID] = r
+	}
+	out := make([]Result, 0, len(results))
+	used := make(map[string]bool, headN)
+	for _, sc := range scored {
+		r, ok := byID[sc.ID]
+		if !ok || used[sc.ID] {
+			continue
+		}
+		used[sc.ID] = true
+		r.Score = sc.Score
+		out = append(out, r)
+	}
+	for _, r := range results[:headN] {
+		if !used[r.ChunkID] {
+			out = append(out, r)
+		}
+	}
+	return append(out, results[headN:]...)
 }
 
 // open resolves the tenant to its *tenant.DB, mapping the resolver's lifecycle
@@ -207,6 +350,24 @@ func parseSettings(doc map[string]any) Settings {
 			}
 		}
 	}
+	if rk, ok := doc["reranker"].(map[string]any); ok {
+		s.RerankEnabled, _ = rk["enabled"].(bool)
+		s.RerankProvider, _ = rk["provider"].(string)
+		s.RerankModel, _ = rk["model"].(string)
+		s.RerankTopN = toInt(rk["top_n"])
+		s.RerankLLMModel, _ = rk["llm_model"].(string)
+	}
+	if l, ok := doc["llm"].(map[string]any); ok {
+		s.LLMProvider, _ = l["provider"].(string)
+		s.LLMModel, _ = l["model"].(string)
+		if ma, ok := l["models_allowed"].([]any); ok {
+			for _, a := range ma {
+				if m, ok := a.(string); ok {
+					s.LLMModelsAllowed = append(s.LLMModelsAllowed, m)
+				}
+			}
+		}
+	}
 	return s
 }
 
@@ -247,4 +408,56 @@ func (f KeyedEmbedderFactory) Embedder(_ context.Context, s Settings) (embed.Emb
 		APIKey:   f.APIKey,
 		BaseURL:  f.BaseURL,
 	})
+}
+
+// KeyedRerankerFactory is the production RerankerFactory (SPEC-06 §3, STORY-08.3).
+// It builds the tenant's reranker from settings.reranker: the Cohere reranker
+// authenticates with the platform CohereAPIKey (fail-closed on the tenant's
+// providers_allowed and on a missing key, inside rerank.New); the LLM reranker
+// reuses the tenant's configured LLM provider, built through the llm.Factory (which
+// enforces the provider + model allowlists, SPEC-09 §2), using the
+// reranker.llm_model override when set, else settings.llm.model. A disabled
+// reranker yields a nil Reranker (no rerank). Keys are never logged (C-4).
+//
+// ponytail: one Cohere key per deployment (C-5 single-region-per-tenant), mirroring
+// KeyedEmbedderFactory; make it a provider→key map only for heterogeneous
+// deployments.
+type KeyedRerankerFactory struct {
+	CohereAPIKey  string
+	CohereBaseURL string
+	// LLM builds the tenant's llm.Provider for the LLM-based reranker. Its zero value
+	// still builds providers, but a nil per-provider key makes that provider fail
+	// with a clean auth error (which the service turns into a fallback).
+	LLM llm.Factory
+}
+
+// Reranker builds the tenant's reranker, or (nil, nil) when reranking is disabled.
+func (f KeyedRerankerFactory) Reranker(_ context.Context, s Settings) (rerank.Reranker, error) {
+	if !s.RerankEnabled {
+		return nil, nil
+	}
+	cfg := rerank.Config{
+		Enabled:       true,
+		Provider:      s.RerankProvider,
+		TopN:          s.RerankTopN,
+		Allowed:       s.ProvidersAllowed,
+		Model:         s.RerankModel,
+		CohereAPIKey:  f.CohereAPIKey,
+		CohereBaseURL: f.CohereBaseURL,
+	}
+	if s.RerankProvider == rerank.ProviderLLM {
+		model := s.RerankLLMModel
+		if model == "" {
+			model = s.LLMModel
+		}
+		// llm.Factory.Provider fails closed on the provider + model allowlists before
+		// any key is used; a build error propagates and the service falls back.
+		provider, err := f.LLM.Provider(s.LLMProvider, model, s.ProvidersAllowed, s.LLMModelsAllowed)
+		if err != nil {
+			return nil, err
+		}
+		cfg.LLM = provider
+		cfg.LLMModel = model
+	}
+	return rerank.New(cfg)
 }

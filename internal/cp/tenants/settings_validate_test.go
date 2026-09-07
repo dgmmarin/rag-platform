@@ -29,6 +29,24 @@ func TestValidateAcceptsSpecExample(t *testing.T) {
 	}
 }
 
+// TestValidateAcceptsRerankerLLMModel proves the optional reranker.llm_model
+// override (STORY-08.3) validates as a string, and a non-string is rejected.
+func TestValidateAcceptsRerankerLLMModel(t *testing.T) {
+	base := map[string]any{
+		"embedding":         map[string]any{"provider": "voyage", "model": "voyage-3", "dim": 1024},
+		"reranker":          map[string]any{"enabled": true, "provider": "llm", "top_n": 20, "llm_model": "claude-haiku-4-5"},
+		"providers_allowed": []any{"anthropic", "voyage"},
+	}
+	if err := validateSettings(base); err != nil {
+		t.Fatalf("reranker.llm_model string rejected: %v", err)
+	}
+
+	base["reranker"].(map[string]any)["llm_model"] = 123 // not a string
+	if err := validateSettings(base); err == nil {
+		t.Fatal("non-string reranker.llm_model accepted; want validation error")
+	}
+}
+
 // An invalid document yields ErrInvalidSettings carrying per-field errors keyed
 // by dotted instance path.
 func TestValidateReturnsPerFieldErrors(t *testing.T) {

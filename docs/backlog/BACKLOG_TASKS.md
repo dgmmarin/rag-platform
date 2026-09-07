@@ -327,10 +327,13 @@ breakdown, tasks are derived from the acceptance criteria.
 ### STORY-08.2 — Retrieve endpoint (FR-RET-08)
 - [ ] returns ranked chunks with scores and metadata; respects filters and top_k
 
-### STORY-08.3 — Reranker interface and providers (FR-RET-03)
-- [ ] Cohere + LLM-based reranker
-- [ ] per-tenant toggle
-- [ ] fallback to fused order on provider failure
+### STORY-08.3 — Reranker interface and providers (FR-RET-03) ✅
+> ADR-0054, ISSUE-0031. Built after STORY-08.4 (the LLM reranker consumes internal/llm). SPEC-06 §3.
+- [x] Cohere (real HTTP, Cohere v2 /v2/rerank, rerank-v3.5) + LLM-based reranker (ONE batched llm.Complete listwise call, defensive JSON parse)
+- [x] per-tenant toggle (settings.reranker.enabled; provider cohere|llm; optional reranker.llm_model override)
+- [x] fallback to fused order on provider failure (network/breaker/missing-key/unparseable → logged, query never fails)
+- [x] wired into internal/retrieve.Service (over-fetch max(top_n, final_k) → rerank top_n → reorder by reranker score → truncate final_k); min_score/grounding left to 08.5
+- [x] resilience copied a third time (breaker+retry), internal/resilience extraction deferred (ADR-0054 ponytail / ISSUE-0031)
 
 ### STORY-08.4 — LLM provider interface (NFR-MNT-02, NFR-REL-04) ✅
 > Built before STORY-08.3 (deliberate, user-approved reorder — the LLM-based reranker depends on this seam). ADR-0053, ISSUE-0030.

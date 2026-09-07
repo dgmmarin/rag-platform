@@ -788,7 +788,7 @@ paths:
           description: the OpenAPI 3.1 document
   /v1/retrieve:
     post:
-      summary: 'Hybrid retrieval: embed the query and return ranked chunks with scores and citation metadata (no generation). Body: {query, top_k?, filters?}.'
+      summary: 'Hybrid retrieval: embed the query and return ranked chunks with scores and citation metadata (no generation). score is the fused RRF score, or the reranker score when the tenant enables reranking. Body: {query, top_k?, filters?}.'
       operationId: retrieve
       tags:
         - retrieval

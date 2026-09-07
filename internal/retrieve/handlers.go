@@ -37,7 +37,10 @@ type retrieveFilters struct {
 
 // chunkView is one ranked chunk in the response: the citation metadata SPEC-06/07
 // promise (id, document_id, source_id, content, uri, title, heading_path, metadata,
-// score). The opaque embedding vector is never returned.
+// score). The opaque embedding vector is never returned. `score` is the fused RRF
+// score normally; when the tenant enables reranking (settings.reranker.enabled,
+// STORY-08.3), results are reordered by the reranker and `score` is the reranker
+// relevance score instead (SPEC-06 §3).
 type chunkView struct {
 	ID          string          `json:"id"`
 	DocumentID  string          `json:"document_id"`

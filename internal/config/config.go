@@ -134,6 +134,16 @@ type Config struct {
 	AnthropicAPIKey string
 	OpenAIAPIKey    string
 	OpenAIBaseURL   string
+
+	// Reranker (STORY-08.3, SPEC-06 §3, FR-RET-03). The Cohere rerank API platform
+	// key for the Cohere-based reranker (settings.reranker.provider="cohere"); the
+	// LLM-based reranker reuses the LLM keys above. An empty key leaves the Cohere
+	// reranker fail-closed (the retrieve service falls back to fused order). The key
+	// is confidential and never logged (C-4). CohereBaseURL overrides the endpoint
+	// for a self-hosted/proxy rerank deployment. ponytail: one key per deployment
+	// (C-5 single-region-per-tenant), mirroring the embedding/LLM keys.
+	CohereAPIKey  string
+	CohereBaseURL string
 }
 
 // Load reads configuration, overlaying the optional config file (if filePath is
@@ -262,6 +272,11 @@ func Load(filePath string) (Config, error) {
 	cfg.AnthropicAPIKey = mustGet(get, "ANTHROPIC_API_KEY")
 	cfg.OpenAIAPIKey = mustGet(get, "OPENAI_API_KEY")
 	cfg.OpenAIBaseURL = mustGet(get, "OPENAI_BASE_URL")
+
+	// Reranker (STORY-08.3, FR-RET-03). Empty leaves the Cohere reranker fail-closed;
+	// never logged (C-4).
+	cfg.CohereAPIKey = mustGet(get, "COHERE_API_KEY")
+	cfg.CohereBaseURL = mustGet(get, "COHERE_BASE_URL")
 
 	return cfg, nil
 }

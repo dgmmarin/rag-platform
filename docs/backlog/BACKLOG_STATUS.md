@@ -20,7 +20,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 39 | ✅ Complete |
-| EPIC-08 | Retrieval and answering | 39 | 15 | 🚧 In progress |
+| EPIC-08 | Retrieval and answering | 39 | 20 | 🚧 In progress |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
@@ -1183,18 +1183,40 @@ but is not yet consulted by the crawler (the effective cap is per-source `max_pa
 Docs-only: `go build ./...` green, no code/schema/OpenAPI/migration change. **EPIC-07
 is complete (39/39 pts).**
 
-## EPIC-08 · Retrieval and answering — 🚧 15/39 pts
+## EPIC-08 · Retrieval and answering — 🚧 20/39 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-08.1 | Hybrid retrieval query | 8 | ✅ Done | FR-RET-01/02/08, ADR-0007, ADR-0051, SPEC-06 §2 |
 | STORY-08.2 | Retrieve endpoint | 2 | ✅ Done | FR-RET-08, ADR-0052, SPEC-06 §2, SPEC-07 §2e |
-| STORY-08.3 | Reranker interface and providers | 5 | 🔲 Todo | FR-RET-03 |
+| STORY-08.3 | Reranker interface and providers | 5 | ✅ Done | FR-RET-03, ADR-0054, SPEC-06 §3 |
 | STORY-08.4 | LLM provider interface | 5 | ✅ Done | NFR-MNT-02, NFR-REL-04 |
 | STORY-08.5 | Prompt assembly, citations and grounding refusal | 8 | 🔲 Todo | FR-RET-04/05, SPEC-06 §4–5 |
 | STORY-08.6 | Query endpoint with streaming | 5 | 🔲 Todo | FR-RET-06, SPEC-06 §6 |
 | STORY-08.7 | Conversation history and question rewrite | 3 | 🔲 Todo | FR-RET-07 |
 | STORY-08.8 | Query log and feedback | 3 | 🔲 Todo | FR-RET-09/10 |
+
+**Delivered (STORY-08.3):** the reranker seam — a new `internal/rerank` package (FR-RET-03, NFR-MNT-02,
+NFR-REL-04, SPEC-06 §3, ADR-0054), built **after** STORY-08.4 (the LLM reranker consumes the `internal/llm`
+seam). One provider-neutral `Reranker` (`Rerank(ctx, query, docs []Doc) ([]Scored, error)`, `Doc{ID,Text}` /
+`Scored{ID,Score}`) with a `New(Config)` factory that returns a nil reranker when `settings.reranker.enabled`
+is false. Two providers: a **Cohere** reranker (real HTTP on the **v2** `/v2/rerank` API, model `rerank-v3.5`,
+Bearer `COHERE_API_KEY`; `top_n` not sent so every candidate is scored; breaker + bounded-backoff/`Retry-After`
+retry; fail-closed on `providers_allowed` and a missing key, SPEC-09 §2), and an **LLM** reranker that scores
+**all** candidates in **ONE** batched `llm.Complete` call — a listwise JSON `[{id,score}]` prompt parsed
+defensively (fence/prose-tolerant; unparseable → `ErrUnparseable`), reusing the tenant's `internal/llm`
+provider (its provider+model allowlists apply) with an optional `settings.reranker.llm_model` override else
+`settings.llm.model`. **Fallback to fused order on ANY reranker failure** (network, breaker-open, missing key,
+unparseable output, fail-closed build) — the query never fails (NFR-REL-04). Wired into
+`internal/retrieve.Service.Search`, which over-fetches `max(top_n, final_k)` fused candidates, reranks the top
+`top_n`, reorders by reranker score, then truncates to `final_k`; `/v1/retrieve`'s `score` is the reranker
+score when enabled. `min_score`/grounding refusal stays with STORY-08.5 (a clean seam). Config gains
+`COHERE_API_KEY`/`COHERE_BASE_URL` (C-4, never logged); the settings schema gains the optional
+`reranker.llm_model` (defaults unchanged, drift/validation green). **Resilience copied a third time, not
+extracted:** ADR-0054 records the deliberate decision to defer `internal/resilience` to a dedicated refactor
+(ISSUE-0031) rather than edit two stable, coverage-gated packages while the local stack is wedged. No new
+dependency, no migration, OpenAPI summary note only. Hermetic tests (Cohere `httptest` fixture; LLM fake
+`Completer`); `internal/{rerank,retrieve,config,cp/tenants}` green.
 
 **Delivered (STORY-08.4):** the LLM provider seam — a new `internal/llm` package (NFR-MNT-02, NFR-REL-04,
 SPEC-06 §5.1, ADR-0053), the pure client library the answering stage generates through. **Built before

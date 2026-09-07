@@ -1,6 +1,6 @@
 # SPEC-06: Retrieval and answering
 
-**Implements:** FR-RET-01..10, NFR-PERF-01/02, NFR-REL-04 · **Decisions:** ADR-0004, ADR-0007, ADR-0051, ADR-0052, ADR-0053
+**Implements:** FR-RET-01..10, NFR-PERF-01/02, NFR-REL-04 · **Decisions:** ADR-0004, ADR-0007, ADR-0051, ADR-0052, ADR-0053, ADR-0054
 
 ## 1. Pipeline
 ```
@@ -128,6 +128,45 @@ ADR-0052.
 
 ## 3. Reranking
 If `settings.reranker.enabled`, top `top_n` fused results go to `Reranker.Rerank(query, texts)`; final order by reranker score; `min_score` then applies to reranker score instead of fused score.
+
+### 3.1 Reranker seam (STORY-08.3, ADR-0054)
+`internal/rerank` is the provider-neutral reranker seam (FR-RET-03). One interface,
+two providers, one factory (NFR-MNT-02):
+
+```
+Reranker.Rerank(ctx, query string, docs []Doc) ([]Scored, error)
+Doc{ID, Text}   Scored{ID, Score}   // Doc.ID/Scored.ID are chunk ids
+New(Config) (Reranker, error)        // (nil, nil) when settings.reranker.enabled=false
+```
+
+- **Cohere reranker** — real HTTP `POST {base}/v2/rerank` with `{model, query,
+  documents}` (Cohere v2 rerank API; model `rerank-v3.5`), Bearer `COHERE_API_KEY`.
+  `top_n` is NOT sent, so every candidate comes back scored and the service reorders
+  the full set. Wrapped with the same bounded-backoff retry (429/5xx, `Retry-After`)
+  + circuit breaker the embedding/LLM seams use (ADR-0037/0053). Fail-closed on the
+  provider allowlist (`settings.providers_allowed`, SPEC-09 §2) and on a missing key.
+- **LLM reranker** — scores **all** candidates in **ONE** batched `llm.Complete`
+  call (a listwise prompt numbering the top_n passages + the query, returning a
+  JSON `[{id,score}]` ranking — never per-document calls). It reuses the tenant's
+  `settings.llm` provider/model via the `internal/llm` factory (§5.1), so the
+  provider + model allowlists are enforced there. An optional
+  `settings.reranker.llm_model` overrides the model just for reranking (e.g. a
+  cheaper model); absent, it reuses `settings.llm.model`. The JSON is parsed
+  defensively (code-fence/prose tolerant); unparseable output is a provider failure.
+- **Toggle** — `settings.reranker.enabled` (default false) gates it per tenant;
+  `settings.reranker.provider` selects `cohere`|`llm`; `top_n` is how many fused
+  results to rerank (default 20).
+- **Fallback (FR-RET-03 AC, NFR-REL-04)** — a reranker never fails the query. Any
+  error — network, breaker-open, missing key, unparseable LLM output, fail-closed
+  allowlist — is logged and the query returns the original fused order.
+
+### 3.2 Service wiring
+`internal/retrieve.Service.Search` applies reranking on the fused set: when enabled
+it over-fetches `max(top_n, final_k)` fused candidates (the hybrid query's `limit`),
+reranks the top `top_n`, reorders by reranker score, then truncates to `final_k`.
+The `/v1/retrieve` response `score` is the fused RRF score normally, or the reranker
+relevance score when reranking is enabled. The `min_score` grounding floor / refusal
+(§4) is **not** applied here — that is STORY-08.5; 08.3 leaves a clean seam.
 
 ## 4. Grounding and refusal
 If no chunk passes `min_score`, respond with `grounded=false`, a fixed message ("I couldn't find information about that in <tenant name>'s content."), zero citations, and still log the query. No LLM call is made.

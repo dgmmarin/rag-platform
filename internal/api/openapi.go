@@ -308,7 +308,9 @@ func liveRoutes() []route {
 		// Retrieve (STORY-08.2, FR-RET-08). Tenant content, tenant derived from the
 		// API key (FR-ACC-03). `query` scope. Embeds the query with the tenant's
 		// configured provider and returns ranked chunks — no generation (SPEC-06 §2).
-		{method: "POST", path: "/v1/retrieve", tag: "retrieval", summary: "Hybrid retrieval: embed the query and return ranked chunks with scores and citation metadata (no generation). Body: {query, top_k?, filters?}.", operationID: "retrieve", auth: authScopeQuery,
+		// When the tenant enables reranking (settings.reranker.enabled, STORY-08.3) the
+		// results are reordered and `score` is the reranker relevance score (SPEC-06 §3).
+		{method: "POST", path: "/v1/retrieve", tag: "retrieval", summary: "Hybrid retrieval: embed the query and return ranked chunks with scores and citation metadata (no generation). score is the fused RRF score, or the reranker score when the tenant enables reranking. Body: {query, top_k?, filters?}.", operationID: "retrieve", auth: authScopeQuery,
 			success: "ranked chunks",
 			extra:   []errResp{{"400", "missing query or malformed body"}, {"503", "tenant is not available"}}},
 	}
