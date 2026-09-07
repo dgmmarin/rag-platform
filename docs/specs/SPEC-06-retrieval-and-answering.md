@@ -1,6 +1,6 @@
 # SPEC-06: Retrieval and answering
 
-**Implements:** FR-RET-01..10, NFR-PERF-01/02, NFR-REL-04 · **Decisions:** ADR-0004, ADR-0007, ADR-0051, ADR-0052, ADR-0053, ADR-0054
+**Implements:** FR-RET-01..10, NFR-PERF-01/02, NFR-REL-04 · **Decisions:** ADR-0004, ADR-0007, ADR-0051, ADR-0052, ADR-0053, ADR-0054, ADR-0055
 
 ## 1. Pipeline
 ```
@@ -176,6 +176,36 @@ If no chunk passes `min_score`, respond with `grounded=false`, a fixed message (
 - Context: numbered chunks with `title > heading_path` header and `uri`, truncated to a token budget (default 6k).
 - History: last N turns (default 6) if provided; optional rewrite step turns a follow-up into a standalone question before retrieval.
 - Answer post-processing: map `[n]` markers to chunk IDs → citations `[{n, document_id, title, uri, heading_path, snippet}]`; unreferenced chunks are dropped from citations.
+
+### 5.2 Answering service (STORY-08.5, ADR-0055)
+`internal/answer` realises §4–5 as `Service.Answer(ctx, Request) (Result, error)`,
+the seam STORY-08.6 wraps with the `/v1/query` endpoint + SSE. It consumes the
+ranked chunks from `internal/retrieve` (their `Score` already the reranker score
+when reranking is enabled, else the fused RRF score — §3), the question, provided
+history (verbatim; the follow-up rewrite is STORY-08.7), and the tenant's resolved
+settings (the display name from the control-plane `tenants.name` row; the rest from
+`settings.{retrieval.min_score, answering, llm}`).
+
+- **Grounding gate (§4):** `Answer` keeps only chunks with `Score ≥ min_score`; if
+  none pass it returns the fixed refusal without building the provider — no LLM call
+  is made. The refusal, and the grounded answer, both go through a `QueryLogger`
+  seam so STORY-08.8 can persist either path (nil = no-op here).
+- **Token budget (§5):** the numbered context is trimmed to
+  `settings.answering.token_budget` (default 6000). The token count is a
+  `len/4` estimate (ponytail — upgrade to a real `count_tokens`); the top chunk is
+  always included (content truncated if it alone overflows) so a grounded query is
+  never assembled with an empty context. `settings.answering.history_n` (default 6)
+  bounds the included history turns.
+- **Generation + usage (FR-RET-04):** generation goes through the `internal/llm`
+  `Complete` seam (§5.1); the provider's normalised `Usage` is folded into
+  `usage_daily` (`usage.Delta.LLMInTokens/LLMOutTokens`, ADR-0024) and into the
+  response `usage{retrieval_ms, generation_ms, in_tokens, out_tokens}`. A provider
+  failure (incl. `llm.ErrCircuitOpen`) is surfaced as a clean wrapped error — the
+  graceful degradation to retrieval-only is STORY-08.6's concern.
+
+The `settings.answering` object (`token_budget`, `history_n`) is added to the
+settings schema/defaults in this story; `min_score` already lives under
+`settings.retrieval`.
 
 ## 5.1 LLM provider seam (STORY-08.4, ADR-0053)
 Generation goes through `internal/llm`, a provider-neutral seam consumed by the

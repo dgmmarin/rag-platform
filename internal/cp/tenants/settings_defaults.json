@@ -4,6 +4,7 @@
   "reranker": {"enabled": false, "provider": "cohere", "model": "rerank-v3.5", "top_n": 20},
   "chunking": {"target_tokens": 512, "overlap_tokens": 64},
   "retrieval": {"k_vector": 40, "k_text": 40, "final_k": 8, "min_score": 0.02},
+  "answering": {"token_budget": 6000, "history_n": 6},
   "limits": {"qps": 10, "max_upload_mb": 50, "max_pages_per_crawl": 5000},
   "providers_allowed": ["anthropic", "voyage", "cohere"]
 }

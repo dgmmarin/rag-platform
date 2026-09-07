@@ -20,12 +20,12 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 39 | ✅ Complete |
-| EPIC-08 | Retrieval and answering | 39 | 20 | 🚧 In progress |
+| EPIC-08 | Retrieval and answering | 39 | 28 | 🚧 In progress |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **179** | **53%** |
+| **Total** | | **337** | **187** | **55%** |
 
 ---
 
@@ -1183,7 +1183,7 @@ but is not yet consulted by the crawler (the effective cap is per-source `max_pa
 Docs-only: `go build ./...` green, no code/schema/OpenAPI/migration change. **EPIC-07
 is complete (39/39 pts).**
 
-## EPIC-08 · Retrieval and answering — 🚧 20/39 pts
+## EPIC-08 · Retrieval and answering — 🚧 28/39 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -1191,10 +1191,34 @@ is complete (39/39 pts).**
 | STORY-08.2 | Retrieve endpoint | 2 | ✅ Done | FR-RET-08, ADR-0052, SPEC-06 §2, SPEC-07 §2e |
 | STORY-08.3 | Reranker interface and providers | 5 | ✅ Done | FR-RET-03, ADR-0054, SPEC-06 §3 |
 | STORY-08.4 | LLM provider interface | 5 | ✅ Done | NFR-MNT-02, NFR-REL-04 |
-| STORY-08.5 | Prompt assembly, citations and grounding refusal | 8 | 🔲 Todo | FR-RET-04/05, SPEC-06 §4–5 |
+| STORY-08.5 | Prompt assembly, citations and grounding refusal | 8 | ✅ Done | FR-RET-04/05, SPEC-06 §4–5, ADR-0055 |
 | STORY-08.6 | Query endpoint with streaming | 5 | 🔲 Todo | FR-RET-06, SPEC-06 §6 |
 | STORY-08.7 | Conversation history and question rewrite | 3 | 🔲 Todo | FR-RET-07 |
 | STORY-08.8 | Query log and feedback | 3 | 🔲 Todo | FR-RET-09/10 |
+
+**Delivered (STORY-08.5):** the answering stage — a new `internal/answer` package (FR-RET-04/05, SPEC-06
+§4–5, ADR-0055, ISSUE-0032), the seam STORY-08.6 wraps with the `/v1/query` endpoint. `Service.Answer(ctx,
+Request) (Result, error)` consumes the ranked chunks (a local `Chunk` type — no `internal/retrieve` import;
+`Score` is the reranker score when enabled else the fused RRF score), the question, provided history and the
+tenant's resolved settings, and returns the SPEC-06 §6 shape `{id, answer, grounded, citations[],
+usage{retrieval_ms, generation_ms, in_tokens, out_tokens}, model}`. **Grounding gate (§4):** keep chunks with
+`Score ≥ min_score`; when none pass, return the fixed `"I couldn't find information about that in <tenant
+name>'s content."` with `grounded=false`, zero citations, and **NO** LLM call — the `ProviderFactory` is never
+built (proven by `factory.calls==0`); `min_score` defaults to 0.02 when ≤0 (fail-safe). The tenant display
+name reaches the message via `Settings.TenantName` (control-plane `tenants.name`, C-3). **Prompt assembly
+(§5):** system prompt (answer only from sources, cite `[n]`, say when unsure, reply in the user's language —
+no detection lib); a numbered `Sources:` context block trimmed to `settings.answering.token_budget` (default
+6000) via a `chars/4` estimate (ponytail → `count_tokens`; top chunk always included); the last
+`settings.answering.history_n` (default 6) history turns verbatim (the rewrite is STORY-08.7). **Citations
+(§5):** parse `[n]` markers, map each in-range distinct `n` to the numbered chunk, drop unreferenced chunks
+and out-of-range markers, numbers not renumbered. **Usage (FR-RET-04, ADR-0024):** the provider's `Usage` is
+folded into `usage_daily` (`Delta.LLMInTokens/LLMOutTokens` — the EPIC-05-reserved "LLM tokens in EPIC-08
+answering" counters) and the response `usage`; none on refusal; `Queries` left to 08.6. Provider failure is
+wrapped preserving `llm.ErrCircuitOpen` (NFR-REL-04). A `QueryLogger` seam is called on **both** paths for
+STORY-08.8. Production `KeyedProviderFactory` wraps `llm.Factory` (no `internal/cli` wiring yet — 08.6). Settings
+schema/defaults gain the optional `answering` object (drift/validation green). No migration, no OpenAPI change,
+no new dependency. Hermetic unit tests (fake provider/factory/usage/logger), `internal/answer` 88.8%; the
+golden-path e2e is deferred to STORY-08.6 (the endpoint), precedent ADR-0053/0054.
 
 **Delivered (STORY-08.3):** the reranker seam — a new `internal/rerank` package (FR-RET-03, NFR-MNT-02,
 NFR-REL-04, SPEC-06 §3, ADR-0054), built **after** STORY-08.4 (the LLM reranker consumes the `internal/llm`

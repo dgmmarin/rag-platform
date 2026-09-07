@@ -59,6 +59,14 @@
         "min_score": {"type": "number", "minimum": 0, "maximum": 1}
       }
     },
+    "answering": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "token_budget": {"type": "integer", "minimum": 512, "maximum": 32768},
+        "history_n": {"type": "integer", "minimum": 0, "maximum": 50}
+      }
+    },
     "limits": {
       "type": "object",
       "additionalProperties": false,

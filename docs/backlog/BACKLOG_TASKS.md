@@ -341,10 +341,10 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] streaming and non-streaming for each; bounded-backoff retries + circuit breaker reused from embed (ADR-0037)
 - [x] provider-normalised token accounting surfaced; two-level fail-closed allowlist (providers_allowed + settings.llm.models_allowed)
 
-### STORY-08.5 — Prompt assembly, citations and grounding refusal (FR-RET-04/05, SPEC-06 §4–5)
-- [ ] answers cite `[n]`; citations mapped to chunks; unreferenced chunks dropped
-- [ ] below-floor → grounded=false without LLM call
-- [ ] language matching; token budget respected
+### STORY-08.5 — Prompt assembly, citations and grounding refusal (FR-RET-04/05, SPEC-06 §4–5) ✅ Done — ADR-0055, ISSUE-0032
+- [x] answers cite `[n]`; citations mapped to chunks; unreferenced chunks dropped
+- [x] below-floor → grounded=false without LLM call
+- [x] language matching; token budget respected
 
 ### STORY-08.6 — Query endpoint with streaming (FR-RET-06, SPEC-06 §6)
 - [ ] JSON and SSE modes
