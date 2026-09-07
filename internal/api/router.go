@@ -85,6 +85,14 @@ type Deps struct {
 	// the resolver (ADR-0003); the tenant is derived from the API key (FR-ACC-03).
 	// `query` scope (SPEC-07 §2); a nil handler is the not-implemented seam.
 	Query http.Handler // POST /v1/query (query scope)
+
+	// Query log + feedback handlers (STORY-08.8, FR-RET-09/10). query_log and
+	// query_feedback are tenant content reached via the resolver (ADR-0003); the
+	// tenant is derived from the API key (FR-ACC-03). Feedback is `query` scope, the
+	// admin query-log listing is `admin` scope (SPEC-07 §2/§2g). A nil handler is
+	// the not-implemented seam.
+	Feedback  http.Handler // POST /v1/feedback (query scope)
+	QueryList http.Handler // GET /v1/queries (admin scope)
 }
 
 // New assembles the public HTTP handler: the global middleware chain in the
@@ -179,6 +187,13 @@ func New(d Deps) http.Handler {
 	// (ADR-0003); tenant derived from the API key (FR-ACC-03). `query` scope.
 	// Bearer-authenticated, so no CSRF applies.
 	mux.Handle("POST /v1/query", tenantScoped(d.RequireScopeQuery, d.Query))
+
+	// Query log + feedback (STORY-08.8, FR-RET-09/10, SPEC-07 §2/§2g). Tenant
+	// content via the resolver (ADR-0003); tenant derived from the API key
+	// (FR-ACC-03). Feedback is `query` scope; the admin query-log listing is `admin`
+	// scope. Bearer-authenticated, so no CSRF applies.
+	mux.Handle("POST /v1/feedback", tenantScoped(d.RequireScopeQuery, d.Feedback))
+	mux.Handle("GET /v1/queries", tenantScoped(d.RequireScopeAdmin, d.QueryList))
 
 	// Settings/members/api-keys routes are later EPIC-04 work. They are
 	// intentionally NOT registered here: an unregistered path yields the not_found

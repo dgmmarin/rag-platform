@@ -356,10 +356,10 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] toggle per tenant (`settings.rewrite.enabled`, default off; optional `settings.rewrite.model`)
 - [x] eval shows no regression on single-turn (strict single-turn zero-call passthrough, proven by tests; numeric harness is EPIC-12)
 
-### STORY-08.8 — Query log and feedback (FR-RET-09/10)
-- [ ] every query logged asynchronously with retrieved IDs and scores
-- [ ] feedback endpoint
-- [ ] both visible in admin
+### STORY-08.8 — Query log and feedback (FR-RET-09/10) ✅ Done — ADR-0058, ISSUE-0035
+- [x] every query logged asynchronously with retrieved IDs and scores (`internal/querylog.Logger` fills the `answer.QueryLogger` seam; best-effort background goroutine, own `tenant.DB` + bounded context, failures swallowed)
+- [x] feedback endpoint (`POST /v1/feedback`, `query` scope; ±1 rating upsert keyed by `query_id`; unknown id → 404)
+- [x] both visible in admin (`GET /v1/queries`, `admin` scope; query log + joined feedback, keyset-paginated)
 
 ---
 

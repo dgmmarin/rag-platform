@@ -626,6 +626,53 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/feedback:
+    post:
+      summary: 'Rate a prior answer (thumbs up/down with optional comment). Body: {query_id, rating, comment?} where rating is 1 (up) or -1 (down); the query_id is the id returned by POST /v1/query. Idempotent per query (last write wins).'
+      operationId: feedback
+      tags:
+        - retrieval
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: feedback recorded
+        "400":
+          description: invalid rating, query_id or malformed body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "404":
+          description: no such query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "503":
+          description: tenant is not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /v1/jobs:
     get:
       summary: List the tenant's jobs (filter by status, kind, source).
@@ -786,6 +833,58 @@ paths:
       responses:
         "200":
           description: the OpenAPI 3.1 document
+  /v1/queries:
+    get:
+      summary: List the tenant's query log (each query's retrieved chunk ids + scores, grounded flag, model, timings, token counts) with any joined user feedback (FR-RET-09/10). Newest first.
+      operationId: queryList
+      tags:
+        - retrieval
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          description: Page size (default 50, max 200).
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          description: Opaque pagination cursor from a prior next_cursor.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: a page of query-log entries ({items, next_cursor})
+        "400":
+          description: invalid limit or cursor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "503":
+          description: tenant is not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /v1/query:
     post:
       summary: 'Answer a question grounded in the tenant''s content, with [n] citations (SPEC-06 §6). Body: {question, filters?, history?, top_k?, stream?}. stream=false returns JSON {id, answer, grounded, citations[], usage, model}; stream=true returns a text/event-stream of retrieval (citations first), delta (text), done (usage) events. Below the grounding floor: grounded=false with a fixed refusal and no generation. If generation is unavailable the query degrades to retrieval-only rather than failing (NFR-REL-04).'

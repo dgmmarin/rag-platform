@@ -200,7 +200,7 @@ Suggested sprint order: EPIC-01 → 02 → 03 → 04 → 05 (+06 in parallel) �
 
 ---
 
-## EPIC-08 · Retrieval and answering
+## EPIC-08 · Retrieval and answering — ✅ COMPLETE (39/39)
 *Goal: hybrid search, rerank, grounded answers with citations.* — 39 pts
 
 **STORY-08.1 Hybrid retrieval query** (8) — Traces: FR-RET-01/02/08, ADR-0007, ADR-0051, SPEC-06 §2
@@ -224,7 +224,7 @@ Suggested sprint order: EPIC-01 → 02 → 03 → 04 → 05 (+06 in parallel) �
 **STORY-08.7 Conversation history and question rewrite** (3) — Traces: FR-RET-07
 - AC: follow-up questions resolved into standalone query before retrieval; toggle per tenant; eval shows no regression on single-turn.
 
-**STORY-08.8 Query log and feedback** (3) — Traces: FR-RET-09/10
+**STORY-08.8 Query log and feedback** (3) ✅ — Traces: FR-RET-09/10, SPEC-06 §5.4, SPEC-07 §2g, ADR-0058
 - AC: every query logged asynchronously with retrieved IDs and scores; feedback endpoint; both visible in admin.
 
 ---

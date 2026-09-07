@@ -40,6 +40,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/obs"
 	"github.com/rag-platform/ragctl/internal/provision"
 	"github.com/rag-platform/ragctl/internal/query"
+	"github.com/rag-platform/ragctl/internal/querylog"
 	"github.com/rag-platform/ragctl/internal/retrieve"
 	"github.com/rag-platform/ragctl/internal/tenant"
 )
@@ -220,10 +221,22 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		OpenAI:        cfg.OpenAIAPIKey,
 		OpenAIBaseURL: cfg.OpenAIBaseURL,
 	}}}
+	// --- Query log + feedback (tenant content, STORY-08.8, FR-RET-09/10, SPEC-06
+	// §6/SPEC-07 §2g). query_log/query_feedback live in the tenant database, reached
+	// only through the resolver (ADR-0003, C-3). The Logger fills the answer stage's
+	// QueryLogger seam: it persists every query — grounded or refusal — on a
+	// background goroutine (best-effort; a failure is logged without content, C-4, and
+	// never surfaced to the client). The Service serves POST /v1/feedback (query
+	// scope) and GET /v1/queries (admin scope). One shared TenantStore. ---
+	queryLogStore := querylog.NewTenantStore()
+	queryLogger := &querylog.Logger{Resolver: resolver, Store: queryLogStore, Slog: log}
+	queryLogSvc := &querylog.Service{Resolver: resolver, Store: queryLogStore}
+	queryLogHandlers := querylog.NewHandlers(queryLogSvc)
+
 	answerSvc := &answer.Service{
 		Providers: providerFactory,
 		Usage:     usageCounter,
-		// Logger: nil — the async query log lands in STORY-08.8.
+		Logger:    queryLogger,
 	}
 	querySvc := &query.Service{
 		Retrieve: retrieveSvc,
@@ -322,8 +335,10 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		JobGet:    http.HandlerFunc(jobHandlers.Get),
 		JobCancel: http.HandlerFunc(jobHandlers.Cancel),
 
-		Retrieve: http.HandlerFunc(retrieveHandlers.Retrieve),
-		Query:    http.HandlerFunc(queryHandlers.Query),
+		Retrieve:  http.HandlerFunc(retrieveHandlers.Retrieve),
+		Query:     http.HandlerFunc(queryHandlers.Query),
+		Feedback:  http.HandlerFunc(queryLogHandlers.Feedback),
+		QueryList: http.HandlerFunc(queryLogHandlers.List),
 	}
 
 	return &apiServer{

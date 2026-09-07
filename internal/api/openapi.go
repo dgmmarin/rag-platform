@@ -322,6 +322,20 @@ func liveRoutes() []route {
 		{method: "POST", path: "/v1/query", tag: "retrieval", summary: "Answer a question grounded in the tenant's content, with [n] citations (SPEC-06 §6). Body: {question, filters?, history?, top_k?, stream?}. stream=false returns JSON {id, answer, grounded, citations[], usage, model}; stream=true returns a text/event-stream of retrieval (citations first), delta (text), done (usage) events. Below the grounding floor: grounded=false with a fixed refusal and no generation. If generation is unavailable the query degrades to retrieval-only rather than failing (NFR-REL-04).", operationID: "query", auth: authScopeQuery,
 			success: "grounded answer (JSON), or an SSE event stream when stream=true",
 			extra:   []errResp{{"400", "missing question or malformed body"}, {"503", "tenant is not available"}}},
+
+		// Query log + feedback (STORY-08.8, FR-RET-09/10). Tenant content, tenant
+		// derived from the API key (FR-ACC-03). Feedback is `query` scope; the admin
+		// query-log listing is `admin` scope (SPEC-07 §2/§2g).
+		{method: "POST", path: "/v1/feedback", tag: "retrieval", summary: "Rate a prior answer (thumbs up/down with optional comment). Body: {query_id, rating, comment?} where rating is 1 (up) or -1 (down); the query_id is the id returned by POST /v1/query. Idempotent per query (last write wins).", operationID: "feedback", auth: authScopeQuery,
+			success: "feedback recorded",
+			extra:   []errResp{{"400", "invalid rating, query_id or malformed body"}, {"404", "no such query"}, {"503", "tenant is not available"}}},
+		{method: "GET", path: "/v1/queries", tag: "retrieval", summary: "List the tenant's query log (each query's retrieved chunk ids + scores, grounded flag, model, timings, token counts) with any joined user feedback (FR-RET-09/10). Newest first.", operationID: "queryList", auth: authScopeAdmin,
+			params: []Parameter{
+				{Name: "limit", In: "query", Description: "Page size (default 50, max 200).", Schema: map[string]any{"type": "integer"}},
+				{Name: "cursor", In: "query", Description: "Opaque pagination cursor from a prior next_cursor.", Schema: strSchema()},
+			},
+			success: "a page of query-log entries ({items, next_cursor})",
+			extra:   []errResp{{"400", "invalid limit or cursor"}, {"503", "tenant is not available"}}},
 	}
 }
 

@@ -17,6 +17,7 @@
 | POST | /v1/query | query | SPEC-06 |
 | POST | /v1/retrieve | query | chunks only, no generation |
 | POST | /v1/feedback | query | `{query_id, rating, comment}` |
+| GET | /v1/queries | admin | query log with joined feedback (keyset) |
 | GET | /v1/sources | admin | |
 | POST | /v1/sources | admin | body validated by connector |
 | GET/PATCH/DELETE | /v1/sources/{id} | admin | delete enqueues `delete_source` |
@@ -206,6 +207,41 @@ envelope (no SSE headers are written until the first event). The `Queries` usage
 counter is incremented once per answered query; LLM tokens fold into `usage_daily`
 (ADR-0024). Platform LLM keys are config (`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`),
 never logged or returned (C-4). See ADR-0056.
+
+### 2g. Query log and feedback (STORY-08.8 realisation)
+`POST /v1/feedback` (`query` scope) and `GET /v1/queries` (`admin` scope) are
+served by `internal/querylog` (`Logger` + `Service` + `Handlers`), realising
+FR-RET-09/10 and ADR-0058. The `query_log` and `query_feedback` tables are **tenant
+content** (`schemas/tenant.sql`, C-3), so this path reaches a tenant database only
+through a `tenant.DB` from the resolver (ADR-0003); the tenant is taken only from
+the authenticated API key (FR-ACC-03), never a parameter, and the database boundary
+is the ownership boundary (C-1) — a `query_id` from another tenant simply is not
+found.
+
+**Async logging (FR-RET-09).** Every answered query — grounded *and* refusal —
+is logged through the `answer.QueryLogger` seam (STORY-08.5) that `internal/querylog.Logger`
+now fills. Logging is **asynchronous and best-effort**: `Logger.Log` maps the
+`QueryRecord` (question, retrieved chunk ids + scores, grounded flag, cited chunk
+ids, model, timings, token counts) and persists it on a background goroutine using
+its OWN bounded context (the request context is already cancelled once the response
+returns) with a fresh `tenant.DB` from the resolver. A write failure is logged
+without any query content (C-4) and swallowed — it never blocks or fails the query
+response. The stored `query_log.id` is a uuid; the `q_<uuid>` response id (SPEC-06
+§6) is the same value with the prefix stripped, so the id a client receives from
+`POST /v1/query` round-trips straight back into feedback and the admin listing.
+The answer text is deliberately not carried by the seam and stays null.
+
+**Feedback (FR-RET-10).** `POST /v1/feedback` body `{query_id, rating, comment?}`
+where `rating` is `1` (thumbs up) or `-1` (thumbs down); an out-of-range rating or
+a malformed body is `400`. It is an idempotent upsert keyed by `query_id` (its
+primary key — last write wins); an unknown `query_id` is `404`; a suspended
+(read-only) tenant is `503`.
+
+**Admin visibility.** `GET /v1/queries` (`?limit&cursor` → `{items,next_cursor}`
+keyset pagination on `(created_at, id)`, newest first) returns each query-log row
+with its retrieved chunk ids/scores, grounded flag, model, timings, token counts
+and any joined `query_feedback`. It never returns another tenant's rows (tenant-DB
+scoping) and never returns the answer text.
 
 ## 3. OpenAPI
 Generated from Go into `api/openapi.yaml`; served at `/v1/openapi.json`. Contract tests in CI validate responses against it.

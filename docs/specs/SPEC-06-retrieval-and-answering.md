@@ -234,6 +234,17 @@ before retrieval":
   question; the ANSWER stage (§5, STORY-08.5) still receives the **original** question
   plus history verbatim, so the model answers the user's actual turn in context.
 
+### 5.4 Query log and feedback (STORY-08.8, ADR-0058)
+The `QueryLogger` seam left on `Answer`/`RecordStreamed` (§5.2) is filled by
+`internal/querylog.Logger`, which persists every answered query — grounded and
+refusal — to the tenant's `query_log` (FR-RET-09) **asynchronously** on a background
+goroutine so logging never blocks or fails the response (a failure is logged without
+content, C-4, and swallowed). `POST /v1/feedback` (`query` scope) writes
+`query_feedback` (FR-RET-10) and `GET /v1/queries` (`admin` scope) lists the log
+with joined feedback. `query_log`/`query_feedback` are tenant content reached only
+through the resolver + `*tenant.DB` (ADR-0003, C-1, C-3). Transport, request/response
+shapes and the async lifecycle are SPEC-07 §2g.
+
 ## 5.1 LLM provider seam (STORY-08.4, ADR-0053)
 Generation goes through `internal/llm`, a provider-neutral seam consumed by the
 LLM-based reranker (§3, STORY-08.3), prompt assembly (§5, STORY-08.5) and the query

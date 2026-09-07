@@ -20,7 +20,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 39 | ✅ Complete |
-| EPIC-08 | Retrieval and answering | 39 | 36 | 🚧 In progress |
+| EPIC-08 | Retrieval and answering | 39 | 39 | ✅ Complete |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
@@ -1183,7 +1183,7 @@ but is not yet consulted by the crawler (the effective cap is per-source `max_pa
 Docs-only: `go build ./...` green, no code/schema/OpenAPI/migration change. **EPIC-07
 is complete (39/39 pts).**
 
-## EPIC-08 · Retrieval and answering — 🚧 36/39 pts
+## EPIC-08 · Retrieval and answering — ✅ 39/39 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -1194,7 +1194,26 @@ is complete (39/39 pts).**
 | STORY-08.5 | Prompt assembly, citations and grounding refusal | 8 | ✅ Done | FR-RET-04/05, SPEC-06 §4–5, ADR-0055 |
 | STORY-08.6 | Query endpoint with streaming | 5 | ✅ Done | FR-RET-06, SPEC-06 §6/§6.1, SPEC-07 §2f, ADR-0056 |
 | STORY-08.7 | Conversation history and question rewrite | 3 | ✅ Done | FR-RET-07, SPEC-06 §5.3, ADR-0057 |
-| STORY-08.8 | Query log and feedback | 3 | 🔲 Todo | FR-RET-09/10 |
+| STORY-08.8 | Query log and feedback | 3 | ✅ Done | FR-RET-09/10, SPEC-06 §5.4, SPEC-07 §2g, ADR-0058 |
+
+**Delivered (STORY-08.8):** query log + feedback — a new `internal/querylog` package (FR-RET-09/10, SPEC-06
+§5.4, SPEC-07 §2g, ADR-0058, ISSUE-0035) filling the `answer.QueryLogger` seam STORY-08.5/08.6 left. Every
+answered query — grounded and refusal — is persisted to the tenant's `query_log` **asynchronously**: `Log`
+maps the `QueryRecord` (question, retrieved chunk ids + scores, grounded, cited ids, model, timings, tokens)
+then writes on a background goroutine that opens its OWN fresh `tenant.DB` from the resolver with a bounded
+context (the request context is already cancelled once the response returns); a failure is logged without
+content (C-4) and swallowed, never surfaced to the client (ponytail: best-effort fire-and-forget, unbounded
+goroutines — upgrade path is a bounded queue; `Wait()` drains for shutdown/tests). `POST /v1/feedback` (`query`
+scope) upserts `query_feedback` keyed by `query_id` (±1 rating + optional comment, last-write-wins; unknown id
+→ 404, ownership structural via the tenant DB); `GET /v1/queries` (`admin` scope) lists the log newest-first
+with joined feedback, keyset-paginated. `query_log`/`query_feedback` are tenant content reached only via the
+resolver + `*tenant.DB` (ADR-0003, C-1, C-3); the `q_<uuid>` response id maps to the bare `query_log.id` uuid
+(prefix stripped on write, re-applied on read). **No migration** (both tables pre-exist in tenant schema
+`00001`). Wired at the composition root (`internal/cli`): the `Logger` into `answer.Service.Logger`, the
+`Feedback`/`QueryList` handlers into the router. OpenAPI regenerated (drift + contract guards green). Unit
+tests hermetic (fake store + resolver); DB-backed e2e over the real stack proves the async log lands (bounded
+poll), feedback persists, and the admin list shows both grounded + refusal queries with feedback joined.
+**EPIC-08 complete (39/39).**
 
 **Delivered (STORY-08.6):** the grounded answering endpoint — a new `internal/query` package (FR-RET-06,
 SPEC-06 §6/§6.1, SPEC-07 §2f, ADR-0056, ISSUE-0033), the composition root wiring the retrieval pipeline
@@ -1216,7 +1235,7 @@ citations + a "generation unavailable" message; SSE `done{generation_unavailable
 tenant 503, bad body 400) stay JSON — the `httpSink` writes SSE headers only on the first event.
 **Accounting (FR-RET-04, ADR-0024):** the `Queries` counter is incremented here exactly once per answered
 query (08.5 left it here to avoid a double count); LLM tokens are folded by `internal/answer` (JSON inline;
-SSE via a new `RecordStreamed` from the terminal event). The async query log (STORY-08.8) is a nil no-op seam;
+SSE via a new `RecordStreamed` from the terminal event). The async query log seam is now filled by STORY-08.8;
 history is passed through verbatim (the rewrite is STORY-08.7). Route mounted under `RequireScopeQuery` + rate
 limit and documented in the code-derived OpenAPI (`api/openapi.yaml` regenerated; drift + contract guards
 green); wired in `ragctl serve` with the shared `llm.Factory` + `usage.Counter`. Hermetic unit tests
