@@ -20,12 +20,12 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 39 | ✅ Complete |
-| EPIC-08 | Retrieval and answering | 39 | 33 | 🚧 In progress |
+| EPIC-08 | Retrieval and answering | 39 | 36 | 🚧 In progress |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **192** | **57%** |
+| **Total** | | **337** | **195** | **58%** |
 
 ---
 
@@ -1183,7 +1183,7 @@ but is not yet consulted by the crawler (the effective cap is per-source `max_pa
 Docs-only: `go build ./...` green, no code/schema/OpenAPI/migration change. **EPIC-07
 is complete (39/39 pts).**
 
-## EPIC-08 · Retrieval and answering — 🚧 33/39 pts
+## EPIC-08 · Retrieval and answering — 🚧 36/39 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -1193,7 +1193,7 @@ is complete (39/39 pts).**
 | STORY-08.4 | LLM provider interface | 5 | ✅ Done | NFR-MNT-02, NFR-REL-04 |
 | STORY-08.5 | Prompt assembly, citations and grounding refusal | 8 | ✅ Done | FR-RET-04/05, SPEC-06 §4–5, ADR-0055 |
 | STORY-08.6 | Query endpoint with streaming | 5 | ✅ Done | FR-RET-06, SPEC-06 §6/§6.1, SPEC-07 §2f, ADR-0056 |
-| STORY-08.7 | Conversation history and question rewrite | 3 | 🔲 Todo | FR-RET-07 |
+| STORY-08.7 | Conversation history and question rewrite | 3 | ✅ Done | FR-RET-07, SPEC-06 §5.3, ADR-0057 |
 | STORY-08.8 | Query log and feedback | 3 | 🔲 Todo | FR-RET-09/10 |
 
 **Delivered (STORY-08.6):** the grounded answering endpoint — a new `internal/query` package (FR-RET-06,
@@ -1225,6 +1225,31 @@ degradation and accounting; a DB-backed e2e (`test/e2e/query_endpoint_e2e_test.g
 resolver + hybrid SQL with a stubbed embedder and stubbed LLM (no keys/network): JSON grounded answer + `[1]`
 citation + usage, the full SSE order with citations-before-text, and a below-floor refusal. No migration, no
 new dependency.
+
+**Delivered (STORY-08.7):** conversation-history question rewrite (FR-RET-07, SPEC-06 §5.3, ADR-0057,
+ISSUE-0034). `internal/query` now inserts an optional follow-up→standalone question **rewrite** BEFORE
+retrieval (`Service.standaloneQuestion`, `internal/query/rewrite.go`), realising the §1/§5 "optional rewrite
+step". **Toggle (per tenant, default OFF):** `settings.rewrite.enabled`, opt-in, mirroring
+`settings.reranker.enabled`; optional `settings.rewrite.model` overrides the model for the rewrite call only (a
+cheap model), still gated by `settings.llm.models_allowed` fail-closed inside the shared `internal/llm` factory
+— a new `rewrite` object added to `settings_defaults.json`/`settings_schema.json` (the merged-defaults drift
+guard keeps them in sync). **When it runs:** only when the toggle is on AND `history[]` is present; toggle off,
+single-turn (no history), or no factory ⇒ the original question is used unchanged and **no rewrite LLM call is
+made** — a strict passthrough, byte-identical to pre-08.7 (the AC's single-turn no-regression; the numeric eval
+harness is EPIC-12/§8). **The call:** one `Provider.Complete` (last `settings.answering.history_n` turns,
+default 6) with a fixed system prompt resolving pronouns/ellipsis; the conversation is delimited **data**, never
+instructions (SPEC-09 §2). Parsed defensively (unwrap fences/quotes); on empty/garbled output or any provider
+error (incl. `ErrCircuitOpen`) it falls back to the ORIGINAL question — the rewrite never fails the query
+(NFR-REL-04), errors carry no prompt content (C-4). **Retrieval-uses-standalone / answer-uses-original:**
+retrieval (embed + full-text) runs on the standalone question; the answer stage still receives the original
+question + history verbatim (SPEC-06 §5). `build` reordered settings → rewrite → retrieve (still fails before
+any SSE frame); the shared provider factory wired into both the answer stage and the query service in `ragctl
+serve`. Hermetic `internal/query` unit tests prove: multi-turn+enabled → one rewrite call, retrieval sees the
+standalone, the answer prompt keeps the original, the rewrite prompt carries history; single-turn and
+toggle-off → **zero** rewrite calls; nil factory → passthrough; rewrite error/empty → fall back, query still
+grounded; model override threaded through; `parseRewritten` unwraps fences/quotes. The query e2e is extended
+(toggle off → zero calls, then enable → one call fed history + grounded). No migration, no OpenAPI change
+(`history[]` already in the request), no new dependency.
 
 **Delivered (STORY-08.5):** the answering stage — a new `internal/answer` package (FR-RET-04/05, SPEC-06
 §4–5, ADR-0055, ISSUE-0032), the seam STORY-08.6 wraps with the `/v1/query` endpoint. `Service.Answer(ctx,

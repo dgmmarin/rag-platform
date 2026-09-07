@@ -104,6 +104,12 @@ type Service struct {
 	Names TenantNameSource
 	// Usage folds the Queries counter (nil = no counter; the response is unaffected).
 	Usage UsageRecorder
+	// Providers builds the tenant's llm.Provider for the optional follow-up→standalone
+	// question rewrite (STORY-08.7), reusing the same factory the answer path uses.
+	// Optional: nil disables rewrite entirely (strict passthrough), so wiring without
+	// it is unaffected. The rewrite is gated per tenant by settings.rewrite.enabled
+	// and only runs when history is present (see rewrite.go).
+	Providers answer.ProviderFactory
 }
 
 // Query runs the pipeline and returns the SPEC-06 §6 JSON result. On generation
@@ -233,13 +239,27 @@ func (s *Service) QueryStream(ctx context.Context, tid tenant.ID, req Request, s
 	return nil
 }
 
-// build runs retrieval and assembles the answer.Request (settings + tenant name +
-// chunk mapping) shared by both modes. Retrieval runs first so a bad request or an
-// unavailable tenant fails before any SSE headers are written.
+// build resolves settings, rewrites the follow-up (STORY-08.7), runs retrieval on the
+// resulting standalone question, and assembles the answer.Request shared by both
+// modes. Settings load first (needed by the rewrite toggle + provider); it and
+// retrieval both fail before any SSE headers are written (QueryStream checks build's
+// error before emitting). RETRIEVAL uses the standalone question; the answer stage
+// keeps the ORIGINAL question + history (SPEC-06 §5).
 func (s *Service) build(ctx context.Context, tid tenant.ID, req Request) (answer.Request, error) {
+	raw, err := s.Settings.Get(ctx, tid.String())
+	if err != nil {
+		return answer.Request{}, fmt.Errorf("query: load settings: %w", err)
+	}
+	st := parseAnswerSettings(raw)
+	st.TenantName = s.tenantName(ctx, tid)
+
+	// Rewrite the follow-up into a standalone question BEFORE retrieval (strict
+	// passthrough when disabled / single-turn — no LLM call; see rewrite.go).
+	retrievalQuestion := s.standaloneQuestion(ctx, tid, st, parseRewriteSettings(raw), req.History, req.Question)
+
 	start := time.Now()
 	results, err := s.Retrieve.Search(ctx, tid, retrieve.Request{
-		Query:   req.Question,
+		Query:   retrievalQuestion,
 		Filters: req.Filters,
 		TopK:    req.TopK,
 	})
@@ -248,16 +268,9 @@ func (s *Service) build(ctx context.Context, tid tenant.ID, req Request) (answer
 	}
 	retrievalMs := time.Since(start).Milliseconds()
 
-	raw, err := s.Settings.Get(ctx, tid.String())
-	if err != nil {
-		return answer.Request{}, fmt.Errorf("query: load settings: %w", err)
-	}
-	st := parseAnswerSettings(raw)
-	st.TenantName = s.tenantName(ctx, tid)
-
 	return answer.Request{
 		TenantID:    tid.String(),
-		Question:    req.Question,
+		Question:    req.Question, // the answer prompt uses the ORIGINAL question + history
 		Chunks:      toAnswerChunks(results),
 		History:     req.History,
 		Settings:    st,

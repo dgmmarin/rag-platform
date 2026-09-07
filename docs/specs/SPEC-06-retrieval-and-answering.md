@@ -1,6 +1,6 @@
 # SPEC-06: Retrieval and answering
 
-**Implements:** FR-RET-01..10, NFR-PERF-01/02, NFR-REL-04 · **Decisions:** ADR-0004, ADR-0007, ADR-0051, ADR-0052, ADR-0053, ADR-0054, ADR-0055, ADR-0056
+**Implements:** FR-RET-01..10, NFR-PERF-01/02, NFR-REL-04 · **Decisions:** ADR-0004, ADR-0007, ADR-0051, ADR-0052, ADR-0053, ADR-0054, ADR-0055, ADR-0056, ADR-0057
 
 ## 1. Pipeline
 ```
@@ -206,6 +206,33 @@ settings (the display name from the control-plane `tenants.name` row; the rest f
 The `settings.answering` object (`token_budget`, `history_n`) is added to the
 settings schema/defaults in this story; `min_score` already lives under
 `settings.retrieval`.
+
+### 5.3 Conversation history and question rewrite (STORY-08.7, ADR-0057)
+`internal/query` inserts an optional follow-up→standalone question **rewrite** step
+BEFORE retrieval (FR-RET-07), realising the §1 pipeline's `question rewrite (optional)`
+branch and §5's "optional rewrite step turns a follow-up into a standalone question
+before retrieval":
+
+- **Toggle (per tenant, default OFF):** `settings.rewrite.enabled` gates it, matching
+  the conservative opt-in of `settings.reranker.enabled`. `settings.rewrite.model`
+  optionally overrides the model for the rewrite call only (a cheap model), still gated
+  by `settings.llm.models_allowed` fail-closed inside the shared `internal/llm` factory
+  (§5.1) — a rejected override falls back to the original question.
+- **When it runs:** only when the toggle is on AND the request carries `history[]`.
+  With the toggle off, or a single-turn query (no history), the original question is
+  used unchanged and **no rewrite LLM call is made** — a strict passthrough, so a
+  single-turn query is byte-identical to the pre-08.7 pipeline (the AC's "no regression
+  on single-turn"; a full eval harness is EPIC-12/§8).
+- **The call:** one `Provider.Complete` (last N turns, `settings.answering.history_n`,
+  default 6) with a fixed system prompt that resolves pronouns/ellipsis into a
+  self-contained question; the conversation is delimited **data**, never instructions
+  (prompt-injection defence, SPEC-09 §2). The result is parsed defensively (unwrap code
+  fences/quotes); on empty or garbled output, or any provider error (incl.
+  `ErrCircuitOpen`), it falls back to the **original** question — the rewrite never
+  fails the query (NFR-REL-04).
+- **What uses what:** RETRIEVAL (embedding + full-text) runs on the **standalone**
+  question; the ANSWER stage (§5, STORY-08.5) still receives the **original** question
+  plus history verbatim, so the model answers the user's actual turn in context.
 
 ## 5.1 LLM provider seam (STORY-08.4, ADR-0053)
 Generation goes through `internal/llm`, a provider-neutral seam consumed by the

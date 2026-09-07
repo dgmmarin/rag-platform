@@ -87,6 +87,33 @@ func (queryStubLLMFactory) Provider(answer.Settings) (llm.Provider, error) {
 	return queryStubLLM{}, nil
 }
 
+// recordingRewriteLLM is the hermetic rewrite provider (STORY-08.7): it records each
+// Complete call (count + the prompt it received) and returns a canned standalone
+// question that still matches the seeded doc, so the rewritten query stays grounded.
+type recordingRewriteLLM struct {
+	calls   int
+	prompts []string
+}
+
+func (r *recordingRewriteLLM) Complete(_ context.Context, req llm.Request) (llm.Response, error) {
+	r.calls++
+	if n := len(req.Messages); n > 0 {
+		r.prompts = append(r.prompts, req.Messages[n-1].Content)
+	}
+	// The standalone question's terms all appear in the seeded docA content ("How to
+	// reset the X200 device"), so the full-text CTE matches and the rewritten query
+	// clears the grounding floor — unlike the context-dependent original follow-up.
+	return llm.Response{Text: "reset the X200 device", Model: "claude-sonnet-5"}, nil
+}
+
+func (r *recordingRewriteLLM) Stream(context.Context, llm.Request) (llm.Stream, error) {
+	return &queryStubStream{}, nil
+}
+
+type recordingRewriteFactory struct{ p llm.Provider }
+
+func (f recordingRewriteFactory) Provider(answer.Settings) (llm.Provider, error) { return f.p, nil }
+
 func TestQueryEndpointGoldenPath(t *testing.T) {
 	migrateControl(t)
 	ageKey, blob := writeWrappedDEK(t)
@@ -156,12 +183,14 @@ func TestQueryEndpointGoldenPath(t *testing.T) {
 	settingsSvc := tenants.NewSettingsService(tenants.SettingsFromPool(pool))
 	retrieveSvc := retrieve.NewService(resolver, settingsSvc, retrieveStubFactory{vec: vec(1, 0, 0, 0, 0, 0, 0, 0)})
 	counter := usage.NewCounter(nil)
+	rewriteStub := &recordingRewriteLLM{}
 	querySvc := &query.Service{
-		Retrieve: retrieveSvc,
-		Answer:   &answer.Service{Providers: queryStubLLMFactory{}, Usage: counter},
-		Settings: settingsSvc,
-		Names:    tenants.NewNameService(tenants.SettingsFromPool(pool)),
-		Usage:    counter,
+		Retrieve:  retrieveSvc,
+		Answer:    &answer.Service{Providers: queryStubLLMFactory{}, Usage: counter},
+		Settings:  settingsSvc,
+		Names:     tenants.NewNameService(tenants.SettingsFromPool(pool)),
+		Usage:     counter,
+		Providers: recordingRewriteFactory{p: rewriteStub},
 	}
 	h := query.NewHandlers(querySvc)
 
@@ -266,6 +295,32 @@ func TestQueryEndpointGoldenPath(t *testing.T) {
 	}
 	if len(refusalBody.Citations) != 0 {
 		t.Fatalf("refusal must have zero citations, got %d", len(refusalBody.Citations))
+	}
+
+	// --- Question rewrite (STORY-08.7, FR-RET-07). rewrite defaults OFF, so every
+	// query above was a strict passthrough: ZERO rewrite calls (the AC's single-turn
+	// no-regression, proven end-to-end). Enabling settings.rewrite.enabled and sending
+	// a MULTI-TURN query makes exactly one rewrite LLM call fed the conversation
+	// history, and the rewritten query is still grounded. ---
+	if rewriteStub.calls != 0 {
+		t.Fatalf("rewrite made %d calls with the toggle off; want 0 (single-turn passthrough)", rewriteStub.calls)
+	}
+	if _, err := settingsSvc.Patch(ctx, tenants.PatchParams{
+		TenantID: tenantID,
+		Patch:    map[string]any{"rewrite": map[string]any{"enabled": true}},
+	}); err != nil {
+		t.Fatalf("enable rewrite: %v", err)
+	}
+	mtBody := postQueryJSON(t, client, srv.URL,
+		`{"question":"what about resetting it?","history":[{"role":"user","content":"Tell me about the X200 device"},{"role":"assistant","content":"The X200 is a router."}],"stream":false}`)
+	if !mtBody.Grounded {
+		t.Fatalf("multi-turn rewritten query should be grounded, got %+v", mtBody)
+	}
+	if rewriteStub.calls != 1 {
+		t.Fatalf("rewrite calls = %d after one multi-turn query, want exactly 1", rewriteStub.calls)
+	}
+	if len(rewriteStub.prompts) != 1 || !strings.Contains(rewriteStub.prompts[0], "X200 is a router") {
+		t.Fatalf("rewrite prompt should carry the conversation history; got %q", rewriteStub.prompts)
 	}
 }
 

@@ -351,10 +351,10 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] citations emitted before text
 - [x] usage in `done`
 
-### STORY-08.7 — Conversation history and question rewrite (FR-RET-07)
-- [ ] follow-up questions resolved into standalone query before retrieval
-- [ ] toggle per tenant
-- [ ] eval shows no regression on single-turn
+### STORY-08.7 — Conversation history and question rewrite (FR-RET-07) ✅ Done — ADR-0057, ISSUE-0034
+- [x] follow-up questions resolved into standalone query before retrieval
+- [x] toggle per tenant (`settings.rewrite.enabled`, default off; optional `settings.rewrite.model`)
+- [x] eval shows no regression on single-turn (strict single-turn zero-call passthrough, proven by tests; numeric harness is EPIC-12)
 
 ### STORY-08.8 — Query log and feedback (FR-RET-09/10)
 - [ ] every query logged asynchronously with retrieved IDs and scores

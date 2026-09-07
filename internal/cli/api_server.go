@@ -213,13 +213,16 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	// control-plane registry data (C-3), read through NameService. The query log
 	// (STORY-08.8) is a nil no-op seam here. Generation loss degrades to
 	// retrieval-only (NFR-REL-04). ---
+	// One provider factory (fail-closed on the provider + model allowlists inside
+	// llm.New) shared by the answer stage and the STORY-08.7 question-rewrite step.
+	providerFactory := answer.KeyedProviderFactory{LLM: llm.Factory{Keys: llm.Keys{
+		Anthropic:     cfg.AnthropicAPIKey,
+		OpenAI:        cfg.OpenAIAPIKey,
+		OpenAIBaseURL: cfg.OpenAIBaseURL,
+	}}}
 	answerSvc := &answer.Service{
-		Providers: answer.KeyedProviderFactory{LLM: llm.Factory{Keys: llm.Keys{
-			Anthropic:     cfg.AnthropicAPIKey,
-			OpenAI:        cfg.OpenAIAPIKey,
-			OpenAIBaseURL: cfg.OpenAIBaseURL,
-		}}},
-		Usage: usageCounter,
+		Providers: providerFactory,
+		Usage:     usageCounter,
 		// Logger: nil — the async query log lands in STORY-08.8.
 	}
 	querySvc := &query.Service{
@@ -228,6 +231,10 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		Settings: settingsSvc,
 		Names:    tenants.NewNameService(tenants.SettingsFromPool(pool)),
 		Usage:    usageCounter,
+		// Providers powers the optional follow-up→standalone rewrite (STORY-08.7),
+		// gated per tenant by settings.rewrite.enabled (default off); strict
+		// passthrough for single-turn queries.
+		Providers: providerFactory,
 	}
 	queryHandlers := query.NewHandlers(querySvc)
 
