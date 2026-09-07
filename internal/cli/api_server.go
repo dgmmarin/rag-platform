@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/rag-platform/ragctl/internal/answer"
 	"github.com/rag-platform/ragctl/internal/api"
 	"github.com/rag-platform/ragctl/internal/config"
 	"github.com/rag-platform/ragctl/internal/connector"
@@ -38,6 +39,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/objectstore"
 	"github.com/rag-platform/ragctl/internal/obs"
 	"github.com/rag-platform/ragctl/internal/provision"
+	"github.com/rag-platform/ragctl/internal/query"
 	"github.com/rag-platform/ragctl/internal/retrieve"
 	"github.com/rag-platform/ragctl/internal/tenant"
 )
@@ -200,6 +202,35 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	}
 	retrieveHandlers := retrieve.NewHandlers(retrieveSvc)
 
+	// --- Query (tenant-scoped grounded answering, STORY-08.6, FR-RET-06, SPEC-06
+	// §6). Wires the retrieve pipeline (above) + the answering stage (STORY-08.5)
+	// behind POST /v1/query in JSON and SSE modes. The answering stage builds the
+	// tenant's llm.Provider from settings.llm via the shared llm.Factory (fail-closed
+	// on the provider + model allowlists, SPEC-09 §2) and folds LLM tokens into
+	// usage_daily (ADR-0024); the query service owns the Queries counter (08.5 left
+	// it here to avoid a double count) and, for SSE, drives Provider.Stream into the
+	// retrieval→delta→done events. The tenant display name for the refusal message is
+	// control-plane registry data (C-3), read through NameService. The query log
+	// (STORY-08.8) is a nil no-op seam here. Generation loss degrades to
+	// retrieval-only (NFR-REL-04). ---
+	answerSvc := &answer.Service{
+		Providers: answer.KeyedProviderFactory{LLM: llm.Factory{Keys: llm.Keys{
+			Anthropic:     cfg.AnthropicAPIKey,
+			OpenAI:        cfg.OpenAIAPIKey,
+			OpenAIBaseURL: cfg.OpenAIBaseURL,
+		}}},
+		Usage: usageCounter,
+		// Logger: nil — the async query log lands in STORY-08.8.
+	}
+	querySvc := &query.Service{
+		Retrieve: retrieveSvc,
+		Answer:   answerSvc,
+		Settings: settingsSvc,
+		Names:    tenants.NewNameService(tenants.SettingsFromPool(pool)),
+		Usage:    usageCounter,
+	}
+	queryHandlers := query.NewHandlers(querySvc)
+
 	// --- Rate limiting (per key + per tenant, credential-keyed). ---
 	limiter := ratelimit.New(nil)
 
@@ -285,6 +316,7 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		JobCancel: http.HandlerFunc(jobHandlers.Cancel),
 
 		Retrieve: http.HandlerFunc(retrieveHandlers.Retrieve),
+		Query:    http.HandlerFunc(queryHandlers.Query),
 	}
 
 	return &apiServer{

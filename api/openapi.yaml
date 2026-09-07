@@ -786,6 +786,47 @@ paths:
       responses:
         "200":
           description: the OpenAPI 3.1 document
+  /v1/query:
+    post:
+      summary: 'Answer a question grounded in the tenant''s content, with [n] citations (SPEC-06 §6). Body: {question, filters?, history?, top_k?, stream?}. stream=false returns JSON {id, answer, grounded, citations[], usage, model}; stream=true returns a text/event-stream of retrieval (citations first), delta (text), done (usage) events. Below the grounding floor: grounded=false with a fixed refusal and no generation. If generation is unavailable the query degrades to retrieval-only rather than failing (NFR-REL-04).'
+      operationId: query
+      tags:
+        - retrieval
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: grounded answer (JSON), or an SSE event stream when stream=true
+        "400":
+          description: missing question or malformed body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "401":
+          description: missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "403":
+          description: API key lacks the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "429":
+          description: rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        "503":
+          description: tenant is not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /v1/retrieve:
     post:
       summary: 'Hybrid retrieval: embed the query and return ranked chunks with scores and citation metadata (no generation). score is the fused RRF score, or the reranker score when the tenant enables reranking. Body: {query, top_k?, filters?}.'

@@ -346,10 +346,10 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] below-floor → grounded=false without LLM call
 - [x] language matching; token budget respected
 
-### STORY-08.6 — Query endpoint with streaming (FR-RET-06, SPEC-06 §6)
-- [ ] JSON and SSE modes
-- [ ] citations emitted before text
-- [ ] usage in `done`
+### STORY-08.6 — Query endpoint with streaming (FR-RET-06, SPEC-06 §6) ✅ Done — ADR-0056, ISSUE-0033
+- [x] JSON and SSE modes
+- [x] citations emitted before text
+- [x] usage in `done`
 
 ### STORY-08.7 — Conversation history and question rewrite (FR-RET-07)
 - [ ] follow-up questions resolved into standalone query before retrieval

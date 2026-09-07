@@ -178,6 +178,35 @@ embedding-provider failure is a generic `500` that never leaks provider internal
 (C-4); an unavailable tenant is `503`. The platform embedding-provider key is config
 (`EMBEDDING_API_KEY`), never logged or returned. See ADR-0052.
 
+### 2f. Query (STORY-08.6 realisation)
+`POST /v1/query` is served by `internal/query` (`Service` + `Handlers`) — the `query`
+scope. It is the grounded answering endpoint (FR-RET-06, SPEC-06 §6/§6.1): it wires
+the retrieval pipeline (STORY-08.1/08.3) and the answering stage (STORY-08.5) and
+returns an answer grounded in the tenant's content with `[n]` citations. Tenant
+content is reached only via a `tenant.DB` from the resolver (ADR-0003, C-3); the
+tenant is taken only from the authenticated API key (FR-ACC-03), never a parameter.
+
+Request body: `{"question": "...", "filters": {"source_ids": [], "uri_prefix": "...",
+"date_from": "...", "date_to": "...", "metadata": {...}}, "history":
+[{"role","content"}], "stream": false, "top_k": 8}` — `filters`, `history`, `stream`
+and `top_k` are optional (`filters` mirror `/v1/retrieve`; `history` is included
+verbatim, the follow-up rewrite is STORY-08.7). The `stream` flag selects the mode:
+
+- `stream:false` → JSON `{id, answer, grounded, citations[], usage{retrieval_ms,
+  generation_ms, in_tokens, out_tokens}, model}` (SPEC-06 §6).
+- `stream:true` → `text/event-stream` of `retrieval` (citations first), `delta`
+  (text), `done` (usage) events (SPEC-06 §6.1).
+
+Below the grounding floor: `grounded=false` with the fixed refusal and no generation.
+If generation is unavailable (`llm.ErrCircuitOpen`) the query degrades to
+retrieval-only (a `200` with the retrieved citations and a "generation unavailable"
+signal) rather than a hard `500` (NFR-REL-04). A missing question or malformed body is
+`400`; an unavailable tenant is `503`; these pre-stream failures are always a JSON
+envelope (no SSE headers are written until the first event). The `Queries` usage
+counter is incremented once per answered query; LLM tokens fold into `usage_daily`
+(ADR-0024). Platform LLM keys are config (`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`),
+never logged or returned (C-4). See ADR-0056.
+
 ## 3. OpenAPI
 Generated from Go into `api/openapi.yaml`; served at `/v1/openapi.json`. Contract tests in CI validate responses against it.
 

@@ -1,6 +1,6 @@
 # SPEC-06: Retrieval and answering
 
-**Implements:** FR-RET-01..10, NFR-PERF-01/02, NFR-REL-04 · **Decisions:** ADR-0004, ADR-0007, ADR-0051, ADR-0052, ADR-0053, ADR-0054, ADR-0055
+**Implements:** FR-RET-01..10, NFR-PERF-01/02, NFR-REL-04 · **Decisions:** ADR-0004, ADR-0007, ADR-0051, ADR-0052, ADR-0053, ADR-0054, ADR-0055, ADR-0056
 
 ## 1. Pipeline
 ```
@@ -266,6 +266,40 @@ Response:
  "model":"claude-sonnet-5"}
 ```
 Streaming: SSE events `retrieval` (citations first), `delta` (text), `done` (usage).
+
+### 6.1 Query endpoint realisation (STORY-08.6, ADR-0056)
+`POST /v1/query` is served by `internal/query` (`Service` + `Handlers`) — the
+composition root that wires the retrieval pipeline (`internal/retrieve`,
+STORY-08.1/08.3) and the answering stage (`internal/answer`, STORY-08.5) behind one
+`query` scope route (SPEC-07 §2/§2f) in two response modes selected by the body's
+`stream` flag. The tenant is the authenticated principal (FR-ACC-03), never a
+parameter; tenant content is reached only through the resolver + `*tenant.DB`
+(ADR-0003, C-1, C-3); the tenant display name for the refusal is control-plane
+registry data read through `tenants.NameService` (C-3).
+
+- **JSON mode (`stream:false`)** calls `answer.Service.Answer` and returns the §6 body
+  `{id, answer, grounded, citations[], usage, model}`. Citations are the referenced
+  subset (unreferenced dropped, §5).
+- **SSE mode (`stream:true`)** shares the answering front half via
+  `answer.Service.Prepare` (grounding gate + prompt assembly, no generation), then
+  streams the tenant's model through the `internal/llm` `Provider.Stream` pull
+  iterator. Events, in order: `retrieval` (the **candidate** citations — one per
+  numbered context chunk, emitted BEFORE any text so the client maps `[n]` markers as
+  the answer streams; the numbering equals the context order and matches JSON mode's),
+  then `delta` (one per text delta), then `done` (`{id, grounded, model, usage}`).
+- **Grounding refusal (§4)** in both modes makes no LLM call: JSON returns the refusal
+  body; SSE emits `retrieval` (empty citations) + one `delta` (the fixed message) +
+  `done` (zero usage).
+- **Graceful degradation (NFR-REL-04):** when generation is unavailable
+  (`llm.ErrCircuitOpen`) the query degrades to retrieval-only rather than failing —
+  JSON `200` with `grounded=true`, the candidate citations and a fixed
+  "generation unavailable" message; SSE `retrieval` + that message `delta` +
+  `done{generation_unavailable:true}`.
+- **Accounting (FR-RET-04, ADR-0024):** the `Queries` counter is incremented here,
+  exactly once per answered query (08.5 deliberately left it to 08.6 to avoid a double
+  count); LLM tokens are folded by `internal/answer` (JSON inline; SSE via
+  `RecordStreamed` from the terminal event). The async query log (STORY-08.8) is a nil
+  no-op seam here.
 
 ## 7. Performance budget (p95, 1 M chunks)
 embed question 80 ms · hybrid SQL 120 ms · rerank (optional) 250 ms · prompt build 5 ms · log write async. Total pre-generation ≤ 300 ms without rerank, ≤ 550 ms with.

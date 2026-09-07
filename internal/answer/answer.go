@@ -231,22 +231,59 @@ type Service struct {
 // markerRe matches a citation marker like [1] or [12] in the model's answer.
 var markerRe = regexp.MustCompile(`\[(\d+)\]`)
 
-// Answer runs the grounding gate, assembles the prompt, generates, and maps
-// citations. On the refusal path it makes no LLM call.
-func (s *Service) Answer(ctx context.Context, req Request) (Result, error) {
+// Prepared is the shared front half of the answering pipeline — the grounding gate
+// plus prompt assembly, with generation NOT yet run. Answer (JSON, non-streaming)
+// and the STORY-08.6 SSE query endpoint both build on it so the two modes assemble
+// the SAME prompt and the SAME numbered citations. On the refusal path Grounded is
+// false, RefusalText carries the fixed message, and Provider/LLMRequest are zero —
+// the provider is never even built (SPEC-06 §4).
+type Prepared struct {
+	// ID is the response id (SPEC-06 §6, "q_..."). Prepare mints it once so the
+	// SSE `done` event, the JSON body, and the query log all agree.
+	ID string
+	// Grounded is false when no chunk passed the min_score floor.
+	Grounded bool
+	// RefusalText is the fixed SPEC-06 §4 message, set only when !Grounded.
+	RefusalText string
+	// Citations are the CANDIDATE citations: one per numbered context chunk
+	// (N = 1..len(Included)), in context order. The SSE path emits these up front
+	// (SPEC-06 §6 "retrieval (citations first)", approach (a), ADR-0056): the [n]
+	// markers in the streamed text index into them. JSON mode instead keeps only the
+	// referenced subset (mapCitations, unreferenced dropped) — the numbering is the
+	// same, JSON simply drops the ones no marker used. Empty on refusal.
+	Citations []Citation
+	// Included is the context chunk set actually numbered into the prompt (the [n] →
+	// chunk mapping), for post-hoc citation mapping and query logging.
+	Included []Chunk
+	// Provider is the tenant's llm.Provider, built only on the grounded path (nil on
+	// refusal). The SSE path calls Provider.Stream; Answer calls Provider.Complete.
+	Provider llm.Provider
+	// LLMRequest is the assembled generation request (system + history + sources turn,
+	// model, max tokens). Identical for Complete (JSON) and Stream (SSE).
+	LLMRequest llm.Request
+	// Model is the tenant's configured model (LLMRequest.Model), the fallback for the
+	// response `model` when the provider does not echo one.
+	Model string
+	// RetrievalMs is the caller-measured retrieval latency, carried into usage.
+	RetrievalMs int64
+}
+
+// Prepare runs the grounding gate (SPEC-06 §4) and, when grounded, assembles the
+// prompt and builds the provider (SPEC-06 §5) WITHOUT generating. It is the front
+// half Answer reuses and the SSE path (STORY-08.6) drives directly. On the refusal
+// path it returns before the provider is built (no LLM call is possible).
+func (s *Service) Prepare(_ context.Context, req Request) (Prepared, error) {
 	st := req.Settings
 
 	// 1. Grounding gate (SPEC-06 §4): keep only chunks above the floor.
 	grounded := passFloor(req.Chunks, st.minScore())
 	if len(grounded) == 0 {
-		res := Result{
-			ID:       newID(),
-			Answer:   fmt.Sprintf("I couldn't find information about that in %s's content.", st.TenantName),
-			Grounded: false,
-			Usage:    Usage{RetrievalMs: req.RetrievalMs},
-		}
-		s.logQuery(ctx, req, res, nil)
-		return res, nil
+		return Prepared{
+			ID:          newID(),
+			Grounded:    false,
+			RefusalText: refusalMessage(st.TenantName),
+			RetrievalMs: req.RetrievalMs,
+		}, nil
 	}
 
 	// 2. Prompt assembly (SPEC-06 §5). Number the grounded chunks, then trim the
@@ -255,18 +292,51 @@ func (s *Service) Answer(ctx context.Context, req Request) (Result, error) {
 	system := systemPrompt(st.TenantName)
 	messages := buildMessages(req.History, st.historyN(), included, req.Question)
 
-	// 3. Generation (STORY-08.4). Build the provider only now — never on refusal.
+	// 3. Build the provider only now — never on refusal.
 	prov, err := s.Providers.Provider(st)
 	if err != nil {
-		return Result{}, fmt.Errorf("answer: build provider: %w", err)
+		return Prepared{}, fmt.Errorf("answer: build provider: %w", err)
 	}
+	return Prepared{
+		ID:        newID(),
+		Grounded:  true,
+		Citations: candidateCitations(included),
+		Included:  included,
+		Provider:  prov,
+		LLMRequest: llm.Request{
+			Model:     st.LLMModel,
+			System:    system,
+			Messages:  messages,
+			MaxTokens: st.maxTokens(),
+		},
+		Model:       st.LLMModel,
+		RetrievalMs: req.RetrievalMs,
+	}, nil
+}
+
+// Answer runs the grounding gate, assembles the prompt, generates, and maps
+// citations. On the refusal path it makes no LLM call. It is the JSON
+// (non-streaming) entry point; the SSE path (STORY-08.6) uses Prepare + Stream +
+// RecordStreamed instead, sharing Prepare's grounding + assembly.
+func (s *Service) Answer(ctx context.Context, req Request) (Result, error) {
+	p, err := s.Prepare(ctx, req)
+	if err != nil {
+		return Result{}, err
+	}
+	if !p.Grounded {
+		res := Result{
+			ID:       p.ID,
+			Answer:   p.RefusalText,
+			Grounded: false,
+			Usage:    Usage{RetrievalMs: req.RetrievalMs},
+		}
+		s.logQuery(ctx, req, res, nil)
+		return res, nil
+	}
+
+	// Generation (STORY-08.4).
 	start := time.Now()
-	resp, err := prov.Complete(ctx, llm.Request{
-		Model:     st.LLMModel,
-		System:    system,
-		Messages:  messages,
-		MaxTokens: st.maxTokens(),
-	})
+	resp, err := p.Provider.Complete(ctx, p.LLMRequest)
 	genMs := time.Since(start).Milliseconds()
 	if err != nil {
 		// Surface a clean error preserving the sentinel (e.g. llm.ErrCircuitOpen so
@@ -274,16 +344,16 @@ func (s *Service) Answer(ctx context.Context, req Request) (Result, error) {
 		return Result{}, fmt.Errorf("answer: generation failed: %w", err)
 	}
 
-	// 4. Citation mapping + unreferenced drop (SPEC-06 §5).
-	citations := mapCitations(resp.Text, included)
+	// Citation mapping + unreferenced drop (SPEC-06 §5).
+	citations := mapCitations(resp.Text, p.Included)
 
-	// 5. Usage accounting (FR-RET-04, ADR-0024).
+	// Usage accounting (FR-RET-04, ADR-0024).
 	model := resp.Model
 	if model == "" {
-		model = st.LLMModel
+		model = p.Model
 	}
 	res := Result{
-		ID:        newID(),
+		ID:        p.ID,
 		Answer:    resp.Text,
 		Grounded:  true,
 		Citations: citations,
@@ -301,8 +371,55 @@ func (s *Service) Answer(ctx context.Context, req Request) (Result, error) {
 			LLMOutTokens: int64(resp.Usage.OutputTokens),
 		})
 	}
-	s.logQuery(ctx, req, res, included)
+	s.logQuery(ctx, req, res, p.Included)
 	return res, nil
+}
+
+// RecordStreamed folds a streamed generation's usage into usage_daily and logs the
+// query (STORY-08.8 seam) — the SSE-path counterpart of the accounting Answer does
+// inline. STORY-08.6 calls it once the SSE stream drains, with the final usage (zero
+// LLM tokens on the refusal or generation-unavailable paths, so nothing is folded
+// then). The log record carries the candidate citation chunk ids (the SSE contract
+// emits all context chunks up front and maps [n] client-side).
+func (s *Service) RecordStreamed(ctx context.Context, req Request, p Prepared, u Usage) {
+	if s.Usage != nil && req.TenantID != "" && (u.InTokens > 0 || u.OutTokens > 0) {
+		s.Usage.Add(req.TenantID, usage.Delta{
+			LLMInTokens:  int64(u.InTokens),
+			LLMOutTokens: int64(u.OutTokens),
+		})
+	}
+	res := Result{
+		ID:        p.ID,
+		Grounded:  p.Grounded,
+		Citations: p.Citations,
+		Usage:     u,
+		Model:     p.Model,
+	}
+	s.logQuery(ctx, req, res, p.Included)
+}
+
+// refusalMessage is the fixed SPEC-06 §4 refusal, substituting the tenant name.
+func refusalMessage(tenantName string) string {
+	return fmt.Sprintf("I couldn't find information about that in %s's content.", tenantName)
+}
+
+// candidateCitations builds one citation per numbered context chunk (N = 1..len),
+// in context order — the candidate set the SSE path emits up front (SPEC-06 §6,
+// ADR-0056). Unlike mapCitations it drops nothing: the client maps [n] markers to
+// these as the answer streams.
+func candidateCitations(chunks []Chunk) []Citation {
+	out := make([]Citation, 0, len(chunks))
+	for i, c := range chunks {
+		out = append(out, Citation{
+			N:           i + 1,
+			DocumentID:  c.DocumentID,
+			Title:       c.Title,
+			URI:         c.URI,
+			HeadingPath: c.HeadingPath,
+			Snippet:     snippet(c.Content),
+		})
+	}
+	return out
 }
 
 // passFloor returns the chunks whose Score meets the grounding floor, preserving

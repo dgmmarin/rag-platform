@@ -20,12 +20,12 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-05 | Ingestion pipeline | 42 | 42 | ✅ Complete |
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 39 | ✅ Complete |
-| EPIC-08 | Retrieval and answering | 39 | 28 | 🚧 In progress |
+| EPIC-08 | Retrieval and answering | 39 | 33 | 🚧 In progress |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
 | EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **187** | **55%** |
+| **Total** | | **337** | **192** | **57%** |
 
 ---
 
@@ -1183,7 +1183,7 @@ but is not yet consulted by the crawler (the effective cap is per-source `max_pa
 Docs-only: `go build ./...` green, no code/schema/OpenAPI/migration change. **EPIC-07
 is complete (39/39 pts).**
 
-## EPIC-08 · Retrieval and answering — 🚧 28/39 pts
+## EPIC-08 · Retrieval and answering — 🚧 33/39 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -1192,9 +1192,39 @@ is complete (39/39 pts).**
 | STORY-08.3 | Reranker interface and providers | 5 | ✅ Done | FR-RET-03, ADR-0054, SPEC-06 §3 |
 | STORY-08.4 | LLM provider interface | 5 | ✅ Done | NFR-MNT-02, NFR-REL-04 |
 | STORY-08.5 | Prompt assembly, citations and grounding refusal | 8 | ✅ Done | FR-RET-04/05, SPEC-06 §4–5, ADR-0055 |
-| STORY-08.6 | Query endpoint with streaming | 5 | 🔲 Todo | FR-RET-06, SPEC-06 §6 |
+| STORY-08.6 | Query endpoint with streaming | 5 | ✅ Done | FR-RET-06, SPEC-06 §6/§6.1, SPEC-07 §2f, ADR-0056 |
 | STORY-08.7 | Conversation history and question rewrite | 3 | 🔲 Todo | FR-RET-07 |
 | STORY-08.8 | Query log and feedback | 3 | 🔲 Todo | FR-RET-09/10 |
+
+**Delivered (STORY-08.6):** the grounded answering endpoint — a new `internal/query` package (FR-RET-06,
+SPEC-06 §6/§6.1, SPEC-07 §2f, ADR-0056, ISSUE-0033), the composition root wiring the retrieval pipeline
+(STORY-08.1/08.3) and the answering stage (STORY-08.5) behind `POST /v1/query` (`query` scope) in two modes.
+The tenant is the authenticated principal (FR-ACC-03), never a parameter; tenant content is reached only via
+the resolver + `*tenant.DB` (ADR-0003, C-1, C-3); the tenant display name for the refusal is control-plane
+registry data read through a new `tenants.NameService` (C-3). **JSON (`stream:false`):** `Service.Query` →
+`answer.Service.Answer` → the §6 body `{id, answer, grounded, citations[], usage, model}` (citations = the
+referenced subset). **SSE (`stream:true`):** shares the answering front half via a new
+`answer.Service.Prepare` (grounding gate + prompt assembly, no generation — an additive, behaviour-preserving
+extract of `Answer`), then drives the `internal/llm` `Provider.Stream` pull iterator; emits `retrieval`
+(**candidate** citations FIRST — one per numbered context chunk, so the client maps `[n]` as text streams,
+resolving citations-before-text by approach (a); numbering matches JSON mode) → `delta` (text) → `done`
+(`{id, grounded, model, usage}` — usage in `done`, the AC). **Grounding refusal (§4)** in both modes makes NO
+LLM call (JSON refusal body; SSE `retrieval` empty + `delta` fixed message + `done` zero usage).
+**Degradation (NFR-REL-04):** `llm.ErrCircuitOpen` degrades to retrieval-only (JSON 200 with candidate
+citations + a "generation unavailable" message; SSE `done{generation_unavailable:true}`) rather than a hard
+500; other generation errors are a generic 500 (C-4). Pre-stream failures (empty question 400, unavailable
+tenant 503, bad body 400) stay JSON — the `httpSink` writes SSE headers only on the first event.
+**Accounting (FR-RET-04, ADR-0024):** the `Queries` counter is incremented here exactly once per answered
+query (08.5 left it here to avoid a double count); LLM tokens are folded by `internal/answer` (JSON inline;
+SSE via a new `RecordStreamed` from the terminal event). The async query log (STORY-08.8) is a nil no-op seam;
+history is passed through verbatim (the rewrite is STORY-08.7). Route mounted under `RequireScopeQuery` + rate
+limit and documented in the code-derived OpenAPI (`api/openapi.yaml` regenerated; drift + contract guards
+green); wired in `ragctl serve` with the shared `llm.Factory` + `usage.Counter`. Hermetic unit tests
+(`internal/query` 81%, `internal/answer` 90%) cover both modes, ordering, refusal (zero provider calls),
+degradation and accounting; a DB-backed e2e (`test/e2e/query_endpoint_e2e_test.go`) drives the REAL router +
+resolver + hybrid SQL with a stubbed embedder and stubbed LLM (no keys/network): JSON grounded answer + `[1]`
+citation + usage, the full SSE order with citations-before-text, and a below-floor refusal. No migration, no
+new dependency.
 
 **Delivered (STORY-08.5):** the answering stage — a new `internal/answer` package (FR-RET-04/05, SPEC-06
 §4–5, ADR-0055, ISSUE-0032), the seam STORY-08.6 wraps with the `/v1/query` endpoint. `Service.Answer(ctx,

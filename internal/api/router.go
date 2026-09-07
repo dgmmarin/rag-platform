@@ -79,6 +79,12 @@ type Deps struct {
 	// resolver (ADR-0003); the tenant is derived from the API key (FR-ACC-03).
 	// `query` scope (SPEC-07 §2); a nil handler is the not-implemented seam.
 	Retrieve http.Handler // POST /v1/retrieve (query scope)
+
+	// Query handler (STORY-08.6, FR-RET-06). The grounded answering endpoint —
+	// retrieve + answer, in JSON or SSE form (SPEC-06 §6). Reads tenant content via
+	// the resolver (ADR-0003); the tenant is derived from the API key (FR-ACC-03).
+	// `query` scope (SPEC-07 §2); a nil handler is the not-implemented seam.
+	Query http.Handler // POST /v1/query (query scope)
 }
 
 // New assembles the public HTTP handler: the global middleware chain in the
@@ -167,6 +173,12 @@ func New(d Deps) http.Handler {
 	// the resolver (ADR-0003); the tenant is derived from the API key (FR-ACC-03).
 	// `query` scope. Bearer-authenticated, so no CSRF applies.
 	mux.Handle("POST /v1/retrieve", tenantScoped(d.RequireScopeQuery, d.Retrieve))
+
+	// Query (STORY-08.6, FR-RET-06, SPEC-06 §6, SPEC-07 §2f). The grounded answering
+	// endpoint (retrieve + answer), JSON or SSE. Tenant content via the resolver
+	// (ADR-0003); tenant derived from the API key (FR-ACC-03). `query` scope.
+	// Bearer-authenticated, so no CSRF applies.
+	mux.Handle("POST /v1/query", tenantScoped(d.RequireScopeQuery, d.Query))
 
 	// Settings/members/api-keys routes are later EPIC-04 work. They are
 	// intentionally NOT registered here: an unregistered path yields the not_found

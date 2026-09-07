@@ -313,6 +313,15 @@ func liveRoutes() []route {
 		{method: "POST", path: "/v1/retrieve", tag: "retrieval", summary: "Hybrid retrieval: embed the query and return ranked chunks with scores and citation metadata (no generation). score is the fused RRF score, or the reranker score when the tenant enables reranking. Body: {query, top_k?, filters?}.", operationID: "retrieve", auth: authScopeQuery,
 			success: "ranked chunks",
 			extra:   []errResp{{"400", "missing query or malformed body"}, {"503", "tenant is not available"}}},
+
+		// Query (STORY-08.6, FR-RET-06, SPEC-06 §6). Grounded answering: retrieve +
+		// answer, tenant derived from the API key (FR-ACC-03). `query` scope. Two
+		// response modes selected by the body's `stream` flag: JSON (the documented
+		// success body) or, when stream=true, a text/event-stream of retrieval
+		// (citations first) → delta (text) → done (usage) events.
+		{method: "POST", path: "/v1/query", tag: "retrieval", summary: "Answer a question grounded in the tenant's content, with [n] citations (SPEC-06 §6). Body: {question, filters?, history?, top_k?, stream?}. stream=false returns JSON {id, answer, grounded, citations[], usage, model}; stream=true returns a text/event-stream of retrieval (citations first), delta (text), done (usage) events. Below the grounding floor: grounded=false with a fixed refusal and no generation. If generation is unavailable the query degrades to retrieval-only rather than failing (NFR-REL-04).", operationID: "query", auth: authScopeQuery,
+			success: "grounded answer (JSON), or an SSE event stream when stream=true",
+			extra:   []errResp{{"400", "missing question or malformed body"}, {"503", "tenant is not available"}}},
 	}
 }
 
