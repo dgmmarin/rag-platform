@@ -19,9 +19,18 @@ on, so this ADR records how auth, serving, and deployment are shaped instead.
 ## Options / decisions
 - **Stack = Next.js (App Router) + TypeScript, running as a Node service.** Chosen by the maintainer
   over a Vite SPA (`go:embed`) and over Next static-export. Routing/SSR via the App Router; server
-  state via TanStack Query on the client where needed; styling via CSS Modules with a small token
-  set (no Tailwind / heavy component library — YAGNI). Trade-off accepted: a long-running Node
+  state via TanStack Query on the client where needed. Trade-off accepted: a long-running Node
   service now exists alongside `ragctl`, with its own build, deploy, health, and CI.
+
+- **Styling = Tailwind CSS (v4, `@tailwindcss/postcss`), superseding the initial "CSS Modules, no
+  Tailwind (YAGNI)" note.** STORY-11.1 Task 7 found the CSS-Modules placeholder wouldn't carry a
+  cohesive, high-end look across the growing screen count without hand-rolled token duplication;
+  the maintainer approved adding Tailwind as a build-time PostCSS dependency (no CDN, no heavy
+  component library) for a Modern SaaS (Linear/Vercel-like) design system: one desaturated
+  indigo/violet accent, one cool-tinted neutral gray scale, light + dark via Tailwind's `class`
+  strategy (system default, small toggle, guarded `localStorage`), Geist Sans/Mono via `next/font`.
+  Tokens are defined once as CSS variables (`app/globals.css`) and mapped into Tailwind's theme, so
+  both themes stay a single source of truth. All CSS Modules from 11.1's earlier tasks are removed.
 
 - **BFF topology; the browser is same-origin to Next only.**
   `Browser ──same-origin──> Next (Node, :3000) ──server-to-server──> ragctl API (:8080)`.

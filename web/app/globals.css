@@ -1,49 +1,105 @@
+@import "tailwindcss";
+
+/* Class-based dark mode: an explicit `.dark` on <html> wins; the pre-hydration
+   script in app/layout.tsx resolves "system" to a class before paint, so no
+   `prefers-color-scheme` branch is needed here. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* One cool-tinted neutral family + one desaturated indigo/violet accent,
+   redefined per theme so `@theme inline` below can re-evaluate them live
+   instead of baking one theme in at build time. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --color-bg: #fafafa;
+  --color-bg-elevated: #ffffff;
+  --color-bg-subtle: #f1f1f4;
+  --color-border: #e6e6ea;
+  --color-border-strong: #d6d6dd;
+  --color-fg: #101012;
+  --color-fg-muted: #5c5c68;
+  --color-fg-subtle: #8b8b96;
+
+  --color-accent: #5e6ad2;
+  --color-accent-hover: #4c57b8;
+  --color-accent-active: #3e4894;
+  --color-accent-fg: #ffffff;
+  --color-accent-text: #4c57b8;
+  --color-accent-tint: color-mix(in srgb, var(--color-accent-text) 10%, var(--color-bg));
+
+  --color-danger-text: #b42318;
+  --color-danger-tint: color-mix(in srgb, var(--color-danger-text) 8%, var(--color-bg));
+
+  --card-shadow:
+    0 1px 2px 0 rgba(37, 35, 90, 0.06),
+    0 12px 28px -8px rgba(37, 35, 90, 0.12);
+  --popover-shadow:
+    0 2px 6px -1px rgba(37, 35, 90, 0.1),
+    0 8px 20px -4px rgba(37, 35, 90, 0.14);
+
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+.dark {
+  --color-bg: #0a0a0b;
+  --color-bg-elevated: #131316;
+  --color-bg-subtle: #1a1a1e;
+  --color-border: #252529;
+  --color-border-strong: #2f2f35;
+  --color-fg: #f2f2f4;
+  --color-fg-muted: #a3a3ad;
+  --color-fg-subtle: #75757f;
+
+  --color-accent: #5e6ad2;
+  --color-accent-hover: #6f7ada;
+  --color-accent-active: #4c57b8;
+  --color-accent-fg: #ffffff;
+  --color-accent-text: #8d97e8;
+  --color-accent-tint: color-mix(in srgb, var(--color-accent-text) 14%, var(--color-bg));
+
+  --color-danger-text: #ef6a61;
+  --color-danger-tint: color-mix(in srgb, var(--color-danger-text) 12%, var(--color-bg));
+
+  --card-shadow:
+    0 1px 2px 0 rgba(0, 0, 0, 0.3),
+    0 16px 32px -12px rgba(0, 0, 0, 0.55);
+  --popover-shadow:
+    0 2px 6px -1px rgba(0, 0, 0, 0.35),
+    0 12px 24px -6px rgba(0, 0, 0, 0.5);
+
+  color-scheme: dark;
 }
 
-html {
-  height: 100%;
+@theme inline {
+  --color-bg: var(--color-bg);
+  --color-bg-elevated: var(--color-bg-elevated);
+  --color-bg-subtle: var(--color-bg-subtle);
+  --color-border: var(--color-border);
+  --color-border-strong: var(--color-border-strong);
+  --color-fg: var(--color-fg);
+  --color-fg-muted: var(--color-fg-muted);
+  --color-fg-subtle: var(--color-fg-subtle);
+
+  --color-accent: var(--color-accent);
+  --color-accent-hover: var(--color-accent-hover);
+  --color-accent-active: var(--color-accent-active);
+  --color-accent-fg: var(--color-accent-fg);
+  --color-accent-text: var(--color-accent-text);
+  --color-accent-tint: var(--color-accent-tint);
+
+  --color-danger-text: var(--color-danger-text);
+  --color-danger-tint: var(--color-danger-tint);
+
+  --shadow-card: var(--card-shadow);
+  --shadow-popover: var(--popover-shadow);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
 }
+
+@source "./app";
+@source "./components";
+@source "./lib";
 
 html,
 body {
-  max-width: 100vw;
-  overflow-x: hidden;
-}
-
-body {
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-* {
-  box-sizing: border-box;
-  padding: 0;
-  margin: 0;
-}
-
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-@media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
-  }
+  height: 100%;
 }

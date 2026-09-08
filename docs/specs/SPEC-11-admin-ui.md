@@ -92,6 +92,28 @@ Session-authenticated (behind `RequireSession`), not platform-admin gated, GET (
 - **Data layer:** a browser `fetch` wrapper (same-origin to Next) that attaches `X-CSRF-Token` on
   mutations and surfaces a 401 as logged-out; TanStack Query for cached reads where useful.
 
+### 5.1 Styling (STORY-11.1 Task 7, ADR-0073)
+
+- **Tailwind CSS v4** (`@tailwindcss/postcss`, build-time PostCSS — no CDN), superseding the
+  earlier "CSS Modules, no Tailwind" placeholder; the migrated `*.module.css` files are removed.
+- **Design system: Modern SaaS (Linear/Vercel-like), light + dark.** One desaturated indigo/violet
+  accent (`--color-accent` family, no second accent, no purple→blue gradient); one cool-tinted
+  neutral gray scale (`--color-bg`/`-elevated`/`-subtle`, `--color-border`, `--color-fg` family);
+  an off-black dark base (`#0a0a0b`/`#131316`, not pure black); 1px borders with tinted (not pure
+  black) shadows (`--shadow-card`, `--shadow-popover`); a modest radius scale (tighter on inputs
+  and buttons, softer on cards/panels). Tokens live as CSS variables in `app/globals.css`, redefined
+  per theme and mapped into Tailwind's `@theme inline` so both themes share one utility set.
+- **Theme:** Tailwind's `class` strategy (`@custom-variant dark`). Defaults to the OS preference,
+  resolved to a `dark` class on `<html>` by a small inline pre-hydration script (no flash); a
+  labeled tri-state control in the top bar (System/Light/Dark — not a bare sun/moon icon switch)
+  lets the user override it, persisted in `localStorage` behind a guarded read/write (same pattern
+  as the tenant-switcher's stored pick).
+- **Type:** Geist Sans (UI) + Geist Mono (numbers/IDs, `tabular-nums`) via `next/font/google`;
+  Medium/SemiBold for hierarchy, tight tracking on headings, sentence case throughout.
+- **States:** visible focus rings (`focus-visible:ring-*`) on every interactive control, hover/
+  active states on buttons and links, a loading state on the login submit button, and a composed
+  empty state (icon/heading/subtext) on the placeholder section pages in place of raw text.
+
 ## 6. Build, toolchain & ops
 
 - `web/` Next app: `mise-tasks/web` (build), `web-dev` (`next dev`), `web-test` (vitest),
