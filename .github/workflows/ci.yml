@@ -59,6 +59,19 @@ jobs:
       - uses: jdx/mise-action@v2
       - run: mise run test-parser
 
+  web:
+    # Admin UI (Next.js) unit tests + production build (STORY-11.1, SPEC-11
+    # §7). Same `mise run` tasks a developer runs; mise provides the pinned
+    # Node from mise.toml, so no separate actions/setup-node is needed. No
+    # live stack required — this is the Vitest suite + `next build` only; the
+    # live-stack Playwright golden path runs in the `web-e2e` job below.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: mise run web-test
+      - run: mise run web
+
   integration:
     # "integration tests against a Postgres service" (AC) = the //go:build e2e
     # suite against the real compose stack (Postgres+pgvector, MinIO, parser
@@ -79,6 +92,118 @@ jobs:
       - name: Compose logs on failure
         if: failure()
         run: docker compose logs --no-color || true
+      - name: Tear down stack
+        if: always()
+        run: mise run down || true
+
+  web-e2e:
+    # Playwright golden-path E2E for the admin UI (STORY-11.1 Task 8, SPEC-11
+    # §7) against a real Next origin backed by a real `ragctl serve` + the
+    # same compose stack `integration` uses. `mise run web-e2e` self-skips
+    # without E2E_BASE_URL, so this job's own steps supply the whole live
+    # stack it needs: the compose stack + migrations, a throwaway local(age)
+    # DEK (mirrors test/e2e/secrets_e2e_test.go — `ragctl keys new-dek` wraps
+    # it), `mise run seed` (platform admin + demo/acme tenants), the host API,
+    # and the Next origin.
+    runs-on: ubuntu-latest
+    env:
+      CONTROL_PLANE_URL: postgres://rag:rag@localhost:5432/control_plane?sslmode=disable
+      PROVISION_DB_URL: postgres://rag:rag@localhost:5432/control_plane?sslmode=disable
+      TENANT_DB_HOST: localhost
+      TENANT_DB_PORT: "5432"
+      TENANT_DB_SSLMODE: disable
+      KMS_PROVIDER: local
+      DEK_WRAPPED_PATH: /tmp/e2e-dek.age
+      DEK_KEY_VERSION: "1"
+      RAGCTL_ADDR: ":8091"
+      RAGCTL_API_URL: http://localhost:8091
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+      - uses: jdx/mise-action@v2
+      - run: mise run migrate
+      - name: Generate a throwaway local(age) DEK for this run
+        # A real age identity, not the placeholder in .env.example: `ragctl
+        # keys new-dek` wraps a fresh DEK to its recipient below, and
+        # AGE_SECRET_KEY (kept only in this job's env, masked in logs) is what
+        # lets `ragctl serve`/enroll/seed unwrap it again. No `age-keygen` CLI
+        # here — this repo's go.sum vendors the library import
+        # (internal/crypto/kms.go) but not the CLI's extra x/term dependency.
+        run: |
+          set -euo pipefail
+          cat > /tmp/gendek.go <<'EOF'
+          package main
+
+          import (
+          	"fmt"
+          	"os"
+
+          	"filippo.io/age"
+          )
+
+          func main() {
+          	id, err := age.GenerateX25519Identity()
+          	if err != nil {
+          		fmt.Fprintln(os.Stderr, err)
+          		os.Exit(1)
+          	}
+          	fmt.Print(id.String())
+          }
+          EOF
+          AGE_SECRET_KEY="$(go run /tmp/gendek.go)"
+          echo "::add-mask::$AGE_SECRET_KEY"
+          echo "AGE_SECRET_KEY=$AGE_SECRET_KEY" >> "$GITHUB_ENV"
+      - run: go run ./cmd/ragctl keys new-dek --out "$DEK_WRAPPED_PATH"
+      - run: mise run seed
+      - name: Start the host API (RAGCTL_ADDR=:8091)
+        run: |
+          set -euo pipefail
+          echo "RAGCTL_ADDR=$RAGCTL_ADDR" > .env  # mise-tasks/api requires a .env file to exist
+          nohup go run ./cmd/ragctl serve > /tmp/ragctl-serve.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8091/healthz >/dev/null 2>&1 && exit 0
+            sleep 1
+          done
+          echo "ragctl serve did not become healthy" >&2
+          cat /tmp/ragctl-serve.log
+          exit 1
+      - name: Build and start the Next origin
+        # `mise run web-e2e` rebuilds again before testing (its script is fixed:
+        # npm ci && playwright install && npm run build && playwright test) —
+        # harmless: the already-running `next start` process keeps serving the
+        # build it loaded at startup, so the rebuild here just gives Playwright
+        # something to hit while that second build/install runs.
+        run: |
+          set -euo pipefail
+          cd web
+          npm ci
+          npm run build
+          PORT=3000 nohup npx next start > /tmp/next.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/admin/login >/dev/null 2>&1 && exit 0
+            sleep 1
+          done
+          echo "next did not become healthy" >&2
+          cat /tmp/next.log
+          exit 1
+      - run: mise run web-e2e
+        env:
+          E2E_BASE_URL: http://localhost:3000
+      - name: Server logs on failure
+        if: failure()
+        run: |
+          cat /tmp/ragctl-serve.log || true
+          cat /tmp/next.log || true
+          docker compose logs --no-color || true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: web/playwright-report/
+          if-no-files-found: ignore
       - name: Tear down stack
         if: always()
         run: mise run down || true

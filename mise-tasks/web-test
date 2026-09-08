@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Run the admin UI (Next.js) unit tests (Vitest)"
+set -euo pipefail
+cd web
+npm ci
+npm run test

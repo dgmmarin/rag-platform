@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+#MISE description="Playwright golden-path E2E for the admin UI against a running Next origin (self-skips without E2E_BASE_URL)"
+# STORY-11.1 Task 8, SPEC-11 §7. Mirrors the vulncheck-gate/backup-drill/
+# eval-gate pattern: SKIP cleanly (exit 0) whenever the live stack this suite
+# needs isn't configured, so a runner without a running Next origin (+ ragctl
+# behind it, + `mise run seed`) is never red-walled. Checked here, before the
+# expensive npm ci / browser install / build, so an unconfigured run is cheap.
+#
+# Config via env:
+#   E2E_BASE_URL       the running Next origin, e.g. http://localhost:3003
+#                       (required to run at all; unset => SKIP)
+#   E2E_ADMIN_PASSWORD the seeded admin's password (default: devpassword123,
+#                       matching `mise run seed`'s default)
+set -euo pipefail
+
+if [ -z "${E2E_BASE_URL:-}" ]; then
+  echo "[web-e2e] SKIP: E2E_BASE_URL not set (no running Next origin to test against)."
+  exit 0
+fi
+
+cd web
+npm ci
+npx playwright install --with-deps chromium
+npm run build
+npx playwright test

@@ -11,5 +11,9 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./vitest.setup.ts"],
+    // web/e2e holds Playwright specs (a separate runner, `npx playwright
+    // test`) — its test.describe/test conflict with Vitest's, so exclude it
+    // alongside Vitest's own defaults.
+    exclude: ["**/node_modules/**", "**/dist/**", "e2e/**"],
   },
 });
