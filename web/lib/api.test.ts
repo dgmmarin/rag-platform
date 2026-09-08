@@ -9,6 +9,12 @@ describe("apiFetch", () => {
     expect(new Headers((spy.mock.calls[0][1] as RequestInit).headers).get("X-CSRF-Token")).toBe("tok");
   });
 
+  it("does not attach X-CSRF-Token on a GET even when csrfToken is provided", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+    await apiFetch("/v1/x", { csrfToken: "tok" });
+    expect(new Headers((spy.mock.calls[0][1] as RequestInit).headers).has("X-CSRF-Token")).toBe(false);
+  });
+
   it("throws Unauthorized on 401", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("", { status: 401 }));
     await expect(apiFetch("/v1/auth/me")).rejects.toBeInstanceOf(Unauthorized);

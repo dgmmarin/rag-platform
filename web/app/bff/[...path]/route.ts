@@ -2,8 +2,17 @@ import { RAGCTL_API_URL } from "@/lib/config";
 
 type Ctx = { params: Promise<{ path: string[] }> };
 
+// ALLOWED_PREFIXES scopes the BFF to the two surfaces ragctl exposes (SPEC-11
+// §3): the versioned API (`/v1/*`) and the platform-admin API (`/admin/*`).
+// Anything else (e.g. a probe for `/bff/healthz`) is rejected instead of
+// blindly forwarded upstream.
+const ALLOWED_PREFIXES = new Set(["v1", "admin"]);
+
 async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const { path } = await ctx.params;
+  if (!ALLOWED_PREFIXES.has(path[0])) {
+    return new Response(null, { status: 404 });
+  }
   const url = new URL(req.url);
   const target = `${RAGCTL_API_URL}/${path.join("/")}${url.search}`;
   const headers = new Headers(req.headers);

@@ -49,6 +49,28 @@ describe("BFF proxy", () => {
     for (const c of cookies) expect(c).not.toContain("Domain=api.internal");
   });
 
+  it("rejects a disallowed path prefix with 404 instead of forwarding", async () => {
+    const upstream = vi.spyOn(globalThis, "fetch");
+    const res = await GET(new Request("http://ui.example/bff/healthz"), {
+      params: Promise.resolve({ path: ["healthz"] }),
+    });
+    expect(res.status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("still proxies allowed v1/admin prefixes", async () => {
+    const upstream = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+    const v1 = await GET(new Request("http://ui.example/bff/v1/auth/me"), {
+      params: Promise.resolve({ path: ["v1", "auth", "me"] }),
+    });
+    const admin = await GET(new Request("http://ui.example/bff/admin/tenants"), {
+      params: Promise.resolve({ path: ["admin", "tenants"] }),
+    });
+    expect(v1.status).toBe(200);
+    expect(admin.status).toBe(200);
+    expect(upstream).toHaveBeenCalledTimes(2);
+  });
+
   it("forwards the request body on a mutation", async () => {
     const upstream = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
     const body = JSON.stringify({ hello: "world" });

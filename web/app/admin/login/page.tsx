@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/lib/auth";
+import { useAuth, LoginFailed } from "@/lib/auth";
 import { Unauthorized } from "@/lib/api";
 
 function Spinner() {
@@ -45,7 +45,9 @@ export default function LoginPage() {
       router.push("/admin");
     } catch (err) {
       if (err instanceof Unauthorized) setError("Invalid email or password.");
-      else throw err;
+      else if (err instanceof LoginFailed && err.status === 429)
+        setError("Account temporarily locked. Try again later.");
+      else setError("Something went wrong. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -122,14 +124,10 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="mt-6 text-center text-sm">
-          <a
-            href="/bff/v1/auth/oidc/start"
-            className="text-fg-muted underline-offset-4 transition-colors hover:text-accent-text hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-text focus-visible:ring-offset-2 focus-visible:ring-offset-bg-elevated"
-          >
-            Sign in with OIDC instead
-          </a>
-        </p>
+        {/* OIDC login is deferred: the callback returns JSON for a fetch client rather than
+            303-redirecting the browser into the SPA, so a top-level navigation here would dead-end
+            on a raw JSON page. Re-add the button once that round-trip works end-to-end
+            (ISSUE-0058). */}
       </div>
     </main>
   );
