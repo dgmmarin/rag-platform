@@ -103,6 +103,25 @@ func indexOf(s, substr string) int {
 	return -1
 }
 
+// TestBootstrapAdminRevokesPlatformAdmin proves platformAdmin=false is written
+// through unchanged (the `--no-platform-admin` revoke path), not silently
+// coerced to true.
+func TestBootstrapAdminRevokesPlatformAdmin(t *testing.T) {
+	db := &bootstrapDB{inserted: false}
+	s := NewService(db)
+
+	_, err := s.BootstrapAdmin(context.Background(), "existing@b.com", "correct-horse-battery", false)
+	if err != nil {
+		t.Fatalf("BootstrapAdmin: %v", err)
+	}
+	if len(db.gotArgs) != 3 {
+		t.Fatalf("want 3 args (email, hash, platform_admin), got %v", db.gotArgs)
+	}
+	if platAdmin, ok := db.gotArgs[2].(bool); !ok || platAdmin {
+		t.Fatalf("want is_platform_admin=false written, got %v", db.gotArgs[2])
+	}
+}
+
 // TestBootstrapAdminRejectsShortPasswordBeforeWrite proves the minPasswordLen
 // floor is enforced before any DB call, exactly as Signup does.
 func TestBootstrapAdminRejectsShortPasswordBeforeWrite(t *testing.T) {
