@@ -12,3 +12,4 @@
 | [SPEC-08](SPEC-08-jobs-and-scheduling.md) | Jobs and scheduling | FR-ING-08, FR-SRC-11 |
 | [SPEC-09](SPEC-09-security.md) | Security | NFR-SEC |
 | [SPEC-10](SPEC-10-observability.md) | Observability | FR-OBS |
+| [SPEC-11](SPEC-11-admin-ui.md) | Admin UI (reference) | FR-ADM-01/02/03 |
