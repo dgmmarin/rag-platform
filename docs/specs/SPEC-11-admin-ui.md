@@ -153,3 +153,37 @@ Session-authenticated (behind `RequireSession`), not platform-admin gated, GET (
   leave the HttpOnly cookie; the BFF never logs a session token or CSRF secret.
 - Cross-tenant platform-admin actions are audited as impersonation (SPEC-02 §4, FR-ADM-05).
 - The BFF adds no CORS; the browser talks only to the Next origin.
+
+## 10. Tenant-scoped session admin surface (STORY-11.2+, ADR-0075)
+
+The reusable pattern every tenant-scoped EPIC-11 story follows. The tenant-scoped business logic
+(sources, jobs, documents, …) already exists as handlers that read the tenant from
+`tenant.TenantIDFromCtx`; a session middleware sets that context so the SAME handlers serve the
+admin UI — no logic is duplicated between the Bearer `/v1/*` surface and this session surface.
+
+- **`RequireTenantAccess` (session middleware):** resolves the tenant from the `{id}` path segment,
+  authorizes the session principal — **platform-admin** or the user's `tenant_members` role for
+  `{id}` (any role for reads; the SPEC-02 §4 role for writes) — injects the tenant into the request
+  context (the key the handlers read), and 404s an inaccessible/unknown tenant (no existence leak).
+  A platform admin acting on a tenant they don't belong to is audited `impersonation=true`.
+- **Routes** (session; CSRF on mutations; via the BFF `/bff/admin/…`):
+  `GET/POST /admin/tenants/{id}/sources`, `GET/PATCH/DELETE /admin/tenants/{id}/sources/{sourceId}`,
+  `POST /admin/tenants/{id}/sources/{sourceId}/sync`, `POST /admin/tenants/{id}/sources/{sourceId}/test`
+  — mounting the existing `internal/cp/sources` handlers behind `RequireTenantAccess`.
+- **`GET /admin/connector-kinds` (session, platform-global, not tenant-scoped):** each kind
+  (`upload/web_crawl/sitemap/api/s3`) with its form field descriptors (name, label, type, required,
+  secret). Descriptors co-located with each connector; a drift-guard test ties them to
+  `SourcesValidator.ValidateConfig`. Secret fields are write-only.
+
+### 10.1 Sources UI (STORY-11.2, FR-ADM-01)
+- **List** the current tenant's sources with status, last sync, next sync, and error summary; row
+  actions sync / test / edit / delete.
+- **Create/edit** via a kind picker → a **schema-driven** form rendered from `/admin/connector-kinds`
+  (credential fields write-only), with a **test-connection** button (`…/test`) showing inline
+  success/failure. Full loading / empty / error states per §5.1.
+- The current tenant comes from `TenantProvider`; calls go to `/bff/admin/tenants/{currentId}/…`.
+
+### 10.2 Scope
+STORY-11.2 delivers the sources surface above. Jobs (11.3), documents (11.4), members/settings
+(11.5), query/eval (11.6–11.7) reuse `RequireTenantAccess` with their own handlers. Artifacts:
+ADR-0075, ISSUE-0059.
