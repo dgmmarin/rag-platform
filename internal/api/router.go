@@ -34,6 +34,7 @@ type Deps struct {
 	Logout             http.Handler
 	OIDCStart          http.Handler
 	OIDCCallback       http.Handler
+	Me                 http.Handler // GET /v1/auth/me (session required, no CSRF)
 	AuditList          http.Handler
 	UsageList          http.Handler
 	ImpersonationStart http.Handler
@@ -121,6 +122,10 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /v1/auth/logout", handlerOr(d.Logout))
 	mux.Handle("GET /v1/auth/oidc/start", handlerOr(d.OIDCStart))
 	mux.Handle("GET /v1/auth/oidc/callback", handlerOr(d.OIDCCallback))
+
+	// Session hydration for the admin UI (SPEC-11 §2.1): session required, no
+	// platform-admin gate, GET so no CSRF.
+	mux.Handle("GET /v1/auth/me", chain(handlerOr(d.Me), mw(d.RequireSession)))
 
 	// --- Platform-admin surface (/admin): session then platform-admin gate. ---
 	platformAdmin := func(h http.Handler) http.Handler {

@@ -92,6 +92,7 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	membershipDB := auth.MembershipFromPool(pool)
 	authz := auth.NewAuthzService(membershipDB)
 	verifier := auth.NewAPIKeyVerifier(auth.FromPool(pool))
+	meHandlers := &auth.MeHandlers{Service: auth.NewMeService(membershipDB)}
 
 	// --- OIDC (optional). ---
 	var oidcStart, oidcCallback http.Handler
@@ -331,6 +332,7 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		Logout:             http.HandlerFunc(authHandlers.Logout),
 		OIDCStart:          oidcStart,
 		OIDCCallback:       oidcCallback,
+		Me:                 http.HandlerFunc(meHandlers.Me),
 		AuditList:          http.HandlerFunc(auditHandlers.List),
 		UsageList:          http.HandlerFunc(usageHandlers.List),
 		ImpersonationStart: http.HandlerFunc(impHandlers.Start),
