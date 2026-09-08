@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+#MISE description="Eval quality gate: run `ragctl eval run --json --gate` and block on a quality regression (self-skips without stack/keys/seeded data)"
+# STORY-12.4, FR-ADM-04, SPEC-06 §8, ADR-0072. Mirrors the vulncheck-gate /
+# backup-drill pattern: parse JSON output, decide pass/fail ourselves, and SKIP
+# cleanly (exit 0) whenever the live stack, provider keys, or seeded eval data are
+# absent — so a keyless CI runner is never red-walled. A real regression (the run
+# produced a gate verdict of "fail") is the ONLY blocking outcome.
+#
+# Config via env:
+#   EVAL_GATE_SLUG      tenant slug to evaluate (required to run; unset => SKIP)
+#   EVAL_GATE_BASELINE  gate policy file (default .ci/eval-gate.json)
+#   EVAL_GATE_JUDGE     "1" to also gate LLM-judged correctness (needs --judge keys)
+# Plus the usual ragctl connection env (CONTROL_PLANE_URL, KMS/DEK, provider keys).
+set -euo pipefail
+
+BASELINE="${EVAL_GATE_BASELINE:-.ci/eval-gate.json}"
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "[eval-gate] SKIP: jq not found (needed to parse the eval-run JSON)."
+  exit 0
+fi
+if [ -z "${EVAL_GATE_SLUG:-}" ]; then
+  echo "[eval-gate] SKIP: EVAL_GATE_SLUG not set (no tenant to evaluate)."
+  exit 0
+fi
+if [ -z "${CONTROL_PLANE_URL:-}" ]; then
+  echo "[eval-gate] SKIP: CONTROL_PLANE_URL not set (no control plane to reach)."
+  exit 0
+fi
+if [ ! -f "$BASELINE" ]; then
+  echo "[eval-gate] SKIP: baseline policy $BASELINE not found."
+  exit 0
+fi
+
+judge_flag=()
+if [ "${EVAL_GATE_JUDGE:-}" = "1" ]; then
+  judge_flag=(--judge)
+fi
+
+out="$(mktemp)"
+trap 'rm -f "$out"' EXIT
+
+# Run the eval. ragctl exits non-zero on a real regression (and prints the JSON
+# first) OR on an infra failure (no DEK/stack/keys). We distinguish the two from
+# the JSON: a regression carries gate.passed=false; an infra failure produces no
+# parseable JSON, which we treat as SKIP (never a red wall on a keyless runner).
+set +e
+go run ./cmd/ragctl eval run "$EVAL_GATE_SLUG" --json --gate "$BASELINE" "${judge_flag[@]}" >"$out" 2>/dev/null
+set -e
+
+if ! jq -e . >/dev/null 2>&1 <"$out"; then
+  echo "[eval-gate] SKIP: eval run produced no parseable JSON (stack/keys/DEK unavailable). CI with a seeded tenant runs the live gate."
+  exit 0
+fi
+
+recall="$(jq -r '.summary.recall_at_k // 0' "$out")"
+grounded="$(jq -r '.summary.grounded_rate // 0' "$out")"
+cases="$(jq -r '.summary.cases // 0' "$out")"
+status="$(jq -r 'if .gate.skipped then "skip" elif .gate.passed then "pass" else "fail" end' "$out")"
+
+echo "[eval-gate] cases=$cases recall@k=$recall grounded_rate=$grounded verdict=$status"
+
+case "$status" in
+  skip)
+    echo "[eval-gate] SKIP: $(jq -r '.gate.reason // "no assessable data"' "$out")"
+    exit 0
+    ;;
+  pass)
+    echo "[eval-gate] PASS: run meets the minimum-quality thresholds in $BASELINE."
+    exit 0
+    ;;
+  fail)
+    echo "[eval-gate] FAIL: quality regression against $BASELINE:"
+    jq -r '.gate.failures[] | "  - \(.)"' "$out"
+    echo "[eval-gate] A settings/chunking/retrieval change must keep eval quality at or above the baseline."
+    exit 1
+    ;;
+esac

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/alecthomas/kong"
 	"github.com/google/uuid"
@@ -48,6 +49,8 @@ type EvalRunCmd struct {
 	Limit      int    `help:"Maximum cases to run (0 = all)." default:"0"`
 	Judge      bool   `help:"Score answer correctness with an LLM judge (opt-in; only cases with an expected_answer)." name:"judge"`
 	JudgeModel string `help:"Judge model id (defaults to the tenant's settings.llm.model)." name:"judge-model"`
+	JSON       bool   `help:"Emit the run summary (and gate verdict) as JSON to stdout instead of text." name:"json"`
+	Gate       string `help:"Gate the run against a minimum-thresholds JSON policy file; non-zero exit on regression (STORY-12.4)." name:"gate" type:"existingfile"`
 }
 
 // Run wires the pipeline (mirroring the serve composition root), resolves the
@@ -139,7 +142,35 @@ func (c *EvalRunCmd) Run(k *kong.Context, g *Globals) error {
 		return err
 	}
 
-	return printEvalSummary(k, summary)
+	// Optional gate (STORY-12.4): compare the run against a minimum-thresholds
+	// policy. A regression returns an error (non-zero exit) AFTER the output is
+	// written, so both a human and CI see the metrics and the verdict.
+	var gate *eval.GateResult
+	if c.Gate != "" {
+		policyRaw, rerr := os.ReadFile(c.Gate)
+		if rerr != nil {
+			return fmt.Errorf("eval run: read gate policy: %w", rerr)
+		}
+		policy, perr := eval.ParseGatePolicy(policyRaw)
+		if perr != nil {
+			return perr
+		}
+		res := eval.CheckGate(summary, policy)
+		gate = &res
+	}
+
+	if c.JSON {
+		if err := printEvalRunJSON(k, summary, gate); err != nil {
+			return err
+		}
+	} else if err := printEvalSummary(k, summary, gate); err != nil {
+		return err
+	}
+
+	if gate != nil && !gate.Passed && !gate.Skipped {
+		return fmt.Errorf("eval gate: quality regression: %s", strings.Join(gate.Failures, "; "))
+	}
+	return nil
 }
 
 // evalPipeline adapts the retrieve + query services to the eval.Pipeline port.
@@ -305,10 +336,29 @@ func finalKFromSettings(doc map[string]any) int {
 	return defaultEvalFinalK
 }
 
+// evalRunJSON is the machine-readable output of `eval run --json` (STORY-12.4):
+// the run summary plus an optional gate verdict. It is the small data contract the
+// mise-tasks/eval-gate script parses and the EPIC-11 admin UI will render.
+type evalRunJSON struct {
+	Summary eval.Summary     `json:"summary"`
+	Gate    *eval.GateResult `json:"gate,omitempty"`
+}
+
+// printEvalRunJSON writes the summary (+ gate) as JSON.
+func printEvalRunJSON(k *kong.Context, s eval.Summary, gate *eval.GateResult) error {
+	body, err := json.MarshalIndent(evalRunJSON{Summary: s, Gate: gate}, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(k.Stdout, string(body))
+	return err
+}
+
 // printEvalSummary writes the human-readable run summary to stdout. The
 // correctness line is printed only when the LLM judge actually scored cases
-// (STORY-12.3); a non-judged run prints exactly as it did before.
-func printEvalSummary(k *kong.Context, s eval.Summary) error {
+// (STORY-12.3); a non-judged run prints exactly as it did before. The gate line
+// is printed only when a gate policy was applied (STORY-12.4).
+func printEvalSummary(k *kong.Context, s eval.Summary, gate *eval.GateResult) error {
 	if _, err := fmt.Fprintf(k.Stdout,
 		"ragctl eval run: run %s\n"+
 			"  cases:         %d (%d errored)\n"+
@@ -321,6 +371,18 @@ func printEvalSummary(k *kong.Context, s eval.Summary) error {
 	if s.CasesJudged > 0 {
 		if _, err := fmt.Fprintf(k.Stdout,
 			"  correctness:   %.3f (over %d cases judged)\n", s.CorrectnessRate, s.CasesJudged); err != nil {
+			return err
+		}
+	}
+	if gate != nil {
+		verdict := "PASS"
+		switch {
+		case gate.Skipped:
+			verdict = "SKIP (" + gate.Reason + ")"
+		case !gate.Passed:
+			verdict = "FAIL: " + strings.Join(gate.Failures, "; ")
+		}
+		if _, err := fmt.Fprintf(k.Stdout, "  gate:          %s\n", verdict); err != nil {
 			return err
 		}
 	}

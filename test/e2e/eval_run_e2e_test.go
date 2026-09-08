@@ -210,4 +210,36 @@ func TestEvalRunWritePath(t *testing.T) {
 	if got := tenantScalarDB(ctx, t, db, `select (summary->>'correctness_rate') from eval_runs where id = $1::uuid`, jSummary.RunID); got != "0.5" {
 		t.Errorf("stored summary correctness_rate = %q, want 0.5", got)
 	}
+
+	// --- STORY-12.4: the machine-readable report reads the stored run + results. ---
+	report, err := svc.Report(ctx, tid, jSummary.RunID)
+	if err != nil {
+		t.Fatalf("Report: %v", err)
+	}
+	if report.Run.ID != jSummary.RunID || report.Run.FinishedAt == nil {
+		t.Fatalf("report run header wrong: %+v", report.Run)
+	}
+	if len(report.Results) == 0 {
+		t.Fatal("report has no results")
+	}
+	// Each result is enriched with its case question (LEFT JOIN eval_cases); find jc1.
+	var sawJC1 bool
+	for _, rr := range report.Results {
+		if rr.CaseID == jc1.ID {
+			sawJC1 = true
+			if rr.Question == nil || *rr.Question != "jq-correct" {
+				t.Errorf("jc1 report question = %v, want jq-correct", rr.Question)
+			}
+			if rr.JudgedCorrect == nil || !*rr.JudgedCorrect {
+				t.Errorf("jc1 report judged_correct = %v, want true", rr.JudgedCorrect)
+			}
+		}
+	}
+	if !sawJC1 {
+		t.Error("report results missing jc1")
+	}
+	// An unknown run id is a clean not-found.
+	if _, err := svc.Report(ctx, tid, "99999999-9999-9999-9999-999999999999"); err == nil {
+		t.Error("Report on an unknown run id should error (ErrNotFound)")
+	}
 }

@@ -24,8 +24,8 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 21 | ✅ Complete |
 | EPIC-10 | Security, observability, operations | 26 | 26 | ✅ Complete |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
-| EPIC-12 | Evaluation harness and quality | 13 | 11 | 🚧 In progress |
-| **Total** | | **337** | **253** | **75%** |
+| EPIC-12 | Evaluation harness and quality | 13 | 12 | 🚧 In progress |
+| **Total** | | **337** | **254** | **75%** |
 
 ---
 
@@ -1623,14 +1623,25 @@ source credential to v2 and proves both decrypt to their originals, with a secon
 | STORY-11.6 | Query playground with citations and feedback | 3 | 🔲 Todo | — |
 | STORY-11.7 | Platform admin: tenants list, enrol, suspend, delete | 3 | 🔲 Todo | — |
 
-## EPIC-12 · Evaluation harness and quality — 🚧 11/13 pts
+> **Carried in from STORY-12.4:** the eval report **render** (a runs list + per-run
+> drill-down over the `ragctl eval report` / `eval run --json` data contract shipped in
+> STORY-12.4, ISSUE-0055, ADR-0072) is a natural EPIC-11 admin-UI addition. The data layer
+> is complete and tested; only the view remains.
+
+## EPIC-12 · Evaluation harness and quality — 🚧 12/13 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-12.1 | Eval cases CRUD and import (CSV) | 3 | ✅ Done | FR-ADM-04 |
 | STORY-12.2 | `ragctl eval run` with recall@k, grounded rate, latency | 5 | ✅ Done | SPEC-06 §8 |
 | STORY-12.3 | LLM-as-judge correctness scoring (optional flag) | 3 | ✅ Done | FR-ADM-04, SPEC-06 §8 |
-| STORY-12.4 | Eval report in admin UI and CI gate for settings changes | 2 | 🔲 Todo | — |
+| STORY-12.4 | Eval report in admin UI and CI gate for settings changes | 2 | 🚧 Partial (1/2) | FR-ADM-04, SPEC-06 §8 |
+
+> **STORY-12.4 is partial.** The CI gate for settings changes (`mise run eval-gate`,
+> `eval run --gate`) and the machine-readable report data (`eval run --json`, `ragctl eval
+> report`) shipped (ISSUE-0055, ADR-0072) — 1 of 2 pts credited. The remaining ~1 pt, the
+> eval report **render in the admin UI**, is deferred to EPIC-11 (the admin UI does not
+> exist yet); the data contract it renders is complete and tested. See the EPIC-11 note.
 
 ---
 

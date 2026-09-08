@@ -163,6 +163,39 @@ func (s *Service) Run(ctx context.Context, tid tenant.ID, opts RunOptions) (Summ
 	return summary, nil
 }
 
+// Report reads a stored run and its per-case results as the machine-readable
+// report (STORY-12.4) — the data contract the EPIC-11 admin UI will render. It
+// reaches the tenant DB through the resolver (ADR-0003). Returns ErrNotFound for
+// an unknown run id.
+func (s *Service) Report(ctx context.Context, tid tenant.ID, runID string) (Report, error) {
+	db, err := s.open(ctx, tid)
+	if err != nil {
+		return Report{}, err
+	}
+	reader := s.reportReader()
+	run, err := reader.GetRun(ctx, db, runID)
+	if err != nil {
+		return Report{}, err
+	}
+	results, err := reader.Results(ctx, db, runID)
+	if err != nil {
+		return Report{}, err
+	}
+	if results == nil {
+		results = []ResultView{}
+	}
+	return Report{Run: run, Results: results}, nil
+}
+
+// reportReader returns the configured report reader, defaulting to RunStore (the
+// same store that writes runs) so callers need not wire a second dependency.
+func (s *Service) reportReader() ReportReader {
+	if r, ok := s.Runs.(ReportReader); ok {
+		return r
+	}
+	return NewRunStore()
+}
+
 // mapWrite turns a suspended-tenant write refusal into ErrTenantUnavailable and
 // leaves domain sentinels (ErrNotFound) untouched.
 func mapWrite(err error) error {

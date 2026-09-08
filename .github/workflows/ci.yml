@@ -135,3 +135,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
       - run: mise run backup-drill
+
+  eval-gate:
+    # Eval quality gate for settings/chunking/retrieval changes (STORY-12.4,
+    # FR-ADM-04, SPEC-06 §8, ADR-0072). `mise run eval-gate` runs `ragctl eval run
+    # --json --gate .ci/eval-gate.json` and BLOCKS on a quality regression against
+    # the committed minimum thresholds. On a keyless PR runner (no seeded tenant /
+    # provider keys / DEK) it self-skips cleanly, exactly like backup-drill; it
+    # blocks only on a real regression. Wire EVAL_GATE_SLUG + the ragctl connection/
+    # provider secrets on the environment where a seeded eval tenant exists.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+      - uses: jdx/mise-action@v2
+      - run: mise run eval-gate
+        env:
+          EVAL_GATE_SLUG: ${{ vars.EVAL_GATE_SLUG }}
+          CONTROL_PLANE_URL: ${{ secrets.EVAL_GATE_CONTROL_PLANE_URL }}

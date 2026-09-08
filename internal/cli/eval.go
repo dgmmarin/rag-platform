@@ -30,6 +30,7 @@ type EvalCmd struct {
 	Rm     EvalRmCmd     `cmd:"" help:"Remove an eval case."`
 	Import EvalImportCmd `cmd:"" help:"Import eval cases from a CSV file (see docs/adr/0069)."`
 	Run    EvalRunCmd    `cmd:"" help:"Run all eval cases and report recall@k, grounded rate and latency (SPEC-06 §8)."`
+	Report EvalReportCmd `cmd:"" help:"Print a stored eval run and its results as JSON (data for the EPIC-11 admin report)."`
 }
 
 // evalService builds the eval Service for a tenant slug: it opens the

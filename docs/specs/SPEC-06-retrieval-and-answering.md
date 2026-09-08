@@ -400,3 +400,17 @@ correctness figure in the summary (§8.1's seam).
 - **correctness rate** — `judged-correct / cases_judged` (cases with a non-NULL
   verdict); both `cases_judged` and `correctness_rate` are added to `eval_runs.summary`
   and printed, only when judging scored cases.
+
+### 8.3 CI gate + machine-readable report (STORY-12.4, ADR-0072)
+- **`eval run --json`** emits `{summary, gate?}` as JSON; **`ragctl eval report <slug>
+  <run-id>`** emits `{run{id,config,started_at,finished_at,summary}, results[…per case:
+  case_id, question, expected_answer, retrieved_doc_ids, recall_hit, judged_correct,
+  answer, latency_ms]}` from `eval_runs`/`eval_results`. This is the data contract the
+  EPIC-11 admin report renders (the UI render itself is EPIC-11, not built here).
+- **CI gate** — `eval run --gate FILE` compares the run's summary against a committed
+  minimum-threshold policy (`.ci/eval-gate.json`: `min_recall_at_k`, `min_grounded_rate`,
+  optional `min_correctness_rate`; each checked with `>=`, at-threshold passes). A
+  regression is a non-zero exit; a run with no cases is a non-blocking skip.
+  `mise run eval-gate` orchestrates it and self-skips (exit 0) without stack/keys/seeded
+  data so a keyless CI runner is never blocked; it blocks only on a real regression. A
+  settings/chunking/retrieval change must pass this gate to land.
