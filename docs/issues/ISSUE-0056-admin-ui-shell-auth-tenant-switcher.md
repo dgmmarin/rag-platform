@@ -13,7 +13,7 @@ as 8 tasks; all 8 are shipped and STORY-11.1 is done (`docs/backlog/BACKLOG_STAT
 the original shell scope, the story also delivered `ragctl admin bootstrap` + `mise run seed`
 onboarding (ISSUE-0057, ADR-0074) and a Tailwind redesign of the login page and app shell.
 
-## Scope (Task 1 of 6 — shipped)
+## Scope (STORY-11.1, delivered across 8 tasks — this section covers Task 1)
 - **`web/`** — the Next.js app scaffold (`create-next-app --ts --app --no-tailwind --eslint
   --no-src-dir --import-alias "@/*"`), trimmed to a minimal `app/page.tsx` (`<main>admin</main>`)
   and a plain `app/layout.tsx`; demo assets (page CSS module, SVG logos, generated `AGENTS.md`)

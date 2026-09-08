@@ -11,6 +11,14 @@
 #                       (required to run at all; unset => SKIP)
 #   E2E_ADMIN_PASSWORD the seeded admin's password (default: devpassword123,
 #                       matching `mise run seed`'s default)
+#   SKIP_WEB_BUILD     set (any value) to skip the `npm run build` below —
+#                       for a caller that already built the app itself and is
+#                       serving it live (e.g. CI's web-e2e job builds once,
+#                       then starts `next start` against that build; building
+#                       AGAIN here while that server is live would rewrite
+#                       web/.next underneath it mid-request, a CI-flakiness
+#                       source). Local runs leave this unset, so `mise run
+#                       web-e2e` on its own still builds before testing.
 set -euo pipefail
 
 if [ -z "${E2E_BASE_URL:-}" ]; then
@@ -21,5 +29,9 @@ fi
 cd web
 npm ci
 npx playwright install --with-deps chromium
-npm run build
+if [ -z "${SKIP_WEB_BUILD:-}" ]; then
+  npm run build
+else
+  echo "[web-e2e] SKIP_WEB_BUILD set: skipping npm run build (caller already built + is serving it)."
+fi
 npx playwright test

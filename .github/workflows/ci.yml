@@ -159,9 +159,13 @@ jobs:
       - run: go run ./cmd/ragctl keys new-dek --out "$DEK_WRAPPED_PATH"
       - run: mise run seed
       - name: Start the host API (RAGCTL_ADDR=:8091)
+        # Runs `ragctl serve` directly (not `mise run api`, which requires a
+        # .env file on disk) — every var it needs (RAGCTL_ADDR, CONTROL_PLANE_URL,
+        # KMS_PROVIDER, DEK_*, AGE_SECRET_KEY) is already in this job's process
+        # env (the job-level `env:` block plus $GITHUB_ENV above), so `go run`
+        # picks them up with no .env file needed.
         run: |
           set -euo pipefail
-          echo "RAGCTL_ADDR=$RAGCTL_ADDR" > .env  # mise-tasks/api requires a .env file to exist
           nohup go run ./cmd/ragctl serve > /tmp/ragctl-serve.log 2>&1 &
           for i in $(seq 1 30); do
             curl -sf http://localhost:8091/healthz >/dev/null 2>&1 && exit 0
@@ -171,11 +175,10 @@ jobs:
           cat /tmp/ragctl-serve.log
           exit 1
       - name: Build and start the Next origin
-        # `mise run web-e2e` rebuilds again before testing (its script is fixed:
-        # npm ci && playwright install && npm run build && playwright test) —
-        # harmless: the already-running `next start` process keeps serving the
-        # build it loaded at startup, so the rebuild here just gives Playwright
-        # something to hit while that second build/install runs.
+        # The one and only `npm run build` for this job — `mise run web-e2e`
+        # below runs with SKIP_WEB_BUILD=1 so it does NOT rebuild while this
+        # `next start` is live serving the same web/.next (rebuilding under a
+        # live server is a CI-flakiness source: a request can land mid-rewrite).
         run: |
           set -euo pipefail
           cd web
@@ -192,6 +195,7 @@ jobs:
       - run: mise run web-e2e
         env:
           E2E_BASE_URL: http://localhost:3000
+          SKIP_WEB_BUILD: "1"
       - name: Server logs on failure
         if: failure()
         run: |
