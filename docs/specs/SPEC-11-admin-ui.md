@@ -32,8 +32,10 @@ internal/cp/auth (or api)    GET /v1/auth/me handler + "memberships for user" qu
   `/v1/*` and `/admin/*` to `ragctl` (`RAGCTL_API_URL`), passing the incoming `rag_session` cookie
   and `X-CSRF-Token` upstream and relaying `ragctl`'s responses (with `Set-Cookie` Domain rewritten
   to the Next origin). **No CORS** — the browser never calls `ragctl` directly.
-- **Dev:** the dev stack runs `next dev` (:3000) alongside `ragctl serve` (:8080); the BFF points at
-  `RAGCTL_API_URL=http://localhost:8080`.
+- **Dev:** the dev stack runs `next dev` alongside the host API from `mise run api`, which listens on
+  **:8091** (repo `.env` `RAGCTL_ADDR=:8091`, kept off :8080 so a wgo watcher can hold it). The BFF
+  reads `RAGCTL_API_URL`, set to `http://localhost:8091` by the committed `web/.env.development`
+  (the `lib/config.ts` fallback is `:8080`, the docker-compose container port).
 
 ## 2. Auth model (SPEC-02 §4, ADR-0073)
 

@@ -30,8 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files: secrets live in *.local (ignored); non-secret dev defaults
+# (e.g. .env.development) are committed so `next dev` targets the right API.
+.env*.local
 
 # vercel
 .vercel
