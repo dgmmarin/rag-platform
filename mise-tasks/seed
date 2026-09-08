@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#MISE description="Seed a demo platform admin + demo tenants so the admin UI is populated (idempotent; self-skips without CONTROL_PLANE_URL)"
+# STORY-11.1 Task 6, FR-ADM-07, ADR-0074. Run this AFTER `mise run up` and the
+# control-plane/tenant migrations (`mise run migrate`, or `ragctl migrate
+# control` + `ragctl migrate tenants` by hand). Mirrors the mise-tasks/backup-
+# drill / mise-tasks/eval-gate self-skip pattern: a missing stack/connection is
+# a clean no-op (exit 0), never a red wall. Both commands this composes are
+# already idempotent (admin bootstrap: create-or-promote; enroll: re-running an
+# existing slug reuses/re-applies rather than erroring), so re-running `mise run
+# seed` is always safe.
+set -euo pipefail
+
+# Host processes don't auto-load .env (mirrors mise-tasks/api); pick it up here
+# so a plain `mise run seed` after `cp .env.example .env` just works.
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
+if [[ -z "${CONTROL_PLANE_URL:-}" ]]; then
+  echo "[seed] SKIP: CONTROL_PLANE_URL not set (no stack to seed). Run 'mise run up' + 'mise run migrate' (or copy .env.example to .env) first."
+  exit 0
+fi
+
+ADMIN_EMAIL="${SEED_ADMIN_EMAIL:-admin@example.com}"
+export RAGCTL_ADMIN_PASSWORD="${RAGCTL_ADMIN_PASSWORD:-devpassword123}"
+
+echo "[seed] bootstrapping demo platform admin ($ADMIN_EMAIL)..."
+go run ./cmd/ragctl admin bootstrap --email "$ADMIN_EMAIL"
+
+echo "[seed] enrolling demo tenants..."
+go run ./cmd/ragctl enroll --slug demo --name "Demo Tenant" --db-ssl-mode "${TENANT_DB_SSLMODE:-disable}"
+go run ./cmd/ragctl enroll --slug acme --name "Acme Inc" --db-ssl-mode "${TENANT_DB_SSLMODE:-disable}"
+
+cat <<EOF
+
+[seed] Demo environment ready. Log into the admin UI with:
+  email:    $ADMIN_EMAIL
+  password: $RAGCTL_ADMIN_PASSWORD
+
+Tenants: demo (Demo Tenant), acme (Acme Inc).
+EOF
