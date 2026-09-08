@@ -1,0 +1,65 @@
+{
+  "uid": "ragctl-ingestion",
+  "title": "RAG Platform — Ingestion",
+  "tags": ["ragctl", "spec-10"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "About these panels",
+      "type": "text",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "Ingestion throughput (SPEC-10 §2), emitted by the ingestion sink and scraped from the worker's `/metrics` endpoint (`RAGCTL_WORKER_METRICS_ADDR`). `result` is one of changed/unchanged/failed; `provider` is the tenant's embedding provider."
+      }
+    },
+    {
+      "id": 2,
+      "title": "Documents ingested per result (rate)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(ingest_documents_total[5m])) by (result, source_kind)", "legendFormat": "{{source_kind}} {{result}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Chunks written per provider (rate)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(ingest_chunks_total[5m])) by (provider)", "legendFormat": "{{provider}}" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Embedding tokens per provider (rate)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(embed_tokens_total[5m])) by (provider)", "legendFormat": "{{provider}}" }
+      ]
+    }
+  ]
+}

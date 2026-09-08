@@ -21,11 +21,11 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-06 | Connector framework and upload connector | 13 | 13 | ✅ Complete |
 | EPIC-07 | Web crawl, sitemap and API connectors | 39 | 39 | ✅ Complete |
 | EPIC-08 | Retrieval and answering | 39 | 39 | ✅ Complete |
-| EPIC-09 | Jobs, scheduling and maintenance | 21 | 0 | 🔲 Todo |
-| EPIC-10 | Security, observability, operations | 26 | 0 | 🔲 Todo |
+| EPIC-09 | Jobs, scheduling and maintenance | 21 | 21 | ✅ Complete |
+| EPIC-10 | Security, observability, operations | 26 | 26 | ✅ Complete |
 | EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
 | EPIC-12 | Evaluation harness and quality | 13 | 0 | 🔲 Todo |
-| **Total** | | **337** | **195** | **58%** |
+| **Total** | | **337** | **242** | **72%** |
 
 ---
 
@@ -1346,29 +1346,270 @@ short-circuits, provider + model allowlist fail-closed, unknown provider, factor
 embedding provider (ADR-0037), the golden-path **e2e is deferred to the query endpoint (STORY-08.6)** since
 `internal/llm` has no HTTP/worker path of its own. ADR-0053, ISSUE-0030.
 
-## EPIC-09 · Jobs, scheduling and maintenance — 🔲 0/21 pts
+## EPIC-09 · Jobs, scheduling and maintenance — ✅ 21/21 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
-| STORY-09.1 | River integration and worker binary | 5 | 🔲 Todo | FR-ING-08, ADR-0005, SPEC-08 §1 |
-| STORY-09.2 | Job status mirroring to `jobs` table | 3 | 🔲 Todo | FR-ADM-02, SPEC-08 §3 |
-| STORY-09.3 | Scheduler for cron sources and daily GC | 5 | 🔲 Todo | FR-SRC-11, SPEC-08 §2 |
-| STORY-09.4 | Cancellation and uniqueness | 3 | 🔲 Todo | SPEC-08 §4 |
-| STORY-09.5 | Per-tenant concurrency caps and fairness | 3 | 🔲 Todo | — |
-| STORY-09.6 | Delete-source job | 2 | 🔲 Todo | FR-SRC-12 |
+| STORY-09.1 | River integration and worker binary | 5 | ✅ Done | FR-ING-08, ADR-0005, ADR-0059, SPEC-08 §1, SPEC-09 §2 |
+| STORY-09.2 | Job status mirroring to `jobs` table | 3 | ✅ Done | FR-ADM-02, SPEC-08 §3, ADR-0005, ADR-0060 |
+| STORY-09.3 | Scheduler for cron sources and daily GC | 5 | ✅ Done | FR-SRC-11, SPEC-08 §2, ADR-0061 |
+| STORY-09.4 | Cancellation and uniqueness | 3 | ✅ Done | SPEC-08 §4, ADR-0062 |
+| STORY-09.5 | Per-tenant concurrency caps and fairness | 3 | ✅ Done | SPEC-08 §1, ADR-0063 |
+| STORY-09.6 | Delete-source job | 2 | ✅ Done | FR-SRC-12, ADR-0064 |
 
-## EPIC-10 · Security, observability, operations — 🔲 0/26 pts
+**Delivered (STORY-09.6):** the delete_source job — a real handler replacing the fail-loud TODO worker
+(FR-SRC-12, SPEC-08 §1, ADR-0064, ISSUE-0041). `TenantStore.DeleteSource` removes a source's tenant content in
+one transaction: `documents` (cascading to versions + chunks), then crawl_pages, connector_state and products —
+chunks counted before the cascade for exact stats. `deleteSourceWorker` opens the tenant DB per job (ADR-0003),
+runs it, and reports `{documents, chunks, crawl_pages}` to `jobs.stats`; a bad id is a permanent JobCancel;
+idempotent, so the 5-retry budget is safe (ponytail: unbatched DELETEs, upgrade path is batching for a huge
+source). The sources producer now enqueues `delete_source` through River (the `SyncQueue` seam gains
+`EnqueueDeleteSourceTx`; `EnqueueJob` routes it through the ADR-0060 transactional enqueue; a duplicate active
+delete returns the existing row). The control-plane `sources` row removal stays the STORY-04.3 lifecycle.
+DB-backed e2e ingests a document (creating chunks), seeds crawl state, enqueues delete_source, and asserts the
+mirror row reaches succeeded with documents/chunks/crawl_pages all gone and non-zero stats reported. **EPIC-09
+complete (21/21).**
+
+**Delivered (STORY-09.5):** per-tenant concurrency caps — a snooze-based fairness middleware (SPEC-08 §1,
+ADR-0063, ISSUE-0040), since OSS River has no partition concurrency. `tenantLimiter` caps concurrent ingest jobs
+per tenant (default 2): a job whose tenant is at its cap is `river.JobSnooze`d — NOT blocked — so the worker
+goroutine is freed immediately to serve another tenant and the capped job retries shortly (blocking would hold
+the goroutine and cause the very starvation being prevented). Registered OUTERMOST (before the mirror) so a
+yielded job stays queued, never flickers to running. Ingest queue only; per-process in-memory counter (ponytail:
+effective cap is cap×R under R replicas, upgrade path a shared counter). Configurable via
+`--ingest-per-tenant-cap` / `RAGCTL_INGEST_PER_TENANT_CAP`. Hermetic `-race` unit tests: the cap admits N and
+refuses N+1 while another tenant is unaffected; a synthetic-load test runs many concurrent jobs for one tenant
+and asserts at most `cap` run at once (the rest snooze) while a second tenant is served immediately.
+
+**Delivered (STORY-09.4):** cancellation — the `jobs.Canceller` seam (nil since STORY-04.5) is wired to River
+(SPEC-08 §4, ADR-0062, ISSUE-0039). A `riverCanceller` looks up the mirror row's `river_job_id` and calls
+`client.JobCancel`: a QUEUED job is dropped from the queue immediately (the worker can never claim it) and the
+service also flips the mirror (a dropped job is never worked, so the middleware never writes its terminal); a
+RUNNING job is signalled — River cancels its work context, the handler stops between documents committing nothing
+partial (SPEC-05 §5), and the mirror middleware records `cancelled`. The middleware detects a REMOTE cancel via
+`context.Cause(ctx)` (River's `ErrJobCancelledRemotely`), distinct from a drain/hard-stop cancel which stays
+retryable → queued. A legacy-unlinked job or an already-gone River job is an idempotent no-op. Uniqueness ("one
+active sync per source") was already delivered in STORY-09.2 (River ByArgs + the `jobs_one_active_sync_per_source`
+index) and needed no new code. Hermetic unit tests (remote cancel → cancelled, plain cancel → retrying, queued
+cancel drops the River job); DB-backed e2e cancels a running gated job and asserts it mirrors `cancelled`, never
+succeeded, and commits nothing.
+
+**Delivered (STORY-09.3):** the scheduler — a leader-elected loop (`internal/worker/scheduler.go`, FR-SRC-11,
+SPEC-08 §2, ADR-0061, ISSUE-0038) that runs inside `ragctl work` every 30s. Each sweep takes a Postgres
+transaction advisory lock (`pg_try_advisory_xact_lock`), so several worker replicas are safe — only one sweeps,
+the rest no-op (River per-source/per-tenant uniqueness is a second backstop). Under the lock it selects active
+cron sources whose `next_run_at` is due, enqueues a `sync_source` (incremental, **full every 7th run** via a new
+`sync_run_count` counter, migration 00008 — run 0 is full) through the ADR-0060 transactional pattern (River
+`InsertTx` + jobs mirror row, shared `enqueueMirrored`), and advances `next_run_at` from `schedule_cron` — all in
+one transaction, so a crash mid-sweep enqueues and advances nothing. It also enqueues `gc_tenant` for each active
+tenant with no `gc_tenant` in the last 24h (SPEC-08 §2 daily GC), gated by a `NOT EXISTS` on the mirror table (no
+new column). Cron is parsed with `robfig/cron/v3` (already in the module graph via River's periodic jobs, promoted
+to a direct dep — no new external dependency); an unparseable cron parks the source a day out rather than spinning
+the sweep. Wired in `runWorker` as a goroutine that stops on the shutdown context before the pool closes. Pure
+logic (full-every-Nth, cron next) hermetically unit-tested; DB-backed e2e runs TWO concurrent schedulers against an
+armed due cron source and asserts exactly one `sync_source` enqueue, `next_run_at` advanced, `sync_run_count`=1 and
+the first run flagged full. Additive migration; drift guard green.
+
+**Delivered (STORY-09.2):** job status mirroring — River stays authoritative and the control-plane `jobs`
+table becomes its mirror (FR-ADM-02, SPEC-08 §3, ADR-0005, ADR-0060, ISSUE-0037), connecting the two halves
+STORY-09.1 left apart. A `river_job_id` column (migration 00007, partial-unique, nullable) links a mirror row
+to its River job; the drift guard (`schemas/control_plane.sql`) moved in step. Producers now enqueue
+**transactionally**: in `ragctl serve` an insert-only River client is injected behind narrow seams
+(`documents.IngestQueue`, `sources.SyncQueue`, implemented in `internal/cli` so the domain packages never
+import `worker`), and the producer does `InsertTx(tx, args)` → `INSERT jobs(... river_job_id)` → commit — either
+failure rolls back both, so no orphan row or orphan job. River's `UniqueSkippedAsDuplicate` is honoured
+(`ingest_document` duplicate → the existing row, idempotent; `sync_source` duplicate → `ErrActiveSyncExists`
+409, nothing inserted; the `jobs_one_active_sync_per_source` index stays a backstop); `delete_source`
+(STORY-09.6) and the platform kinds keep the jobs-row-only path until their story. A global
+`river.WorkerMiddleware` writes every transition: `running` (worker_id/started_at/attempt) before the handler,
+then one terminal — nil → `succeeded` + stats; retryable (`attempt < max`) → back to `queued` (job_status has
+no `retrying`; SPEC-08 §3 maps retrying→queued); final → `failed` + error; `river.JobCancel` → `cancelled` (the
+terminal cancel mapping only — the running-job cancel SIGNAL is STORY-09.4). Terminal writes run on a
+**detached** context so a drain/cancel still records them, and a mirror failure is logged, never propagated —
+River is authoritative, the mirror a side view (`running`/non-cancel terminals guarded `WHERE status <>
+'cancelled'`). Stats reach `jobs.stats` through a ctx-carried `StatsSink` the `sync_source`/`ingest_document`
+handlers fill (their `sink.Stats` JSON tags already match). Admin still reads only `jobs` (`internal/cp/jobs`,
+C-3) — now showing real execution without knowing River exists. Mirror logic hermetically unit-tested (fake
+store, every transition + stats + swallowed-failure); DB-backed e2e drives a producer-style transactional
+enqueue to succeeded with worker_id, timings and `chunks_written` in `jobs.stats`. No API/OpenAPI change; the
+migration is additive.
+
+**Delivered (STORY-09.1):** River integration + the `ragctl work` binary — a new `internal/worker` package
+(FR-ING-08, SPEC-08 §1, SPEC-09 §2, ADR-0005, ADR-0059, ISSUE-0036) turning the STORY-01.1 `work` stub into
+the real consumer. The `river.Client` runs on the **control-plane** pool (ADR-0005) and NEVER a tenant pool
+(C-3); tenant data is reached only **per job** — each handler parses the job's `tenant_id` and opens a fresh
+`tenant.DB` from the resolver (ADR-0003, C-1) — so a job can only ever touch its own tenant's database (the AC,
+proven by the e2e's document landing in the enrolled tenant's `live_chunks`). Three queues
+(`ingest`/`maintenance`/`platform`) each get an **independent** `MaxWorkers` budget (defaults 8/2/2, per
+flag/env; `--queues` may restrict a worker to a subset), so a long reindex on `maintenance` cannot starve
+`ingest` syncs (SPEC-08 §1). Handlers already existed worker-free: `ingest_document` (STORY-06.3
+`ingestdoc.Ingestor`), `sync_source` (resolve connector by kind → decrypt creds, C-4 → Sync into the sink),
+`gc_tenant` (STORY-05.9 retention sweep) are wired end-to-end; the remaining SPEC-08 kinds (`reindex_tenant`,
+`delete_source`, `provision_tenant`, `delete_tenant`) are **registered** with a loud-fail `todoWorker`
+(`JobCancel`, no retry) so the queue structure is complete without building every handler this story
+(**ponytail:** ceiling is "no real handler yet"; upgrade path is each named story). River's own migrator runs
+at startup **entirely apart** from the goose-managed `control_plane` schema and its ADR-0028 drift guard, so
+River upgrades don't flap the guard and no goose migration was added (ADR-0059). `work` loads the DEK at
+startup and **fails closed** (SPEC-09 §2) like `serve`, then blocks on SIGINT/SIGTERM and **drains** in-flight
+jobs via `client.Stop` bounded by a drain deadline — a drained job ends `completed`, never abandoned (the
+graceful-shutdown AC, proven by the gated-fetcher e2e). `work` was the **last** STORY-01.1 stub: it stops
+returning `ErrNotImplemented`, so `cmd/ragctl` extracts the pure `codeFor` mapping to keep the ADR-0010 exit-2
+contract unit-testable, and its exit-2 e2e/unit assertions move in the same change. Composition root
+(`internal/cli`) owns all connector-/provider-specific wiring (registry + per-kind state-store factory,
+parse/embed/store stages, object storage read-back) behind worker seams, so adding a connector needs no worker
+change (NFR-MNT-01). Unit tests hermetic; DB-backed e2e (`worker_e2e_test.go`) over the real control plane
+proves per-job TenantDB + graceful drain (external embedder + object storage stubbed). No API endpoint, no
+schema/OpenAPI/migration change.
+
+## EPIC-10 · Security, observability, operations — ✅ 26/26 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
-| STORY-10.1 | Metrics catalogue and dashboards | 5 | 🔲 Todo | FR-OBS-02, SPEC-10 §2/5 |
-| STORY-10.2 | Alert rules | 2 | 🔲 Todo | SPEC-10 §5 |
-| STORY-10.3 | Distributed tracing end to end | 3 | 🔲 Todo | FR-OBS-03 |
-| STORY-10.4 | DEK rotation command | 3 | 🔲 Todo | NFR-SEC-03, SPEC-09 §2 |
-| STORY-10.5 | Backups and PITR verification | 3 | 🔲 Todo | NFR-REL-03 |
-| STORY-10.6 | Security scanning in CI and dependency policy | 2 | 🔲 Todo | SPEC-09 §6 |
-| STORY-10.7 | Load and isolation testing | 5 | 🔲 Todo | NFR-PERF-01, SRS §8 |
-| STORY-10.8 | Runbooks | 3 | 🔲 Todo | — |
+| STORY-10.1 | Metrics catalogue and dashboards | 5 | ✅ Done | FR-OBS-02, SPEC-10 §2/5 |
+| STORY-10.2 | Alert rules | 2 | ✅ Done | SPEC-10 §5 |
+| STORY-10.3 | Distributed tracing end to end | 3 | ✅ Done | FR-OBS-03, SPEC-08 §5, ADR-0066 |
+| STORY-10.4 | DEK rotation command | 3 | ✅ Done | NFR-SEC-03, SPEC-09 §2, ADR-0065 |
+| STORY-10.5 | Backups and PITR verification | 3 | ✅ Done | NFR-REL-03 |
+| STORY-10.6 | Security scanning in CI and dependency policy | 2 | ✅ Done | SPEC-09 §6 |
+| STORY-10.7 | Load and isolation testing | 5 | ✅ Done | NFR-PERF-01, SRS §8 |
+| STORY-10.8 | Runbooks | 3 | ✅ Done | — |
+
+**Delivered (STORY-10.8 — ISSUE-0050):** runbooks (SRS §8). All seven AC runbooks live in `docs/runbooks/`
+(OKF): `enrol-tenant.md`, `move-tenant.md` (existing, reused — not duplicated), `failed-migration.md`,
+`provider-outage.md`, `stuck-job.md`, `tenant-deletion.md`, `incident-response.md`, plus `observability.md` (the
+alert→action index) and a `README.md` index; each follows the existing runbook structure (when to use,
+preconditions, procedure, verification) and cross-references the others and `backup-and-pitr.md` (STORY-10.5)
+rather than repeating them. This also closes the STORY-10.2 loose end: the five alert `runbook_url` links
+(`observability.md#query-latency|grounded-rate-drop|job-failures|queue-depth|provider-errors`) now resolve to
+real headings — `observability.md` was authored with exactly those H2 headings, and a new hermetic check
+`internal/obs/runbook_links_test.go` asserts every alert `runbook_url` anchor resolves to a heading in the target
+runbook, so an alert and its runbook cannot silently drift (runs under `mise run test`/`coverage`; no new CI
+wiring, no new dep). No alert filename needed changing (they already targeted `observability.md`). Docs only — no
+ADR. **EPIC-10 is now 26/26 ✅ Complete.**
+
+**Delivered (STORY-10.7 — ISSUE-0049):** load + isolation testing (NFR-PERF-01, SRS §8.5). A k6 scenario
+(`test/load/retrieval-load.js`) drives 50 concurrent VUs spread across 4 tenants against the real
+`/v1/retrieve` endpoint, each VU authenticating as a distinct tenant by API key (FR-ACC-03) so the run also
+exercises per-tenant isolation under concurrency; a `retrieval_latency` Trend carries the threshold
+`p(95)<300` (NFR-PERF-01) so k6 fails the run if breached, plus a 100%-success check. `test/load/seed-tenant.sql`
+bulk-seeds a tenant DB to 1 M chunks via `generate_series`, reusing the `retrieve_bench_test.go` load pattern
+(ADR-0051) so the HNSW/full-text indexes behave as at scale (source_id is an informational copy, no FK — C-4 —
+so no sources row is needed). `mise run loadtest` runs it and self-skips (exit 0) without k6 or `TENANT_KEYS`
+(verified in the sandbox), like the backup drill. `test/load/README.md` documents provisioning 4 tenants (3 on
+one Postgres instance + 1 on another, SRS §8.1), seeding, running, and committing `k6 --summary-export` output to
+`test/load/results/`. Load tool k6 and the p95 target are both pinned by the AC — no new ADR. The measured run
+was NOT executed here (no Postgres/pgvector/k6 + 1 M-chunk seed in the sandbox); the scenario, seed, runner,
+threshold-gate and results scaffold are committed, and the results row is marked pending its run on the real
+stack. The cross-tenant-access correctness suite (SRS §8.1) was already delivered by
+`test/e2e/isolation_e2e_test.go` (STORY-02.6); this story adds the concurrent load dimension.
+
+**Delivered (STORY-10.6 — ADR-0014 amended, ISSUE-0048):** security scanning as CI gates + dependency policy
+(SPEC-09 §6). Three scanners now block merges on high severity, all mise-task-driven (CI keeps invoking
+`mise run <task>`, ADR-0014): (1) **govulncheck** — the blanket `continue-on-error` vuln job is replaced by
+`mise run vulncheck-gate`, which parses `govulncheck -format json` (jq, no new dep) and fails on a *called*
+vulnerability (trace[0] has a function) in a *non-stdlib* module not allowlisted; Go stdlib advisories
+(unfixable under the `go 1.22` pin) are surfaced non-blocking as before. The live scan tripped on 213 called
+findings (~14 OSV ids) across the exact deps ADR-0014 named as pin-locked (x/net, x/text, otel/sdk, grpc, pgx,
+aws-sdk, go-jose) — so, per ADR-0014's already-accepted pin-locked exception, those ids are listed in
+`.ci/vuln-allowlist.txt` (surfaced, non-blocking, deleted as the pin advances) and a NEW non-stdlib called vuln
+blocks; the gate then PASSES. (2) **pip-audit** — `mise run pip-audit` audits the parser sidecar's
+`requirements.txt` and blocks on findings; it surfaced a real actionable one (Flask 3.0.3, PYSEC-2026-2151) which
+was FIXED by bumping to 3.1.3 (not allowlisted — no pin constraint), parser tests still green (13 passed). (3)
+**Trivy** — `aquasecurity/trivy-action` scans the image the existing `image` job already builds (not rebuilt),
+failing on HIGH/CRITICAL with `ignore-unfixed: true` (unfixed base-image CVEs cannot gate a merge — the same
+fixable-only principle). Policy in `docs/dependency-policy.md`; ADR-0014 amended (no new ADR). Runnable checks:
+`mise run vulncheck-gate` → PASS (live), `mise run pip-audit` → PASS (live, post-bump), both `bash -n` clean and
+self-skipping without tooling; Trivy runs in CI only.
+
+**Delivered (STORY-10.5 — ADR-0068, ISSUE-0047):** tenant-database backups + PITR verification (NFR-REL-03).
+pgBackRest archives every tenant Postgres cluster to the platform MinIO/S3 object store — daily full + continuous
+WAL archiving, 7-day time-based retention (`repo1-retention-full-type=time` / `=7`) for point-in-time recovery.
+The user's decision (self-hosted pgBackRest → MinIO/S3, recorded in ADR-0068 with the managed-Postgres path as
+the rejected alternative and the C-5 residency rationale). Deliverables: (1) documented backup configuration —
+`deploy/backup/pgbackrest.conf` (non-secret policy; secrets via `PGBACKREST_REPO1_S3_*`, not committed), a
+`Dockerfile.pgbackrest` (base image + the binary + baked config), and a `docker-compose.backup.yml` OPT-IN overlay
+that adds `archive_command` + repo env to the base `postgres` service and reuses the base `minio` service (default
+`docker compose up` and CI e2e unchanged), with `deploy/backup/README.md` explaining the one-stanza-per-cluster
+fleet model (a cluster's WAL covers every tenant DB on it); (2) the monthly restore drill
+`deploy/backup/restore-drill.sh` — a point-in-time `pgbackrest restore --type=time` into a throwaway target that
+asserts recovery (`pg_controldata` + `SELECT 1` + `pg_is_in_recovery()=f`) and self-skips where the tooling is
+absent, wired as `mise run backup-drill` + a `backup-drill` CI job (mise-task-driven, ADR-0014; `bash -n`
+structural check always runs); (3) the runbook `docs/runbooks/backup-and-pitr.md` (health check, drill cadence,
+real PITR procedure, retention + control-plane notes). No Go code changed; `ragctl` unchanged (ADR-0009) — backups
+are ops, not a CLI subcommand. Runnable check verified: `mise run backup-drill` parses the script and self-skips
+(exit 0) in this env; the full drill runs where pgBackRest + Postgres + a repo exist.
+
+**Delivered (STORY-10.2 — ISSUE-0045):** alert rules (SPEC-10 §5). Five of the six §5 conditions ship
+as Prometheus alerting rules in `deploy/prometheus/rules/ragctl.rules.yml` — query p95 per tenant > 800ms/10m,
+grounded-rate day-over-day drop > 20 points, job failures per kind > 5/15m, queue depth > 500/30m, and provider
+error rate > 5%/5m — each referencing the STORY-10.1 §2 catalogue and reusing the exact thresholds annotated on
+the Grafana dashboards so the two never drift, each with a `severity` label and a `runbook_url`
+(`docs/runbooks/observability.md`, authored by STORY-10.8). Artifact format is Prometheus rules (no new ADR): the
+committed metrics stack is Prometheus and the dashboards are Grafana-over-Prometheus, so the rule file is the
+canonical fit, committed under `deploy/prometheus/` alongside `deploy/grafana/` — no Alertmanager routing or
+running deployment added. The runnable check is a hermetic Go test (`internal/obs/alertrules_test.go`) that parses
+the YAML (`yaml.v3`, already in the module graph — no `promtool` dep) and asserts every alert is complete
+(name/expr/severity/summary/runbook link) and references only a metric `internal/obs` registers, so a mistyped or
+renamed metric that would make an alert silently never fire fails the build. The sixth §5 alert, "tenant
+migration mismatch count > 0", has no metric in the §2 catalogue (a §5↔§2 gap); per coordinator decision it is
+DEFERRED and tracked in ISSUE-0046 (add a `tenant_schema_mismatch` gauge — a periodic fleet schema-version scan —
+to §2, then the alert), rather than pointing an alert at a non-existent series. No new ADR.
+
+**Delivered (STORY-10.1 — ADR-0067, ISSUE-0044):** the metric catalogue and dashboards (FR-OBS-02,
+SPEC-10 §2/§5). `obs.Metrics` (the STORY-01.6 seam, ADR-0013) now owns and registers the full §2 catalogue with
+nil-safe typed emission methods — a subsystem wired without a Metrics (its optional dependency) no-ops, exactly
+like the existing nil-safe `Usage` recorder and rate-limit counter. Reused, not rebuilt: the private
+`prometheus.Registry` + `/metrics` handler, the obs HTTP middleware, the rate-limit `Rejected` counter seam, the
+poolCache `len()`, and `obs.NewServeMux`. Wired and EMITTED across the API + jobs planes: the request histogram
+now carries the REAL per-tenant label instead of the always-`-` placeholder (a request-scoped `tenantHolder` +
+`obs.SetRequestTenant`, written by the API-key scope middleware from the authenticated principal, FR-ACC-03, and
+read back by the outer middleware — which cannot see a value an inner layer sets on its own child context);
+`api_rate_limited_total` (rate-limit middleware); `tenant_pools_open` (a GaugeFunc over the resolver's new
+`NumPools()`); `query_retrieval_duration_seconds{tenant,reranked}` (retrieve.Service); `query_grounded_total{
+tenant,grounded}` (query.Service); and `jobs_duration_seconds`/`jobs_failed_total` per kind (a worker
+`metricsMiddleware`, innermost in the River chain so it times just the handler) plus `jobs_queue_depth` (a
+one-minute sampler over River's `river_job`). The WORKER now exposes its own `/metrics` endpoint
+(`RAGCTL_WORKER_METRICS_ADDR`, default `:9091`, empty disables) — the decision recorded in ADR-0067 — so the
+jobs plane is scrapeable; a serving failure never brings the worker down. Five Grafana dashboards ship as JSON
+under `deploy/grafana/dashboards/` (API, ingestion, jobs, providers, per-tenant) with the §5 alert thresholds
+annotated. Ingestion throughput (`ingest_documents_total{tenant,source_kind,result}`, `ingest_chunks_total`,
+`embed_tokens_total`) is emitted from the single ingestion sink (`sink.Put`) both connector-sync and upload
+paths drive, labelled from the two `sink.New` sites. Provider health (`provider_request_duration_seconds`,
+`provider_errors_total`, labelled provider/op/status) is emitted at each client's resilience boundary — the llm
+`resilient` wrapper (op llm.complete/llm.stream), the embed `batcher` (op embed) and a metered rerank decorator
+(op rerank) — with `obs.Metrics` threaded through the `llm.Factory`/`KeyedEmbedderFactory`/`KeyedRerankerFactory`
+so the composition root sets it once; labels carry no content or secrets (C-3/C-4). Since ingestion/embedding run
+in the worker and LLM/rerank in serve, provider metrics land on whichever process made the call — both expose
+`/metrics`. Hermetic unit tests cover every emitter (catalogue exposition with labels incl. ingest+provider,
+nil-safe no-ops, the per-tenant label round-trip through the real middleware, `NumPools`, the reranked retrieval
+histogram, grounded true/false, the job middleware's duration-always/failure-only with the error passed through
+unchanged, the sink's changed/unchanged/failed results + chunks/tokens, and each provider package's ok-path
+observation). No new ADR beyond 0067 (the catalogue, the holder, the GaugeFunc and the nil-safe factory threading
+extend the ADR-0013 pattern). Alert *rules* are STORY-10.2.
+
+**Delivered (STORY-10.3):** end-to-end tracing — the two missing trace edges (FR-OBS-03, SPEC-08 §5, ADR-0066,
+ISSUE-0043). The obs HTTP middleware now extracts inbound W3C trace context and opens a server span
+(method/route/status/tenant), whose context flows into handlers so the existing retrieval/provider spans become
+children — one trace covers API → retrieval → provider. A worker `traceMiddleware` (between the limiter and the
+mirror) opens a per-job span carrying tenant.id/job.id/job.kind/job.attempt/source.id, so the sidecar/provider
+spans a job makes are children — one trace covers a worker job → sidecar. Both spans are no-ops until a provider
+is installed and honour the existing configurable ratio sampler. Manual otel spans (no otelhttp dep). Hermetic
+tracetest-recorder unit tests assert the API and job spans and their attributes; a failing job marks its span
+Error without altering the error.
+
+**Delivered (STORY-10.4):** DEK rotation — `ragctl keys rotate-dek` re-encrypts all stored secrets under a new
+DEK version with zero downtime (NFR-SEC-03, SPEC-09 §2, ADR-0065, ISSUE-0042). The enabler is a new
+`crypto.Keyring` (primary Cipher + previous-version Ciphers) threaded through the app in place of the single
+Cipher — it seals new secrets under the primary and decrypts any version it holds, satisfying the existing
+Encrypt/Decrypt interfaces so the resolver/sources/provisioner are unchanged (a single-key keyring is a drop-in).
+`DEK_PREVIOUS` config keeps the old key in the ring during the rotation window. Procedure: `keys new-dek`
+(mint + KMS-wrap the next version) → rolling restart with the new key primary and the old in DEK_PREVIOUS (fleet
+now seals vN, decrypts either) → `keys rotate-dek` (re-encrypt `tenant_databases.password_enc` +
+`sources.credentials_enc` to the primary) → drop the old key. Idempotent and resumable: a row already at the
+primary version is skipped, so an interrupted rotation re-runs only the remainder; recovered plaintext is zeroed;
+only the KMS-wrapped blob is ever written (0600), never key material. Hermetic crypto unit tests (seal-primary/
+decrypt-any-version/fail-closed; Reencrypt idempotency); real-binary e2e rotates a v1 tenant password and a v1
+source credential to v2 and proves both decrypt to their originals, with a second rotation a no-op.
 
 ## EPIC-11 · Admin UI (reference) — 🔲 0/34 pts
 

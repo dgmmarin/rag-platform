@@ -84,15 +84,12 @@ jobs:
         run: mise run down || true
 
   vuln:
+    # Go dependency scanning (SPEC-09 §6). BLOCKING gate (STORY-10.6, ADR-0014
+    # amended): `mise run vulncheck-gate` fails on a called vulnerability in a
+    # non-stdlib module that is NOT in .ci/vuln-allowlist.txt, while Go stdlib
+    # advisories and the Go-1.22 pin-locked dependency allowlist are surfaced in the
+    # logs but do not fail. The allowlist shrinks as the Go pin advances.
     runs-on: ubuntu-latest
-    # NOTE: non-blocking. govulncheck currently reports Go standard-library CVEs
-    # that are only fixed in Go >= 1.23/1.25, which we cannot adopt while pinned
-    # to Go 1.22 (go.mod `go 1.22`, no toolchain, by prior-story decision). The
-    # scan still RUNS on every PR and its findings are surfaced in the logs; it
-    # must not permanently red-wall CI for unfixable-under-1.22 stdlib issues.
-    # See docs/adr/0014-ci-drives-mise-tasks.md. Flip continue-on-error to false
-    # once the Go pin moves past these advisories.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -100,11 +97,41 @@ jobs:
           go-version: '1.22'
           cache: true
       - uses: jdx/mise-action@v2
-      - run: mise run vuln
+      - run: mise run vulncheck-gate
+
+  pip-audit:
+    # Python (parser sidecar) dependency scanning (SPEC-09 §6, STORY-10.6). Blocks on
+    # any known vulnerability in services/parser/requirements.txt.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: mise run pip-audit
 
   image:
-    # Image build only (no push) — proves the release Dockerfile still builds.
+    # Image build (no push) + vulnerability scan (SPEC-09 §6, STORY-10.6).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: docker build -f Dockerfile -t rag-platform/ragctl:ci .
+      - name: Scan image (Trivy) — block on HIGH/CRITICAL
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: rag-platform/ragctl:ci
+          severity: HIGH,CRITICAL
+          # Only fixable findings block merge (parallels the govulncheck stdlib /
+          # pin-locked exception): an unfixed base-image CVE cannot gate a merge.
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+
+  backup-drill:
+    # Monthly PITR restore drill script (STORY-10.5, NFR-REL-03). In CI (no
+    # pgBackRest) `mise run backup-drill` validates the script is well-formed and
+    # self-skips; the full restore drill runs on the monthly ops cadence where
+    # pgBackRest + Postgres + the repo exist (docs/runbooks/backup-and-pitr.md).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: mise run backup-drill

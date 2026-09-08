@@ -30,6 +30,11 @@ type Config struct {
 	AWSKMSKeyID string
 	// DEKWrappedPath is the path to the wrapped-DEK blob on disk.
 	DEKWrappedPath string
+	// DEKPrevious lists earlier DEK generations still needed to DECRYPT secrets that
+	// have not yet been re-encrypted under the primary version — the zero-downtime
+	// window of a `keys rotate-dek` (STORY-10.4). Each entry is "path:version"; loaded
+	// from DEK_PREVIOUS (comma-separated). Empty in steady state.
+	DEKPrevious []string
 	// DEKKeyVersion is the active DEK generation; new ciphertext is sealed under
 	// it, and rotation increments it (SPEC-09 §2).
 	DEKKeyVersion uint16
@@ -180,6 +185,14 @@ func Load(filePath string) (Config, error) {
 			return Config{}, fmt.Errorf("config: invalid DEK_KEY_VERSION %q: %w", raw, err)
 		}
 		cfg.DEKKeyVersion = uint16(v)
+	}
+
+	if raw := mustGet(get, "DEK_PREVIOUS"); raw != "" {
+		for _, e := range strings.Split(raw, ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				cfg.DEKPrevious = append(cfg.DEKPrevious, e)
+			}
+		}
 	}
 
 	// Provisioning (STORY-02.3, SPEC-01 §6). The privileged URL and tenant-facing

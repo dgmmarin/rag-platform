@@ -1,0 +1,28 @@
+# govulncheck gate allowlist — OSV ids treated as SURFACED-but-non-blocking by
+# mise-tasks/vulncheck-gate (STORY-10.6, ADR-0014 amended).
+#
+# These are called vulnerabilities in the dependency set the Go 1.22 pin holds in
+# place (go.mod `go 1.22`, no toolchain — the pin exists to keep OTel / AWS-SDK /
+# pgx / grpc / x/net / x/text mutually compatible; their fixes require Go >= 1.23).
+# They are the exact modules ADR-0014 named as the pin-locked exception. They are
+# printed on every run (never hidden) but do not fail the gate; a NEW non-stdlib
+# called vuln outside this list DOES block merge.
+#
+# When the Go pin advances (the dedicated dependency-bump story), bump the deps and
+# DELETE the corresponding lines — the gate then enforces them automatically.
+# One OSV id per line; text after the id is a note.
+
+GO-2025-3595   # golang.org/x/net (HTML tokenizer) — fixed in a Go >=1.23 release line
+GO-2026-4440   # golang.org/x/net
+GO-2026-4441   # golang.org/x/net
+GO-2026-5025   # golang.org/x/net
+GO-2026-5027   # golang.org/x/net
+GO-2026-5028   # golang.org/x/net
+GO-2026-5029   # golang.org/x/net
+GO-2026-5030   # golang.org/x/net
+GO-2026-5970   # golang.org/x/text
+GO-2026-4394   # go.opentelemetry.io/otel/sdk
+GO-2026-6061   # google.golang.org/grpc
+GO-2026-5004   # github.com/jackc/pgx/v5
+GO-2026-5764   # github.com/aws/aws-sdk-go-v2 (s3 / eventstream)
+GO-2026-4945   # github.com/go-jose/go-jose/v4

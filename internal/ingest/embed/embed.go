@@ -29,6 +29,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/rag-platform/ragctl/internal/obs"
 )
 
 // Defaults from SPEC-05 §4 (§8 for retries).
@@ -113,6 +115,10 @@ type Config struct {
 	// Circuit breaker (SPEC-05 §4). Zero values use the defaults.
 	BreakerThreshold int
 	BreakerCooldown  time.Duration
+
+	// Metrics records provider_request_duration_seconds / provider_errors_total
+	// (SPEC-10 §2). Optional: a nil Metrics is a no-op.
+	Metrics *obs.Metrics
 }
 
 func (c Config) withDefaults() Config {
@@ -164,6 +170,8 @@ func New(cfg Config) (Embedder, error) {
 		maxTokens:   cfg.MaxBatchTokens,
 		concurrency: cfg.Concurrency,
 		count:       cfg.CountTokens,
+		provider:    cfg.Provider,
+		metrics:     cfg.Metrics,
 	}, nil
 }
 
@@ -186,6 +194,8 @@ type batcher struct {
 	maxTokens   int
 	concurrency int
 	count       func(string) int
+	provider    string
+	metrics     *obs.Metrics
 }
 
 type batchRange struct {
@@ -193,10 +203,14 @@ type batchRange struct {
 	texts  []string
 }
 
-func (b *batcher) Embed(ctx context.Context, texts []string) (Result, error) {
+func (b *batcher) Embed(ctx context.Context, texts []string) (res Result, err error) {
 	if len(texts) == 0 {
 		return Result{Vectors: [][]float32{}}, nil
 	}
+	// provider_request_duration_seconds / provider_errors_total (SPEC-10 §2): one
+	// observation per logical Embed call (all batches). No embedded text in labels.
+	start := time.Now()
+	defer func() { b.metrics.ObserveProvider(b.provider, "embed", err, time.Since(start).Seconds()) }()
 	ctx, span := b.tracer.Start(ctx, "embed.batch", trace.WithAttributes(
 		attribute.Int("embed.texts", len(texts)),
 	))

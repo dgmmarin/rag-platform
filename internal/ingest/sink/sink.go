@@ -28,6 +28,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/ingest/chunk"
 	"github.com/rag-platform/ragctl/internal/ingest/embed"
 	"github.com/rag-platform/ragctl/internal/ingest/parse"
+	"github.com/rag-platform/ragctl/internal/obs"
 	"github.com/rag-platform/ragctl/internal/tenant"
 )
 
@@ -149,6 +150,15 @@ type Config struct {
 	Chunk    chunk.Config // target/overlap from tenant settings; zero values use SPEC-05 §3 defaults
 	Model    string       // embedding model id stamped on every chunk (Invariant 3)
 
+	// Metrics records ingest_documents_total / ingest_chunks_total /
+	// embed_tokens_total (SPEC-10 §2). Optional: a nil Metrics is a no-op.
+	// Tenant/SourceKind/Provider are the labels — the tenant id (bounded per
+	// tenant), the source kind, and the embedding provider; never content (C-3).
+	Metrics    *obs.Metrics
+	Tenant     string
+	SourceKind string
+	Provider   string
+
 	// Now is the clock; nil uses time.Now. startedAt is captured at New.
 	Now func() time.Time
 }
@@ -205,6 +215,7 @@ func (s *Sink) Put(ctx context.Context, doc Document) error {
 	}
 	if unchanged {
 		s.stats.DocsUnchanged++
+		s.cfg.Metrics.IncIngestDocument(s.cfg.Tenant, s.cfg.SourceKind, "unchanged")
 		return nil
 	}
 
@@ -238,6 +249,11 @@ func (s *Sink) Put(ctx context.Context, doc Document) error {
 	s.stats.DocsChanged++
 	s.stats.ChunksWritten += len(chunks)
 	s.stats.EmbedTokens += res.Tokens
+	// SPEC-10 §2 ingestion throughput: mirror the stats increments exactly. Counts
+	// only — never document content (C-3).
+	s.cfg.Metrics.IncIngestDocument(s.cfg.Tenant, s.cfg.SourceKind, "changed")
+	s.cfg.Metrics.AddIngestChunks(s.cfg.Tenant, s.cfg.Provider, len(chunks))
+	s.cfg.Metrics.AddEmbedTokens(s.cfg.Tenant, s.cfg.Provider, res.Tokens)
 	return nil
 }
 
@@ -328,6 +344,7 @@ func (s *Sink) putInput(doc Document, norm parse.Normalised, content string, has
 // no chunks (SPEC-05 §5/§8).
 func (s *Sink) recordFailure(externalID string, err error) {
 	s.stats.DocsFailed++
+	s.cfg.Metrics.IncIngestDocument(s.cfg.Tenant, s.cfg.SourceKind, "failed")
 	if len(s.stats.Errors) < maxDocErrors {
 		s.stats.Errors = append(s.stats.Errors, DocError{ExternalID: externalID, Msg: err.Error()})
 	}

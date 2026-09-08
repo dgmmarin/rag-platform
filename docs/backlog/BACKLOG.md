@@ -229,25 +229,25 @@ Suggested sprint order: EPIC-01 → 02 → 03 → 04 → 05 (+06 in parallel) �
 
 ---
 
-## EPIC-09 · Jobs, scheduling and maintenance
+## EPIC-09 · Jobs, scheduling and maintenance — ✅ COMPLETE (21/21)
 *Goal: River integration, scheduler, cancellation, mirroring.* — 21 pts
 
-**STORY-09.1 River integration and worker binary** (5) — Traces: FR-ING-08, ADR-0005, SPEC-08 §1
+**STORY-09.1 River integration and worker binary** (5) ✅ — Traces: FR-ING-08, ADR-0005, ADR-0059, SPEC-08 §1, SPEC-09 §2
 - AC: queues ingest/maintenance/platform with separate concurrency; job args carry tenant_id; worker opens TenantDB per job; graceful shutdown drains.
 
-**STORY-09.2 Job status mirroring to `jobs` table** (3) — Traces: FR-ADM-02, SPEC-08 §3
+**STORY-09.2 Job status mirroring to `jobs` table** (3) ✅ — Traces: FR-ADM-02, SPEC-08 §3, ADR-0005, ADR-0060
 - AC: transitions, attempts, stats, errors mirrored; admin reads only `jobs`.
 
-**STORY-09.3 Scheduler for cron sources and daily GC** (5) — Traces: FR-SRC-11, SPEC-08 §2
+**STORY-09.3 Scheduler for cron sources and daily GC** (5) ✅ — Traces: FR-SRC-11, SPEC-08 §2, ADR-0061
 - AC: leader-elected loop; `next_run_at` computed from cron; full sync every Nth run; GC daily per tenant; no duplicate enqueues under two replicas.
 
-**STORY-09.4 Cancellation and uniqueness** (3) — Traces: SPEC-08 §4
+**STORY-09.4 Cancellation and uniqueness** (3) ✅ — Traces: SPEC-08 §4, ADR-0062
 - AC: one active sync per source; cancel queued immediately; running jobs stop between documents with status cancelled.
 
-**STORY-09.5 Per-tenant concurrency caps and fairness** (3)
+**STORY-09.5 Per-tenant concurrency caps and fairness** (3) ✅ — Traces: SPEC-08 §1, ADR-0063
 - AC: a tenant with 10 queued syncs cannot occupy more than N workers; other tenants' jobs proceed; test with synthetic load.
 
-**STORY-09.6 Delete-source job** (2) — Traces: FR-SRC-12
+**STORY-09.6 Delete-source job** (2) ✅ — Traces: FR-SRC-12, ADR-0064
 - AC: removes documents, versions, chunks, crawl state for the source; stats reported.
 
 ---
@@ -261,10 +261,10 @@ Suggested sprint order: EPIC-01 → 02 → 03 → 04 → 05 (+06 in parallel) �
 **STORY-10.2 Alert rules** (2) — Traces: SPEC-10 §5
 - AC: alert rules committed; runbook link per alert.
 
-**STORY-10.3 Distributed tracing end to end** (3) — Traces: FR-OBS-03
+**STORY-10.3 Distributed tracing end to end** (3) ✅ — Traces: FR-OBS-03, SPEC-08 §5, ADR-0066
 - AC: one trace covers API → retrieval → provider; worker job → sidecar; sampled at configurable rate.
 
-**STORY-10.4 DEK rotation command** (3) — Traces: NFR-SEC-03, SPEC-09 §2
+**STORY-10.4 DEK rotation command** (3) ✅ — Traces: NFR-SEC-03, SPEC-09 §2, ADR-0065
 - AC: `ragctl keys rotate-dek` re-encrypts all secrets under a new key version with zero downtime; old key retained until completion.
 
 **STORY-10.5 Backups and PITR verification** (3) — Traces: NFR-REL-03

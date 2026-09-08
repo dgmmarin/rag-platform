@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rag-platform/ragctl/internal/obs"
 	"github.com/rag-platform/ragctl/internal/tenant"
 )
 
@@ -170,6 +171,10 @@ func (v *APIKeyVerifier) RequireScope(scope Scope) func(http.Handler) http.Handl
 			}
 			ctx := tenant.WithTenantID(r.Context(), tenant.ID(tid))
 			ctx = WithKeyID(ctx, p.KeyID)
+			// Record the resolved tenant for the obs request metric/log label
+			// (SPEC-10 §2, FR-OBS-02). It comes from the authenticated key, never a
+			// client parameter (FR-ACC-03); a no-op outside an instrumented request.
+			obs.SetRequestTenant(ctx, p.TenantID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

@@ -39,6 +39,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/answer"
 	"github.com/rag-platform/ragctl/internal/cp/usage"
 	"github.com/rag-platform/ragctl/internal/llm"
+	"github.com/rag-platform/ragctl/internal/obs"
 	"github.com/rag-platform/ragctl/internal/retrieve"
 	"github.com/rag-platform/ragctl/internal/tenant"
 )
@@ -110,6 +111,9 @@ type Service struct {
 	// it is unaffected. The rewrite is gated per tenant by settings.rewrite.enabled
 	// and only runs when history is present (see rewrite.go).
 	Providers answer.ProviderFactory
+	// Metrics records query_grounded_total (SPEC-10 §2/§5). Optional: a nil Metrics
+	// disables the observation (the method is a no-op).
+	Metrics *obs.Metrics
 }
 
 // Query runs the pipeline and returns the SPEC-06 §6 JSON result. On generation
@@ -127,7 +131,7 @@ func (s *Service) Query(ctx context.Context, tid tenant.ID, req Request) (answer
 		}
 		res = s.degradedResult(ctx, ar)
 	}
-	s.countQuery(tid)
+	s.recordQuery(tid, res.Grounded)
 	return res, nil
 }
 
@@ -185,7 +189,7 @@ func (s *Service) QueryStream(ctx context.Context, tid tenant.ID, req Request, s
 		_ = sink.Send("delta", deltaEvent{Text: p.RefusalText})
 		_ = sink.Send("done", doneEvent{ID: p.ID, Grounded: false, Model: p.Model, Usage: u})
 		s.Answer.RecordStreamed(ctx, ar, p, u)
-		s.countQuery(tid)
+		s.recordQuery(tid, false)
 		return nil
 	}
 
@@ -198,7 +202,7 @@ func (s *Service) QueryStream(ctx context.Context, tid tenant.ID, req Request, s
 			_ = sink.Send("delta", deltaEvent{Text: generationUnavailableMessage})
 			_ = sink.Send("done", doneEvent{ID: p.ID, Grounded: true, Model: p.Model, Usage: u, GenerationUnavailable: true})
 			s.Answer.RecordStreamed(ctx, ar, p, u)
-			s.countQuery(tid)
+			s.recordQuery(tid, true)
 			return nil
 		}
 		// Establishment failed for another reason; the retrieval event (and thus the
@@ -235,7 +239,7 @@ func (s *Service) QueryStream(ctx context.Context, tid tenant.ID, req Request, s
 	u.GenerationMs = time.Since(start).Milliseconds()
 	_ = sink.Send("done", doneEvent{ID: p.ID, Grounded: true, Model: p.Model, Usage: u})
 	s.Answer.RecordStreamed(ctx, ar, p, u)
-	s.countQuery(tid)
+	s.recordQuery(tid, true)
 	return nil
 }
 
@@ -315,12 +319,15 @@ func (s *Service) tenantName(ctx context.Context, tid tenant.ID) string {
 	return name
 }
 
-// countQuery folds one Queries count for the tenant (FR-RET-04 accounting; owned by
-// 08.6 to avoid a double count with 08.5's LLM-token fold).
-func (s *Service) countQuery(tid tenant.ID) {
+// recordQuery folds one Queries count for the tenant (FR-RET-04 accounting; owned
+// by 08.6 to avoid a double count with 08.5's LLM-token fold) and records the
+// grounding outcome (query_grounded_total, SPEC-10 §2/§5). The tenant label is the
+// tenant id (bounded per tenant), consistent with the API/retrieval metrics.
+func (s *Service) recordQuery(tid tenant.ID, grounded bool) {
 	if s.Usage != nil {
 		s.Usage.Add(tid.String(), usage.Delta{Queries: 1})
 	}
+	s.Metrics.IncGrounded(tid.String(), grounded)
 }
 
 // toAnswerChunks maps the ranked retrieval results onto the answering stage's local

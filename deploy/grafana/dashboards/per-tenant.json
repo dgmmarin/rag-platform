@@ -1,0 +1,98 @@
+{
+  "uid": "ragctl-per-tenant",
+  "title": "RAG Platform — Per-tenant",
+  "tags": ["ragctl", "spec-10"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      },
+      {
+        "name": "tenant",
+        "label": "Tenant",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(query_grounded_total, tenant)",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Query latency p95 per tenant (SPEC-10 §5 alert: > 800 ms for 10 min)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.8 } ] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(api_request_duration_seconds_bucket{route=\"/v1/query\", tenant=~\"$tenant\"}[5m])) by (le, tenant))",
+          "legendFormat": "{{tenant}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Retrieval latency p95 per tenant",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(query_retrieval_duration_seconds_bucket{tenant=~\"$tenant\"}[5m])) by (le, tenant))",
+          "legendFormat": "{{tenant}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Grounded rate per tenant (SPEC-10 §5 alert: drops > 20 points day-over-day)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(query_grounded_total{grounded=\"true\", tenant=~\"$tenant\"}[1h])) by (tenant) / clamp_min(sum(rate(query_grounded_total{tenant=~\"$tenant\"}[1h])) by (tenant), 1e-9)",
+          "legendFormat": "{{tenant}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Query rate per tenant",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(query_grounded_total{tenant=~\"$tenant\"}[5m])) by (tenant)",
+          "legendFormat": "{{tenant}}"
+        }
+      ]
+    }
+  ]
+}

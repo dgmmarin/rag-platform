@@ -1,13 +1,24 @@
 package obs
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// apiTracer names the API entry-point spans. A no-op tracer is returned until
+// SetupTracing installs a provider, so this is safe when tracing is disabled.
+var apiTracer = otel.Tracer("ragctl-api")
 
 // tenantLabelUnset is the placeholder tenant label/field used until STORY-02
 // resolves the tenant from the authenticated principal (FR-ACC-03). Keeping the
@@ -53,7 +64,24 @@ func Middleware(log *slog.Logger, m *Metrics) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			reqID := inboundRequestID(r)
-			ctx := ContextWithRequestID(r.Context(), reqID)
+			// Adopt any inbound W3C trace context so a caller's trace continues through
+			// the platform, then open the API server span. Its context flows into the
+			// handler, so retrieval and provider spans downstream are children — one
+			// trace covers API → retrieval → provider (FR-OBS-03, SPEC-10). The span is a
+			// no-op until SetupTracing installs a provider, and the sampler ratio
+			// (TracingConfig.SamplerRatio) controls capture.
+			ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+			ctx = ContextWithRequestID(ctx, reqID)
+			// Install a mutable tenant cell a later layer (tenant resolution) writes
+			// via SetRequestTenant; read back here for the label/log after the chain
+			// returns (see tenantHolder). The tenant never comes from this middleware.
+			holder := &tenantHolder{}
+			ctx = context.WithValue(ctx, tenantHolderKey, holder)
+			// ponytail: the span name is the raw path (matches the metrics route). Ceiling:
+			// high-cardinality span names for id-bearing paths. Upgrade path: a routed
+			// pattern (chi RoutePattern) once the router exposes it.
+			ctx, span := apiTracer.Start(ctx, r.Method+" "+r.URL.Path, trace.WithSpanKind(trace.SpanKindServer))
+			defer span.End()
 			r = r.WithContext(ctx)
 			w.Header().Set("X-Request-Id", reqID)
 
@@ -63,7 +91,22 @@ func Middleware(log *slog.Logger, m *Metrics) func(http.Handler) http.Handler {
 			elapsed := time.Since(start)
 
 			route := r.URL.Path
-			tenant := tenantFromContext(ctx)
+			tenant := holder.id
+			if tenant == "" {
+				tenant = tenantLabelUnset
+			}
+			// Surface the resolved tenant on the log line too (With reads tenantIDKey).
+			ctx = ContextWithTenantID(ctx, tenant)
+
+			span.SetAttributes(
+				attribute.String("http.method", r.Method),
+				attribute.String("http.route", route),
+				attribute.Int("http.status_code", rec.status),
+				attribute.String("tenant", tenant),
+			)
+			if rec.status >= 500 {
+				span.SetStatus(codes.Error, http.StatusText(rec.status))
+			}
 
 			m.ObserveRequest(route, rec.status, tenant, elapsed.Seconds())
 
@@ -75,15 +118,6 @@ func Middleware(log *slog.Logger, m *Metrics) func(http.Handler) http.Handler {
 			)
 		})
 	}
-}
-
-// tenantFromContext returns the resolved tenant slug for labels/fields, or the
-// unset placeholder until tenant resolution lands (STORY-02).
-func tenantFromContext(ctx interface{ Value(any) any }) string {
-	if slug, ok := ctx.Value(tenantIDKey).(string); ok && slug != "" {
-		return slug
-	}
-	return tenantLabelUnset
 }
 
 // inboundRequestID reuses a caller-supplied X-Request-Id, else the trace-id from

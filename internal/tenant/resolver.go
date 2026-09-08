@@ -104,6 +104,11 @@ func (r *resolver) Close(id ID) {
 // closeAll releases all pools; used at shutdown.
 func (r *resolver) closeAll() { r.pools.closeAll() }
 
+// NumPools reports how many per-tenant pools the cache currently holds open. It
+// backs the tenant_pools_open gauge (SPEC-10 §2), read on each metrics scrape via
+// obs.Metrics.SetPoolGauge so the gauge never drifts from the cache.
+func (r *resolver) NumPools() int { return r.pools.len() }
+
 // Decrypter opens an envelope-encrypted secret. *crypto.Cipher satisfies it; the
 // tenant package depends on the behaviour, not the concrete type, so tests need
 // no KMS setup.

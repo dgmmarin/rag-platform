@@ -51,7 +51,26 @@ type ctxKey int
 const (
 	requestIDKey ctxKey = iota
 	tenantIDKey
+	tenantHolderKey
 )
+
+// tenantHolder is a request-scoped, mutable cell holding the resolved tenant
+// identifier. The obs middleware runs OUTERMOST and reads the label AFTER the
+// handler chain returns, but context values a later layer sets on its own child
+// context are invisible to that outer snapshot. A pointer in the context lets a
+// later layer (tenant resolution) write the tenant back where the outer
+// middleware can read it, without a client-supplied tenant ever leaking in.
+type tenantHolder struct{ id string }
+
+// SetRequestTenant records the resolved tenant identifier for the current
+// request so the obs middleware labels the request histogram and log line with
+// it (SPEC-10 §2, FR-OBS-02). It is a no-op outside an obs-instrumented request
+// (no holder in context), so callers need no guard.
+func SetRequestTenant(ctx context.Context, id string) {
+	if h, ok := ctx.Value(tenantHolderKey).(*tenantHolder); ok {
+		h.id = id
+	}
+}
 
 // ContextWithRequestID returns a child context carrying the request id. Context
 // carries request/tenant *identity* only — never a DB handle or pool (ADR-0003).

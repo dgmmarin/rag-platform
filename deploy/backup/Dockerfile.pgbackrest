@@ -1,0 +1,16 @@
+# Postgres 16 + pgvector + pgBackRest, for the backup compose overlay (STORY-10.5,
+# ADR-0068). Extends the base image the platform already runs so the archiving
+# command has the pgbackrest binary in the Postgres container, and bakes the
+# non-secret pgBackRest config (secrets arrive via PGBACKREST_REPO1_S3_* env).
+#
+# Build context is the repo root (set by docker-compose.backup.yml), so the COPY
+# path is repo-relative.
+FROM pgvector/pgvector:pg16
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pgbackrest \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /etc/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest \
+    && chown -R postgres:postgres /etc/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest
+
+COPY --chown=postgres:postgres deploy/backup/pgbackrest.conf /etc/pgbackrest/pgbackrest.conf

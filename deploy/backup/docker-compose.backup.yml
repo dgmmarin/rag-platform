@@ -1,0 +1,44 @@
+# Backup overlay (STORY-10.5, ADR-0068). Layers pgBackRest WAL archiving onto the
+# base `postgres` service and reuses the base `minio` service as the S3 repository.
+# OPT-IN: the default `docker compose up` (docker-compose.yml alone) is unchanged,
+# because enabling archive_mode with no repository would break plain local dev.
+#
+# Run from the repo root (compose resolves this overlay's relative build context
+# against the project directory = the base docker-compose.yml's dir, and merges onto
+# the base service):
+#   docker compose -f docker-compose.yml -f deploy/backup/docker-compose.backup.yml up -d
+#
+# Then initialise the repo once (see deploy/backup/README.md):
+#   docker compose exec postgres pgbackrest --stanza=main stanza-create
+#   docker compose exec postgres pgbackrest --stanza=main backup
+
+services:
+  postgres:
+    build:
+      # Relative to the project directory (the base docker-compose.yml's dir = repo
+      # root), so run the overlay from repo root as documented in the README.
+      context: .
+      dockerfile: deploy/backup/Dockerfile.pgbackrest
+    environment:
+      # pgBackRest reads any option from PGBACKREST_<OPTION>. Repo credentials reuse
+      # the platform MinIO creds (no second object store). No secret in the config file.
+      PGBACKREST_REPO1_S3_ENDPOINT: minio:9000
+      PGBACKREST_REPO1_S3_BUCKET: ${PGBACKREST_S3_BUCKET:-ragctl-backups}
+      PGBACKREST_REPO1_S3_REGION: ${PGBACKREST_S3_REGION:-us-east-1}
+      PGBACKREST_REPO1_S3_KEY: ${MINIO_ROOT_USER:-minio}
+      PGBACKREST_REPO1_S3_KEY_SECRET: ${MINIO_ROOT_PASSWORD:-minio12345}
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=pgbackrest --stanza=main archive-push %p
+      - -c
+      - archive_timeout=60
+      - -c
+      - max_wal_senders=3
+    depends_on:
+      minio:
+        condition: service_healthy

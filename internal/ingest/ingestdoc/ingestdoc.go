@@ -31,6 +31,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/ingest/chunk"
 	"github.com/rag-platform/ragctl/internal/ingest/embed"
 	"github.com/rag-platform/ragctl/internal/ingest/sink"
+	"github.com/rag-platform/ragctl/internal/obs"
 	"github.com/rag-platform/ragctl/internal/tenant"
 )
 
@@ -88,7 +89,9 @@ type Ingestor struct {
 	Store    sink.Store         // documents.TenantStore in production
 	Local    sink.LocalParser   // parse.Default()
 	Sidecar  sink.SidecarParser // optional; PDF/DOCX/... via the Python sidecar
-	Now      func() time.Time
+	// Metrics records ingestion throughput (SPEC-10 §2). Optional: nil is a no-op.
+	Metrics *obs.Metrics
+	Now     func() time.Time
 }
 
 // Dispatch resolves the tenant DB and runs the job. This is the entry point
@@ -141,7 +144,12 @@ func (in *Ingestor) Run(ctx context.Context, db *tenant.DB, job Job) (sink.Stats
 		Mode:     sink.Incremental,
 		Chunk:    chunk.Config{TargetTokens: s.ChunkTarget, OverlapTokens: s.ChunkOverlap},
 		Model:    s.EmbeddingModel,
-		Now:      in.Now,
+		// SPEC-10 §2 labels: an ingest_document job is always an upload source.
+		Metrics:    in.Metrics,
+		Tenant:     job.TenantID,
+		SourceKind: "upload",
+		Provider:   s.EmbeddingProvider,
+		Now:        in.Now,
 	})
 
 	doc := sink.Document{

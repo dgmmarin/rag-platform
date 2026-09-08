@@ -28,6 +28,7 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/rag-platform/ragctl/internal/llm"
+	"github.com/rag-platform/ragctl/internal/obs"
 )
 
 // Provider names selectable via settings.reranker.provider.
@@ -124,6 +125,10 @@ type Config struct {
 	MaxRetries       int
 	BreakerThreshold int
 	BreakerCooldown  time.Duration
+
+	// Metrics records provider_request_duration_seconds / provider_errors_total
+	// (SPEC-10 §2). Optional: a nil Metrics is a no-op.
+	Metrics *obs.Metrics
 }
 
 func (c Config) withDefaults() Config {
@@ -161,7 +166,7 @@ func New(cfg Config) (Reranker, error) {
 			return nil, fmt.Errorf("%w: cohere api key", ErrMissingKey)
 		}
 		cfg = cfg.withDefaults()
-		return &cohere{
+		return meter(cfg, &cohere{
 			doer: &doer{
 				provider:   ProviderCohere,
 				httpc:      cfg.HTTPClient,
@@ -173,16 +178,16 @@ func New(cfg Config) (Reranker, error) {
 			baseURL: nonEmpty(cfg.CohereBaseURL, "https://api.cohere.com"),
 			apiKey:  cfg.CohereAPIKey,
 			model:   cfg.Model,
-		}, nil
+		}), nil
 	case ProviderLLM:
 		if cfg.LLM == nil {
 			return nil, fmt.Errorf("%w: llm provider", ErrMissingKey)
 		}
-		return &llmReranker{
+		return meter(cfg, &llmReranker{
 			provider: cfg.LLM,
 			model:    cfg.LLMModel,
 			tracer:   otel.Tracer("rerank"),
-		}, nil
+		}), nil
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownProvider, cfg.Provider)
 	}
@@ -195,6 +200,29 @@ func allowed(provider string, list []string) bool {
 		}
 	}
 	return false
+}
+
+// meter wraps a Reranker so each Rerank records provider_request_duration_seconds
+// / provider_errors_total under {provider=cfg.Provider, op="rerank"} (SPEC-10 §2).
+// A nil Metrics returns the reranker unwrapped (no-op). No doc content in labels.
+func meter(cfg Config, r Reranker) Reranker {
+	if cfg.Metrics == nil {
+		return r
+	}
+	return &meteredReranker{inner: r, provider: cfg.Provider, metrics: cfg.Metrics}
+}
+
+type meteredReranker struct {
+	inner    Reranker
+	provider string
+	metrics  *obs.Metrics
+}
+
+func (m *meteredReranker) Rerank(ctx context.Context, query string, docs []Doc) ([]Scored, error) {
+	start := time.Now()
+	out, err := m.inner.Rerank(ctx, query, docs)
+	m.metrics.ObserveProvider(m.provider, "rerank", err, time.Since(start).Seconds())
+	return out, err
 }
 
 // orderMissingLast completes a partial ranking: docs the provider scored keep their

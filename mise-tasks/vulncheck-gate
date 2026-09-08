@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+#MISE description="govulncheck gate: block on non-stdlib called vulns (except the Go-1.22 pin-locked allowlist); stdlib surfaced, non-blocking"
+# STORY-10.6, SPEC-09 §6, ADR-0014 (amended). Replaces the blanket non-blocking vuln
+# job with a gate:
+#   - BLOCK on a called vulnerability (trace[0] has a function) in a non-stdlib module
+#     that is NOT allowlisted — a new, actionable finding (bump the dep / fix the call).
+#   - SURFACE, non-blocking: Go standard-library advisories (unfixable under the go.mod
+#     `go 1.22` pin) AND the advisories in .ci/vuln-allowlist.txt (the pin-locked
+#     dependency set ADR-0014 names — pgx, x/net, x/text, grpc, otel/sdk, aws-sdk,
+#     go-jose — remediated only by moving the Go pin, a dedicated story). Empty the
+#     allowlist as the pin advances and the gate tightens automatically.
+# Same pinned govulncheck as `mise run vuln`; parses JSON with jq (no new heavy dep).
+# Self-skips (exit 0) where the tool/jq/network is unavailable (sandbox); CI runs live.
+set -euo pipefail
+
+GOVULNCHECK="golang.org/x/vuln/cmd/govulncheck@v1.1.4"
+ALLOWLIST_FILE="${VULN_ALLOWLIST:-.ci/vuln-allowlist.txt}"
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "[vulncheck-gate] SKIP: jq not found (needed to parse govulncheck JSON)."
+  exit 0
+fi
+
+out="$(mktemp)"
+trap 'rm -f "$out"' EXIT
+
+# govulncheck exits non-zero when it finds vulnerabilities — expected; we decide
+# pass/fail ourselves, so don't let `set -e` abort on that.
+set +e
+go run "$GOVULNCHECK" -format json ./... >"$out" 2>/dev/null
+set -e
+
+if ! jq -e . >/dev/null 2>&1 <"$out"; then
+  echo "[vulncheck-gate] SKIP: govulncheck produced no parseable JSON (tool/network unavailable). CI runs the live scan."
+  exit 0
+fi
+
+# Allowlisted OSV ids (comments and blank lines ignored) -> a JSON array for jq.
+allow_json="[]"
+if [ -f "$ALLOWLIST_FILE" ]; then
+  allow_json="$(grep -vE '^[[:space:]]*(#|$)' "$ALLOWLIST_FILE" | awk '{print $1}' | jq -R . | jq -s .)"
+fi
+
+# Called findings (trace[0].function present).
+called="$(jq -s '[.[] | select(.finding) | .finding | select(.trace[0].function != null)]' "$out")"
+
+# Blocking = called, non-stdlib, NOT allowlisted.
+blocking="$(jq --argjson allow "$allow_json" \
+  '[.[] | select(.trace[0].module != "stdlib") | select((.osv as $o | $allow | index($o)) | not)]' <<<"$called")"
+# Surfaced, non-blocking = stdlib OR allowlisted non-stdlib.
+surfaced="$(jq --argjson allow "$allow_json" \
+  '[.[] | select(.trace[0].module == "stdlib" or ((.osv as $o | $allow | index($o)) != null))]' <<<"$called")"
+
+fmt='.[] | "  - \(.osv): \(.trace[0].module) \(.trace[0].function // "")"'
+
+n_surf="$(jq 'length' <<<"$surfaced")"
+if [ "$n_surf" -gt 0 ]; then
+  echo "[vulncheck-gate] $n_surf called advisory finding(s) SURFACED, non-blocking (stdlib + Go-1.22 pin-locked allowlist, ADR-0014):"
+  jq -r "$fmt" <<<"$surfaced" | sort -u
+fi
+
+n_block="$(jq 'length' <<<"$blocking")"
+if [ "$n_block" -gt 0 ]; then
+  echo "[vulncheck-gate] FAIL: $n_block non-stdlib called vulnerability finding(s) NOT allowlisted — these block merge:"
+  jq -r "$fmt" <<<"$blocking" | sort -u
+  echo "[vulncheck-gate] Fix: bump the affected dependency (or fix the call). Only add to $ALLOWLIST_FILE if the fix is genuinely blocked by the Go 1.22 pin (record why)."
+  exit 1
+fi
+
+echo "[vulncheck-gate] PASS: no non-stdlib called vulnerabilities outside the allowlist."

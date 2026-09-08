@@ -43,6 +43,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/querylog"
 	"github.com/rag-platform/ragctl/internal/retrieve"
 	"github.com/rag-platform/ragctl/internal/tenant"
+	"github.com/rag-platform/ragctl/internal/worker"
 )
 
 // apiServer holds the assembled public router plus the background loops (the
@@ -63,7 +64,7 @@ type apiServer struct {
 //
 // It fails closed on a missing control-plane URL. OIDC is wired only when
 // configured (an empty issuer leaves the OIDC routes as not-implemented seams).
-func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics, cfg config.Config, controlURL string, cipher *crypto.Cipher, secure bool) (*apiServer, error) {
+func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics, cfg config.Config, controlURL string, cipher *crypto.Keyring, secure bool) (*apiServer, error) {
 	if controlURL == "" {
 		return nil, fmt.Errorf("serve: no control-plane URL (set --control-plane-url or CONTROL_PLANE_URL)")
 	}
@@ -77,6 +78,13 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	// routes (STORY-04.4) read tenant content through it; the cipher decrypts each
 	// tenant's stored DB password at pool-build time (SPEC-09 §2). ---
 	resolver := tenant.NewResolver(tenant.Config{ControlPool: pool, Decrypter: cipher})
+
+	// tenant_pools_open (SPEC-10 §2): read the resolver's live pool count on each
+	// scrape. The concrete resolver exposes NumPools; the interface does not, so a
+	// type assertion keeps the gauge optional without widening the Resolver seam.
+	if pc, ok := resolver.(interface{ NumPools() int }); ok {
+		metrics.SetPoolGauge(pc.NumPools)
+	}
 
 	// --- Auth (password + sessions). ---
 	authSvc := auth.NewService(auth.FromPool(pool))
@@ -125,7 +133,14 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	// Adding a connector needs only its package + Register call — no change here
 	// (NFR-MNT-01). Sources are control-plane registry data (C-3): control-plane pool,
 	// never a tenant pool. ---
-	sourcesSvc := sources.NewService(sources.FromPool(pool))
+	// Insert-only River client so producers enqueue their queue job transactionally
+	// with the jobs mirror row (ADR-0005, STORY-09.2). It registers no workers and is
+	// never started; the `ragctl work` worker consumes what serve enqueues.
+	insertClient, err := worker.NewInsertClient(pool)
+	if err != nil {
+		return nil, err
+	}
+	sourcesSvc := sources.NewService(sources.FromPool(pool).WithQueue(syncQueue{client: insertClient}))
 	sourcesSvc.Validator = connector.NewSourcesValidator(connector.DefaultRegistry(), sources.ErrConnectorUnavailable)
 	// Credentials (FR-SRC-10, SPEC-04 §6): sealed on write and decrypted only for a
 	// Test/Sync with the same platform Cipher the resolver/provisioner use (envelope
@@ -146,7 +161,7 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	// size ceiling from settings. Object storage is optional — an unset endpoint (or
 	// an unreachable store at boot) leaves Storage nil so uploads report the
 	// not_found seam while reads keep working. ---
-	docSvc := documents.NewService(resolver, documents.NewTenantStore(), documents.JobsFromPool(pool))
+	docSvc := documents.NewService(resolver, documents.NewTenantStore(), documents.JobsFromPool(pool).WithQueue(ingestQueue{client: insertClient}))
 	docSvc.MaxBytes = cfg.MaxUploadBytes
 	docSvc.UploadSource = documents.UploadSourceFromPool(pool)
 	docSvc.Limits = documents.SettingsUploadLimits{Settings: settingsSvc}
@@ -170,11 +185,14 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 
 	// --- Jobs (tenant-scoped list/get/cancel over the control-plane jobs table,
 	// STORY-04.5). Jobs are the control-plane history/mirror view (C-3), so this
-	// uses the control-plane pool — never a tenant pool. Cancelling a QUEUED job is
-	// fully effective now; cancelling a RUNNING job needs the River worker
-	// (EPIC-09), left as the nil Canceller seam (returns the not_found seam
-	// envelope until wired). See ADR-0031. ---
-	jobHandlers := jobs.NewHandlers(jobs.NewService(jobs.FromPool(pool)))
+	// uses the control-plane pool — never a tenant pool. The River Canceller is now
+	// wired (STORY-09.4): cancelling a QUEUED job drops it from River immediately (the
+	// worker never claims it) and flips the mirror; cancelling a RUNNING job signals
+	// River, whose cancel stops the handler between documents and lets the mirror
+	// middleware record the cancelled terminal. See ADR-0031, ADR-0062. ---
+	jobsSvc := jobs.NewService(jobs.FromPool(pool))
+	jobsSvc.Canceller = riverCanceller{pool: pool, client: insertClient}
+	jobHandlers := jobs.NewHandlers(jobsSvc)
 
 	// --- Retrieve (tenant-scoped hybrid retrieval, STORY-08.2, FR-RET-08). Reads
 	// tenant content through the resolver (ADR-0003, C-3). The incoming query is
@@ -184,7 +202,8 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	// (SPEC-09 §2). `query` scope. Returns raw fused results — reranking/answering
 	// layer on later (08.3/08.5). ---
 	retrieveSvc := retrieve.NewService(resolver, settingsSvc,
-		retrieve.KeyedEmbedderFactory{APIKey: cfg.EmbeddingAPIKey, BaseURL: cfg.EmbeddingBaseURL})
+		retrieve.KeyedEmbedderFactory{APIKey: cfg.EmbeddingAPIKey, BaseURL: cfg.EmbeddingBaseURL, Metrics: metrics})
+	retrieveSvc.Metrics = metrics // query_retrieval_duration_seconds (SPEC-10 §2)
 	// Reranking (STORY-08.3, SPEC-06 §3, FR-RET-03). Off by default per tenant
 	// (settings.reranker.enabled); when on, the fused top_n are reranked (Cohere or
 	// an LLM listwise call) and reordered by reranker score. The Cohere key is the
@@ -199,7 +218,8 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 			Anthropic:     cfg.AnthropicAPIKey,
 			OpenAI:        cfg.OpenAIAPIKey,
 			OpenAIBaseURL: cfg.OpenAIBaseURL,
-		}},
+		}, Metrics: metrics},
+		Metrics: metrics, // provider_request/errors for the reranker (SPEC-10 §2)
 	}
 	retrieveHandlers := retrieve.NewHandlers(retrieveSvc)
 
@@ -220,7 +240,7 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		Anthropic:     cfg.AnthropicAPIKey,
 		OpenAI:        cfg.OpenAIAPIKey,
 		OpenAIBaseURL: cfg.OpenAIBaseURL,
-	}}}
+	}, Metrics: metrics}} // provider_request/errors for llm.complete/stream (SPEC-10 §2)
 	// --- Query log + feedback (tenant content, STORY-08.8, FR-RET-09/10, SPEC-06
 	// §6/SPEC-07 §2g). query_log/query_feedback live in the tenant database, reached
 	// only through the resolver (ADR-0003, C-3). The Logger fills the answer stage's
@@ -248,6 +268,7 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		// gated per tenant by settings.rewrite.enabled (default off); strict
 		// passthrough for single-turn queries.
 		Providers: providerFactory,
+		Metrics:   metrics, // query_grounded_total (SPEC-10 §2/§5)
 	}
 	queryHandlers := query.NewHandlers(querySvc)
 
@@ -286,6 +307,9 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		Limit:       ratelimit.LimitFromSettings(settingsSvc, cfg.RateLimitDefaultQPS),
 		Burst:       cfg.RateLimitKeyBurst,
 		TenantBurst: cfg.RateLimitTenantBurst,
+		// api_rate_limited_total (SPEC-10 §2): owned by the metrics catalogue, a nil
+		// counter (metrics disabled) stays safe.
+		Rejected: metrics.RateLimitedCounter(),
 	}
 
 	deps := api.Deps{

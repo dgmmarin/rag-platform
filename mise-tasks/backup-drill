@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Validate + run the pgBackRest PITR restore drill (self-skips without pgBackRest)"
+set -euo pipefail
+
+script="deploy/backup/restore-drill.sh"
+
+# Structural check: the drill must always be well-formed (runs everywhere, incl. CI).
+bash -n "$script"
+# If shellcheck is available, use it too (optional — not a hard dependency).
+if command -v shellcheck >/dev/null 2>&1; then
+  shellcheck "$script"
+fi
+
+# Exercise it: the real PITR drill where pgBackRest + Postgres + a repo exist,
+# otherwise a clean SKIP (exit 0). Safe in CI/local.
+bash "$script"

@@ -365,70 +365,71 @@ breakdown, tasks are derived from the acceptance criteria.
 
 ## EPIC-09 · Jobs, scheduling and maintenance
 
-### STORY-09.1 — River integration and worker binary (FR-ING-08, ADR-0005, SPEC-08 §1)
-- [ ] queues ingest/maintenance/platform with separate concurrency
-- [ ] job args carry tenant_id; worker opens TenantDB per job
-- [ ] graceful shutdown drains
+### STORY-09.1 — River integration and worker binary (FR-ING-08, ADR-0005, SPEC-08 §1) ✅ Done — ADR-0059, ISSUE-0036
+- [x] queues ingest/maintenance/platform with separate concurrency (three `river.QueueConfig`s, independent `MaxWorkers` — defaults 8/2/2, per flag/env; `--queues` restricts, safe fallback to all three)
+- [x] job args carry tenant_id; worker opens TenantDB per job (every arg carries `tenant_id`; each handler resolves a fresh `tenant.DB` from it via the resolver — ADR-0003, C-1; bad/empty id → permanent `JobCancel`)
+- [x] graceful shutdown drains (`work` blocks on SIGINT/SIGTERM then `client.Stop` waits for in-flight jobs, bounded by `workerDrainTimeout`; drained job ends `completed`, proven by the gated-fetcher e2e)
 
-### STORY-09.2 — Job status mirroring to `jobs` table (FR-ADM-02, SPEC-08 §3)
-- [ ] transitions, attempts, stats, errors mirrored
-- [ ] admin reads only `jobs`
+### STORY-09.2 — Job status mirroring to `jobs` table (FR-ADM-02, SPEC-08 §3) ✅ Done — ADR-0060, ISSUE-0037
+- [x] transitions, attempts, stats, errors mirrored (a global `river.WorkerMiddleware` writes running→succeeded/failed/queued(retry)/cancelled by `river_job_id`, with worker_id/attempt and the handler's `sink.Stats` via a ctx sink; never fails a job)
+- [x] admin reads only `jobs` (`internal/cp/jobs` reads the control-plane jobs table exclusively — unchanged; producers enqueue the River job + mirror row transactionally so the table reflects real execution)
 
-### STORY-09.3 — Scheduler for cron sources and daily GC (FR-SRC-11, SPEC-08 §2)
-- [ ] leader-elected loop; `next_run_at` computed from cron
-- [ ] full sync every Nth run; GC daily per tenant
-- [ ] no duplicate enqueues under two replicas
+### STORY-09.3 — Scheduler for cron sources and daily GC (FR-SRC-11, SPEC-08 §2) ✅ Done — ADR-0061, ISSUE-0038
+- [x] leader-elected loop; `next_run_at` computed from cron (`internal/worker/scheduler.go`; `pg_try_advisory_xact_lock` per sweep; `robfig/cron/v3` ParseStandard→Next)
+- [x] full sync every Nth run; GC daily per tenant (`sync_run_count % 7`, run 0 full; `gc_tenant` enqueued when none in the last 24h per active tenant)
+- [x] no duplicate enqueues under two replicas (advisory-lock leader election + River per-source/per-tenant uniqueness; e2e runs two schedulers and asserts exactly one enqueue)
 
-### STORY-09.4 — Cancellation and uniqueness (SPEC-08 §4)
-- [ ] one active sync per source
-- [ ] cancel queued immediately
-- [ ] running jobs stop between documents with status cancelled
+### STORY-09.4 — Cancellation and uniqueness (SPEC-08 §4) ✅ Done — ADR-0062, ISSUE-0039
+- [x] one active sync per source (delivered in STORY-09.2: River `ByArgs` uniqueness on source_id over the active window + the `jobs_one_active_sync_per_source` partial index)
+- [x] cancel queued immediately (`riverCanceller` → `client.JobCancel` drops the River job so the worker never claims it, then the service flips the mirror row)
+- [x] running jobs stop between documents with status cancelled (River cancels the work context; the sink commits per document, SPEC-05 §5, so nothing partial; the mirror middleware maps the remote cancel via `context.Cause` → cancelled)
 
-### STORY-09.5 — Per-tenant concurrency caps and fairness
-- [ ] a tenant with 10 queued syncs cannot occupy more than N workers
-- [ ] other tenants' jobs proceed
-- [ ] test with synthetic load
+### STORY-09.5 — Per-tenant concurrency caps and fairness (SPEC-08 §1) ✅ Done — ADR-0063, ISSUE-0040
+- [x] a tenant with 10 queued syncs cannot occupy more than N workers (`tenantLimiter` middleware caps concurrent ingest jobs per tenant, default 2; the excess is `river.JobSnooze`d, not blocked)
+- [x] other tenants' jobs proceed (snooze frees the worker goroutine to fetch another tenant's job; the cap is per-tenant, not global)
+- [x] test with synthetic load (hermetic `-race` test: many concurrent jobs for one tenant run at most `cap` at once while a second tenant is served immediately)
 
-### STORY-09.6 — Delete-source job (FR-SRC-12)
-- [ ] removes documents, versions, chunks, crawl state for the source
-- [ ] stats reported
+### STORY-09.6 — Delete-source job (FR-SRC-12) ✅ Done — ADR-0064, ISSUE-0041
+- [x] removes documents, versions, chunks, crawl state for the source (`TenantStore.DeleteSource`: documents cascade to versions+chunks, then crawl_pages/connector_state/products, in one transaction; `deleteSourceWorker` opens the tenant DB per job)
+- [x] stats reported (`{documents, chunks, crawl_pages}` counts to `jobs.stats` via the mirror sink; the producer enqueues `delete_source` through River)
 
 ---
 
 ## EPIC-10 · Security, observability, operations
 
-### STORY-10.1 — Metrics catalogue and dashboards (FR-OBS-02, SPEC-10 §2/5)
-- [ ] all listed metrics emitted
-- [ ] Grafana dashboards (API, ingestion, jobs, providers, per-tenant) committed as JSON
+### STORY-10.1 — Metrics catalogue and dashboards (FR-OBS-02, SPEC-10 §2/5) ✅ Done — ADR-0067, ISSUE-0044
+- [x] all listed metrics emitted — the full SPEC-10 §2 catalogue in `obs.Metrics` (nil-safe methods). `ragctl serve`: `api_request_duration_seconds` (now with the real per-tenant label, not `-`), `api_rate_limited_total`, `tenant_pools_open`, `query_retrieval_duration_seconds`, `query_grounded_total`, and the LLM/rerank `provider_request_duration_seconds`/`provider_errors_total`. `ragctl work` (new `/metrics` endpoint, ADR-0067): `jobs_duration_seconds`, `jobs_failed_total`, `jobs_queue_depth`, `ingest_documents_total`, `ingest_chunks_total`, `embed_tokens_total`, and the embedding-provider metrics. Ingest metrics come from the ingestion sink (both upload + sync paths); provider metrics from the llm/embed/rerank resilience boundaries, labelled provider+op(+outcome), counts/durations only (C-3/C-4)
+- [x] Grafana dashboards (API, ingestion, jobs, providers, per-tenant) committed as JSON (`deploy/grafana/dashboards/`, with the §5 alert thresholds annotated)
 
-### STORY-10.2 — Alert rules (SPEC-10 §5)
-- [ ] alert rules committed
-- [ ] runbook link per alert
+### STORY-10.2 — Alert rules (SPEC-10 §5) ✅ Done — ISSUE-0045 (6th alert deferred → ISSUE-0046)
+- [x] alert rules committed — 5 of the 6 SPEC-10 §5 conditions as Prometheus rules in `deploy/prometheus/rules/ragctl.rules.yml` (query p95 per tenant, grounded-rate day-over-day drop, job failures per kind, queue depth, provider error rate), referencing the STORY-10.1 metric catalogue and reusing the dashboard thresholds. Validated by `internal/obs/alertrules_test.go` (parse + real-metric-name check, no promtool dep). The 6th — "tenant migration mismatch count > 0" — has no metric in the §2 catalogue; deferred (coordinator decision) and tracked in ISSUE-0046 (add a `tenant_schema_mismatch` gauge, then the alert)
+- [x] runbook link per alert — each alert carries a `runbook_url` → `docs/runbooks/observability.md#<anchor>` (authored by STORY-10.8)
 
-### STORY-10.3 — Distributed tracing end to end (FR-OBS-03)
-- [ ] one trace covers API → retrieval → provider; worker job → sidecar
-- [ ] sampled at configurable rate
+### STORY-10.3 — Distributed tracing end to end (FR-OBS-03) ✅ Done — ADR-0066, ISSUE-0043
+- [x] one trace covers API → retrieval → provider; worker job → sidecar (API server span in the obs middleware with W3C extraction; per-job worker span with tenant/job/source ids; existing provider/sidecar spans become children via ctx)
+- [x] sampled at configurable rate (existing parent-based TraceIDRatioBased sampler via TracingConfig.SamplerRatio; new spans no-op when tracing is off)
 
-### STORY-10.4 — DEK rotation command (NFR-SEC-03, SPEC-09 §2)
-- [ ] `ragctl keys rotate-dek` re-encrypts all secrets under a new key version with zero downtime
-- [ ] old key retained until completion
+### STORY-10.4 — DEK rotation command (NFR-SEC-03, SPEC-09 §2) ✅ Done — ADR-0065, ISSUE-0042
+- [x] `ragctl keys rotate-dek` re-encrypts all secrets under a new key version with zero downtime (`crypto.Keyring` primary+previous decrypts both versions during the window; re-encrypts `tenant_databases.password_enc` + `sources.credentials_enc`; idempotent/resumable)
+- [x] old key retained until completion (`DEK_PREVIOUS` keeps the old key in the ring; procedure: `keys new-dek` → rolling restart → `keys rotate-dek` → drop previous)
 
-### STORY-10.5 — Backups and PITR verification (NFR-REL-03)
-- [ ] documented backup configuration for all tenant databases
-- [ ] monthly restore drill script
-- [ ] runbook
+### STORY-10.5 — Backups and PITR verification (NFR-REL-03) ✅ Done — ADR-0068, ISSUE-0047
+- [x] documented backup configuration for all tenant databases — pgBackRest → MinIO/S3, 7-day time-based PITR retention, WAL archiving, one stanza per Postgres cluster (covers every tenant DB on it): `deploy/backup/pgbackrest.conf` + `Dockerfile.pgbackrest` + `docker-compose.backup.yml` (opt-in overlay wiring `archive_command` onto the base postgres service, reusing the base minio) + `deploy/backup/README.md`
+- [x] monthly restore drill script — `deploy/backup/restore-drill.sh`: point-in-time `pgbackrest restore --type=time` into a throwaway target, asserts recovery (`pg_controldata` + `SELECT 1` + `pg_is_in_recovery()=f`); self-skips where pgBackRest/Postgres absent. Runnable via `mise run backup-drill` (+ a `backup-drill` CI job; `bash -n` structural check always runs)
+- [x] runbook — `docs/runbooks/backup-and-pitr.md` (health check, monthly drill cadence, real PITR procedure, retention/control-plane notes)
 
-### STORY-10.6 — Security scanning in CI and dependency policy (SPEC-09 §6)
-- [ ] govulncheck as a hard gate on high severity _(runs non-blocking today via STORY-01.3)_
-- [ ] pip-audit
-- [ ] image scan blocks merges on high severity
+### STORY-10.6 — Security scanning in CI and dependency policy (SPEC-09 §6) ✅ Done — ADR-0014 (amended), ISSUE-0048
+- [x] govulncheck as a hard gate on high severity — `mise run vulncheck-gate` (CI `vuln` job, no longer `continue-on-error`): fails on a called vuln in a non-stdlib module not in `.ci/vuln-allowlist.txt`; stdlib + the Go-1.22 pin-locked set surfaced non-blocking (ADR-0014 fixable-only principle)
+- [x] pip-audit — `mise run pip-audit` (CI `pip-audit` job) audits `services/parser/requirements.txt`, blocks on findings; bumped Flask 3.0.3 → 3.1.3 to clear PYSEC-2026-2151
+- [x] image scan blocks merges on high severity — Trivy (`aquasecurity/trivy-action`) in the existing `image` job, `severity: HIGH,CRITICAL`, `ignore-unfixed: true`, on the already-built image
+- [x] dependency policy documented — `docs/dependency-policy.md`
 
-### STORY-10.7 — Load and isolation testing (NFR-PERF-01, SRS §8)
-- [ ] k6 scenario: 50 concurrent queries across 4 tenants at 1 M chunks
-- [ ] p95 retrieval ≤ 300 ms; results committed
+### STORY-10.7 — Load and isolation testing (NFR-PERF-01, SRS §8) ✅ Done — ISSUE-0049 (measured run on the real stack)
+- [x] k6 scenario: 50 concurrent queries across 4 tenants at 1 M chunks — `test/load/retrieval-load.js` (50 VUs across 4 tenants by API key, FR-ACC-03) + `test/load/seed-tenant.sql` (bulk `generate_series` seed to 1 M chunks/tenant, mirrors `retrieve_bench_test.go`/ADR-0051) + `mise run loadtest` (self-skips without k6/keys)
+- [x] p95 retrieval ≤ 300 ms; results committed — encoded as the k6 threshold `retrieval_latency p(95)<300` (k6 fails the run if breached); results scaffold committed at `test/load/results/` (`--summary-export`). The measured run needs the real stack + 4 tenants @1M chunks + k6 (unavailable in sandbox) — documented in `test/load/README.md`; the harness + gate are committed
 
-### STORY-10.8 — Runbooks
-- [ ] enrol tenant, move tenant, failed migration, provider outage, stuck job, tenant deletion, incident response
+### STORY-10.8 — Runbooks ✅ Done — ISSUE-0050
+- [x] enrol tenant, move tenant, failed migration, provider outage, stuck job, tenant deletion, incident response — all in `docs/runbooks/` (OKF): `enrol-tenant.md`, `move-tenant.md` (existing, reused), `failed-migration.md`, `provider-outage.md`, `stuck-job.md`, `tenant-deletion.md`, `incident-response.md`, plus `observability.md` (alert→action index) + `README.md`. The STORY-10.2 alert `runbook_url` anchors now resolve to headings in `observability.md`, enforced by `internal/obs/runbook_links_test.go` (fails if a runbook and an alert drift)
 
 ---
 

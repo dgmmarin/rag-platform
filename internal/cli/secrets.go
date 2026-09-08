@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/rag-platform/ragctl/internal/config"
 	"github.com/rag-platform/ragctl/internal/crypto"
@@ -17,17 +19,45 @@ type StartupSecrets struct {
 	AWSKMSKeyID    string
 	DEKWrappedPath string
 	DEKKeyVersion  uint16
+	// Previous are earlier DEK generations kept for DECRYPT only during a rotation
+	// window (STORY-10.4); empty in steady state.
+	Previous []PreviousDEK
+}
+
+// PreviousDEK is one earlier DEK generation (wrapped-blob path + its version).
+type PreviousDEK struct {
+	WrappedPath string
+	Version     uint16
 }
 
 // startupSecretsFromConfig maps a loaded Config to StartupSecrets.
 func startupSecretsFromConfig(cfg config.Config) StartupSecrets {
-	return StartupSecrets{
+	s := StartupSecrets{
 		KMSProvider:    cfg.KMSProvider,
 		AgeSecretKey:   cfg.AgeSecretKey,
 		AWSKMSKeyID:    cfg.AWSKMSKeyID,
 		DEKWrappedPath: cfg.DEKWrappedPath,
 		DEKKeyVersion:  cfg.DEKKeyVersion,
 	}
+	for _, e := range cfg.DEKPrevious {
+		if p, err := parsePreviousDEK(e); err == nil {
+			s.Previous = append(s.Previous, p)
+		}
+	}
+	return s
+}
+
+// parsePreviousDEK parses a "path:version" DEK_PREVIOUS entry.
+func parsePreviousDEK(entry string) (PreviousDEK, error) {
+	i := strings.LastIndex(entry, ":")
+	if i <= 0 || i == len(entry)-1 {
+		return PreviousDEK{}, fmt.Errorf("startup: bad DEK_PREVIOUS entry %q (want path:version)", entry)
+	}
+	v, err := strconv.ParseUint(entry[i+1:], 10, 16)
+	if err != nil {
+		return PreviousDEK{}, fmt.Errorf("startup: bad DEK_PREVIOUS version in %q: %w", entry, err)
+	}
+	return PreviousDEK{WrappedPath: entry[:i], Version: uint16(v)}, nil
 }
 
 // LoadStartupCipher builds the configured KMS, reads the wrapped DEK from disk,
@@ -53,6 +83,35 @@ func LoadStartupCipher(ctx context.Context, s StartupSecrets) (*crypto.Cipher, e
 		return nil, err
 	}
 	return cipher, nil
+}
+
+// LoadStartupKeyring loads the primary DEK (as LoadStartupCipher) plus any previous
+// generations still configured for the rotation window, returning a Keyring that seals
+// new secrets under the primary and can decrypt any configured version (STORY-10.4,
+// SPEC-09 §2). With no previous DEKs it is a single-key keyring, behaviourally identical
+// to the primary Cipher.
+func LoadStartupKeyring(ctx context.Context, s StartupSecrets) (*crypto.Keyring, error) {
+	primary, err := LoadStartupCipher(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+	kms, err := buildKMS(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+	previous := make([]*crypto.Cipher, 0, len(s.Previous))
+	for _, p := range s.Previous {
+		wrapped, err := readWrappedDEK(p.WrappedPath)
+		if err != nil {
+			return nil, err
+		}
+		c, err := crypto.LoadDEK(ctx, kms, wrapped, p.Version)
+		if err != nil {
+			return nil, fmt.Errorf("startup: load previous DEK v%d: %w", p.Version, err)
+		}
+		previous = append(previous, c)
+	}
+	return crypto.NewKeyring(primary, previous...)
 }
 
 // buildKMS constructs the KMS implementation named by the provider.

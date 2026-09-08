@@ -73,3 +73,32 @@ Option 3.
   must be revisited when the Go pin moves.
 - `mise.toml` stays minimal (tool pins only); new behaviour is task scripts and
   a shell lib under `mise-tasks/`.
+
+## Amendment (STORY-10.6, 2026-09-08) — security scanning becomes a gate
+
+SPEC-09 §6 requires dependency scanning (govulncheck, pip-audit) and image scanning
+in CI, and STORY-10.6's AC makes them block merges on high severity. This supersedes
+the "govulncheck runs but is non-blocking" decision above.
+
+- **govulncheck is now a gate** (`mise run vulncheck-gate`, replacing the
+  `continue-on-error` job). It parses `govulncheck -format json` and FAILS on a
+  *called* vulnerability (a finding whose `trace[0]` has a function) in a *non-stdlib*
+  module that is not allowlisted. Go standard-library advisories — unfixable under the
+  `go 1.22` pin — are printed but never fail (the original rationale, now enforced by
+  code, not a blanket `continue-on-error`).
+- **A small allowlist** (`.ci/vuln-allowlist.txt`) carries the OSV ids of the
+  pin-locked dependency set this ADR already named (pgx, x/net, x/text, grpc, otel/sdk,
+  plus aws-sdk and go-jose found by the live scan) — remediated only by moving the Go
+  pin (a dedicated story). They are surfaced, non-blocking. A NEW non-stdlib called vuln
+  outside the list blocks merge. Emptying the list as the pin advances tightens the gate
+  automatically. This is the code-enforced form of this ADR's stdlib exception, extended
+  to the same pin-locked class — not a silent suppression (every id is printed each run,
+  with a note, and the file records why).
+- **pip-audit** (`mise run pip-audit`) audits `services/parser/requirements.txt` and
+  blocks on any finding. (STORY-10.6 bumped Flask 3.0.3 → 3.1.3 to clear PYSEC-2026-2151,
+  an actionable finding with no pin constraint — fixed rather than allowlisted.)
+- **Image scanning = Trivy** (`aquasecurity/trivy-action`) on the image the `image` job
+  already builds, failing on `HIGH,CRITICAL` with `ignore-unfixed: true` (an unfixed
+  base-image CVE cannot gate a merge — the same fixable-only principle as govulncheck).
+- Policy is documented in `docs/dependency-policy.md`; the tasks stay mise-driven and
+  CI keeps invoking `mise run <task>` (this ADR's core decision is unchanged).

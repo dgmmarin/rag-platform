@@ -34,6 +34,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/rag-platform/ragctl/internal/obs"
 )
 
 // Defaults (NFR-REL-04). Retries mirror internal/ingest/embed.
@@ -196,6 +198,10 @@ type Config struct {
 	// Circuit breaker. Zero values use the defaults.
 	BreakerThreshold int
 	BreakerCooldown  time.Duration
+
+	// Metrics records provider_request_duration_seconds / provider_errors_total
+	// (SPEC-10 §2). Optional: a nil Metrics is a no-op.
+	Metrics *obs.Metrics
 }
 
 func (c Config) withDefaults() Config {
@@ -257,6 +263,7 @@ func New(cfg Config) (Provider, error) {
 		provider:      cfg.Provider,
 		defModel:      cfg.Model,
 		allowedModels: cfg.AllowedModels,
+		metrics:       cfg.Metrics,
 	}, nil
 }
 
@@ -299,6 +306,7 @@ type resilient struct {
 	provider      string
 	defModel      string
 	allowedModels []string
+	metrics       *obs.Metrics
 }
 
 func (r *resilient) Complete(ctx context.Context, req Request) (Response, error) {
@@ -306,9 +314,14 @@ func (r *resilient) Complete(ctx context.Context, req Request) (Response, error)
 	if err := checkModel(req.Model, r.allowedModels); err != nil {
 		return Response{}, err
 	}
-	return retryValue(ctx, r, "llm.complete", func(ctx context.Context) (Response, error) {
+	start := time.Now()
+	resp, err := retryValue(ctx, r, "llm.complete", func(ctx context.Context) (Response, error) {
 		return r.raw.complete(ctx, req)
 	})
+	// provider_request_duration_seconds / provider_errors_total (SPEC-10 §2): one
+	// observation per logical request (retries included). No prompt content in labels.
+	r.metrics.ObserveProvider(r.provider, "llm.complete", err, time.Since(start).Seconds())
+	return resp, err
 }
 
 func (r *resilient) Stream(ctx context.Context, req Request) (Stream, error) {
@@ -316,9 +329,14 @@ func (r *resilient) Stream(ctx context.Context, req Request) (Stream, error) {
 	if err := checkModel(req.Model, r.allowedModels); err != nil {
 		return nil, err
 	}
-	return retryValue(ctx, r, "llm.stream", func(ctx context.Context) (Stream, error) {
+	start := time.Now()
+	stream, err := retryValue(ctx, r, "llm.stream", func(ctx context.Context) (Stream, error) {
 		return r.raw.openStream(ctx, req)
 	})
+	// Times stream ESTABLISHMENT (SPEC-10 §2); the stream body is consumed by the
+	// caller. No prompt content in labels.
+	r.metrics.ObserveProvider(r.provider, "llm.stream", err, time.Since(start).Seconds())
+	return stream, err
 }
 
 func (r *resilient) withModel(req Request) Request {
@@ -420,6 +438,9 @@ func (k Keys) forProvider(provider string) (apiKey, baseURL string) {
 type Factory struct {
 	Keys       Keys
 	HTTPClient *http.Client
+	// Metrics is threaded into every built provider for provider_request_duration_
+	// seconds / provider_errors_total (SPEC-10 §2). Optional (nil = no-op).
+	Metrics *obs.Metrics
 }
 
 // Provider builds the Provider for the tenant's configured provider/model, gated
@@ -435,5 +456,6 @@ func (f Factory) Provider(provider, model string, providersAllowed, modelsAllowe
 		APIKey:        apiKey,
 		BaseURL:       baseURL,
 		HTTPClient:    f.HTTPClient,
+		Metrics:       f.Metrics,
 	})
 }

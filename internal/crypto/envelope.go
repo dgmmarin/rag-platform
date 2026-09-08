@@ -42,6 +42,9 @@ type Cipher struct {
 	randNonce func(b []byte) error
 }
 
+// Version returns the key version this Cipher seals with and opens.
+func (c *Cipher) Version() uint16 { return c.version }
+
 // NewCipher builds a Cipher for the given key version over the 32-byte DEK.
 func NewCipher(version uint16, dek []byte) (*Cipher, error) {
 	if len(dek) != KeySize {

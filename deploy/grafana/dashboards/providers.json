@@ -1,0 +1,80 @@
+{
+  "uid": "ragctl-providers",
+  "title": "RAG Platform — Providers",
+  "tags": ["ragctl", "spec-10"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "About these panels",
+      "type": "text",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "External provider health (SPEC-10 §2), emitted at the llm/embed/rerank resilience boundaries. `op` is llm.complete / llm.stream / embed / rerank; `status` is ok/error. LLM/rerank calls are emitted by `ragctl serve`; embedding calls by `ragctl work` — scrape both."
+      }
+    },
+    {
+      "id": 2,
+      "title": "Provider error rate (SPEC-10 §5 alert: > 5% for 5 min)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.05 } ] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(provider_errors_total[5m])) by (provider) / clamp_min(sum(rate(provider_request_duration_seconds_count[5m])) by (provider), 1e-9)",
+          "legendFormat": "{{provider}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Provider request latency p95 (per op)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(provider_request_duration_seconds_bucket[5m])) by (le, provider, op))",
+          "legendFormat": "{{provider}} {{op}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Provider request rate (per op)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(provider_request_duration_seconds_count[5m])) by (provider, op)", "legendFormat": "{{provider}} {{op}}" }
+      ]
+    }
+  ]
+}

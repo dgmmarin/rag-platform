@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#MISE description="Retrieval load + isolation test: 50 concurrent queries across 4 tenants, p95 <= 300ms (k6)"
+# STORY-10.7, NFR-PERF-01, SRS §8.5. Runs the k6 scenario against a running stack
+# with 4 seeded tenants (see test/load/README.md). Self-skips (exit 0) when k6 or the
+# required env (BASE_URL / TENANT_KEYS) is absent — so it is safe to invoke in the
+# sandbox/CI; the real load run happens against the provisioned stack. k6 exits
+# non-zero if the p95<=300ms threshold is breached (that is the gate).
+set -euo pipefail
+
+SCRIPT="test/load/retrieval-load.js"
+
+if ! command -v k6 >/dev/null 2>&1; then
+  echo "[loadtest] SKIP: k6 not installed. Install k6 and run against the seeded stack (see test/load/README.md)."
+  exit 0
+fi
+if [ -z "${TENANT_KEYS:-}" ]; then
+  echo "[loadtest] SKIP: TENANT_KEYS not set (need 4 tenant query API keys). See test/load/README.md."
+  exit 0
+fi
+
+echo "[loadtest] running k6: ${VUS:-50} VUs, ${DURATION:-1m}, BASE_URL=${BASE_URL:-http://localhost:8080}"
+k6 run "$SCRIPT"

@@ -11,8 +11,21 @@ tracer (disabled by default, W3C tracecontext propagation) with a shutdown hook,
 and `/healthz` + `/readyz` handlers (readiness is a skeleton with a `Check` seam).
 `ragctl serve` starts this minimal server. The full metric catalogue (§2) is
 STORY-10.1, span instrumentation of request paths (§3) is STORY-10.3, and the
-real readiness checks (§4) land with STORY-02/09. The tenant label/field is `-`
-until tenant resolution (STORY-02) fills it.
+real readiness checks (§4) land with STORY-02/09.
+
+**Delivered (STORY-10.1, ADR-0067, ISSUE-0044):** `obs.Metrics` now owns the whole
+§2 catalogue with nil-safe typed emission methods; each service exposes `/metrics`
+— the worker too, on `RAGCTL_WORKER_METRICS_ADDR` (default `:9091`). The tenant
+label is now the resolved tenant id (from the authenticated principal, FR-ACC-03),
+written via `obs.SetRequestTenant` and read back through a request-scoped holder
+(the outer middleware cannot see a value an inner layer sets on its own context).
+The whole §2 catalogue is emitted. `ragctl serve` exposes the API-plane, retrieval and
+LLM/rerank-provider metrics; `ragctl work` exposes the jobs plane, ingestion throughput
+(`ingest_documents_total`/`ingest_chunks_total`/`embed_tokens_total`, from the ingestion
+sink) and the embedding-provider metrics. `provider_request_duration_seconds` /
+`provider_errors_total` are emitted at the llm/embed/rerank resilience boundaries
+(op = llm.complete|llm.stream|embed|rerank, status = ok|error), labelled by provider +
+operation only — counts and durations, never content or secrets (C-3/C-4).
 
 ## 1. Logging
 `log/slog` JSON. Mandatory fields where applicable: `ts, level, msg, service, request_id, tenant_id, job_id, source_id, user_id|api_key_id, duration_ms, err`. Content fields (question, document text) are never logged at info level.
@@ -39,12 +52,26 @@ OpenTelemetry SDK; spans: `api.request`, `tenant.resolve`, `retrieval.hybrid_sql
 - `/readyz`: control-plane DB reachable, River client started, at least one configured embedding provider responds to a cached ping (refreshed every 60 s).
 
 ## 5. Dashboards and alerts (initial)
+Dashboards are committed as JSON under `deploy/grafana/dashboards/` (API,
+ingestion, jobs, providers, per-tenant), one per plane, with the thresholds below
+annotated on the relevant panels (STORY-10.1). The alert *rules* are STORY-10.2.
 - Query latency p95 per tenant > 800 ms for 10 min.
 - Grounded rate per tenant drops > 20 points day-over-day.
 - Job failures per kind > 5 in 15 min.
 - Queue depth > 500 for 30 min.
 - Provider error rate > 5 % for 5 min.
 - Tenant migration mismatch count > 0.
+
+**Delivered (STORY-10.2, ISSUE-0045):** the first five conditions ship as Prometheus
+alerting rules in `deploy/prometheus/rules/ragctl.rules.yml`, referencing the §2
+catalogue and reusing the dashboard thresholds, each with a `severity` label and a
+`runbook_url` (docs/runbooks/, STORY-10.8). A hermetic `internal/obs` test validates
+the rules parse and reference only registered metrics. The sixth — tenant migration
+mismatch — is **deferred** and tracked in ISSUE-0046: the §2 catalogue defines no
+migration-mismatch metric, so the alert has nothing to reference; it lands once a
+`tenant_schema_mismatch` gauge (a periodic fleet schema-version scan) is added to §2.
+No Alertmanager routing or running Prometheus/Alertmanager deployment is committed
+(out of scope).
 
 ## 6. Usage accounting
 API and worker increment in-memory counters flushed every 30 s to `usage_daily` via `insert ... on conflict do update set col = col + excluded.col`.

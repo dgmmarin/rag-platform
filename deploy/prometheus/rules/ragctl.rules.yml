@@ -1,0 +1,86 @@
+# Prometheus alerting rules for the RAG platform (SPEC-10 §5).
+#
+# These reference the SPEC-10 §2 metric catalogue emitted by `ragctl serve` and
+# `ragctl work` (STORY-10.1) and use the same thresholds annotated on the Grafana
+# dashboards in ../../grafana/dashboards, so the two never drift. Load with a
+# Prometheus `rule_files:` entry; each alert links a runbook (docs/runbooks/,
+# authored by STORY-10.8).
+#
+# Validated by internal/obs/alertrules_test.go (parse + real-metric-name check),
+# which runs under `mise run test` / `mise run coverage`.
+groups:
+  - name: ragctl.slo
+    rules:
+      - alert: QueryLatencyP95HighPerTenant
+        # SPEC-10 §5: query latency p95 per tenant > 800 ms for 10 min.
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(api_request_duration_seconds_bucket{route="/v1/query"}[5m])) by (le, tenant)
+          ) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Query p95 latency > 800ms for tenant {{ $labels.tenant }}"
+          description: "The 95th-percentile POST /v1/query latency for tenant {{ $labels.tenant }} has exceeded 800ms for 10 minutes (currently {{ $value | humanizeDuration }})."
+          runbook_url: "https://github.com/rag-platform/ragctl/blob/main/docs/runbooks/observability.md#query-latency"
+
+      - alert: GroundedRateDropPerTenant
+        # SPEC-10 §5: grounded rate per tenant drops > 20 points day-over-day.
+        expr: |
+          (
+            sum(rate(query_grounded_total{grounded="true"}[1d] offset 1d)) by (tenant)
+              / clamp_min(sum(rate(query_grounded_total[1d] offset 1d)) by (tenant), 1e-9)
+          )
+          -
+          (
+            sum(rate(query_grounded_total{grounded="true"}[1d])) by (tenant)
+              / clamp_min(sum(rate(query_grounded_total[1d])) by (tenant), 1e-9)
+          )
+          > 0.2
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Grounded rate dropped > 20 points for tenant {{ $labels.tenant }}"
+          description: "Tenant {{ $labels.tenant }}'s grounded answer rate has fallen more than 20 percentage points versus the same window yesterday (drop {{ $value | humanizePercentage }}). Investigate retrieval quality or a content/index regression."
+          runbook_url: "https://github.com/rag-platform/ragctl/blob/main/docs/runbooks/observability.md#grounded-rate-drop"
+
+  - name: ragctl.jobs
+    rules:
+      - alert: JobFailuresHighPerKind
+        # SPEC-10 §5: job failures per kind > 5 in 15 min.
+        expr: increase(jobs_failed_total[15m]) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 5 {{ $labels.kind }} jobs failed in 15 min"
+          description: "{{ $value }} {{ $labels.kind }} jobs ended in a terminal failure over the last 15 minutes."
+          runbook_url: "https://github.com/rag-platform/ragctl/blob/main/docs/runbooks/observability.md#job-failures"
+
+      - alert: JobQueueDepthHigh
+        # SPEC-10 §5: queue depth > 500 for 30 min.
+        expr: jobs_queue_depth > 500
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Job queue {{ $labels.queue }} backlog > 500 for 30 min"
+          description: "Queue {{ $labels.queue }} has more than 500 jobs waiting to be worked for 30 minutes (currently {{ $value }}). Workers may be under-provisioned or stuck."
+          runbook_url: "https://github.com/rag-platform/ragctl/blob/main/docs/runbooks/observability.md#queue-depth"
+
+  - name: ragctl.providers
+    rules:
+      - alert: ProviderErrorRateHigh
+        # SPEC-10 §5: provider error rate > 5% for 5 min.
+        expr: |
+          sum(rate(provider_errors_total[5m])) by (provider)
+            / clamp_min(sum(rate(provider_request_duration_seconds_count[5m])) by (provider), 1e-9)
+          > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Provider {{ $labels.provider }} error rate > 5%"
+          description: "External provider {{ $labels.provider }} has returned errors on more than 5% of requests for 5 minutes (currently {{ $value | humanizePercentage }})."
+          runbook_url: "https://github.com/rag-platform/ragctl/blob/main/docs/runbooks/observability.md#provider-errors"

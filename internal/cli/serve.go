@@ -52,7 +52,7 @@ type serveConfig struct {
 	Obs        ObsSettings
 	Cfg        config.Config
 	ControlURL string
-	Cipher     *crypto.Cipher
+	Cipher     *crypto.Keyring
 	Secure     bool
 }
 

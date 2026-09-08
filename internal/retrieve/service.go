@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/rag-platform/ragctl/internal/ingest/embed"
 	"github.com/rag-platform/ragctl/internal/llm"
+	"github.com/rag-platform/ragctl/internal/obs"
 	"github.com/rag-platform/ragctl/internal/rerank"
 	"github.com/rag-platform/ragctl/internal/tenant"
 )
@@ -133,6 +135,9 @@ type Service struct {
 	Reranker RerankerFactory
 	// MaxTopK overrides the top_k ceiling; 0 uses defaultMaxTopK.
 	MaxTopK int
+	// Metrics records query_retrieval_duration_seconds (SPEC-10 §2). Optional: a
+	// nil Metrics disables the observation (the methods are no-ops).
+	Metrics *obs.Metrics
 }
 
 // NewService builds a retrieve Service.
@@ -147,6 +152,7 @@ func (s *Service) Search(ctx context.Context, tid tenant.ID, req Request) ([]Res
 	if strings.TrimSpace(req.Query) == "" {
 		return nil, ErrEmptyQuery
 	}
+	start := time.Now()
 
 	db, err := s.open(ctx, tid)
 	if err != nil {
@@ -205,6 +211,10 @@ func (s *Service) Search(ctx context.Context, tid tenant.ID, req Request) ([]Res
 	if len(results) > finalK {
 		results = results[:finalK]
 	}
+	// query_retrieval_duration_seconds (SPEC-10 §2): timed only on the successful
+	// path; reranked reflects whether the reranker actually ran. The tenant label is
+	// the tenant id (bounded per tenant), consistent with the API request metric.
+	s.Metrics.ObserveRetrieval(tid.String(), rr != nil, time.Since(start).Seconds())
 	return results, nil
 }
 
@@ -397,6 +407,8 @@ func toInt(v any) int {
 type KeyedEmbedderFactory struct {
 	APIKey  string
 	BaseURL string
+	// Metrics is threaded into the embedder for provider_request metrics (SPEC-10 §2).
+	Metrics *obs.Metrics
 }
 
 // Embedder builds the embedder for the tenant's configured provider/model.
@@ -407,6 +419,7 @@ func (f KeyedEmbedderFactory) Embedder(_ context.Context, s Settings) (embed.Emb
 		Allowed:  s.ProvidersAllowed,
 		APIKey:   f.APIKey,
 		BaseURL:  f.BaseURL,
+		Metrics:  f.Metrics,
 	})
 }
 
@@ -429,6 +442,8 @@ type KeyedRerankerFactory struct {
 	// still builds providers, but a nil per-provider key makes that provider fail
 	// with a clean auth error (which the service turns into a fallback).
 	LLM llm.Factory
+	// Metrics is threaded into the reranker for provider_request metrics (SPEC-10 §2).
+	Metrics *obs.Metrics
 }
 
 // Reranker builds the tenant's reranker, or (nil, nil) when reranking is disabled.
@@ -444,6 +459,7 @@ func (f KeyedRerankerFactory) Reranker(_ context.Context, s Settings) (rerank.Re
 		Model:         s.RerankModel,
 		CohereAPIKey:  f.CohereAPIKey,
 		CohereBaseURL: f.CohereBaseURL,
+		Metrics:       f.Metrics,
 	}
 	if s.RerankProvider == rerank.ProviderLLM {
 		model := s.RerankLLMModel

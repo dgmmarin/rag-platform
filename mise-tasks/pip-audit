@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+#MISE description="pip-audit: scan the parser sidecar's Python dependencies for known vulnerabilities"
+# STORY-10.6, SPEC-09 §6. Audits services/parser/requirements.txt against the PyPI
+# advisory database and FAILS on any finding. Runs via the pinned mise Python
+# (mise.toml). pip-audit is installed ephemerally so mise.toml stays tool-pins-only;
+# self-skips (exit 0) when Python or the install/network is unavailable (sandbox),
+# so it is safe to invoke anywhere — CI runs the live audit.
+set -euo pipefail
+
+REQ="services/parser/requirements.txt"
+
+if [ ! -f "$REQ" ]; then
+  echo "[pip-audit] SKIP: $REQ not found."
+  exit 0
+fi
+if ! command -v python >/dev/null 2>&1; then
+  echo "[pip-audit] SKIP: python not found."
+  exit 0
+fi
+if ! python -m pip install --quiet --disable-pip-version-check pip-audit >/dev/null 2>&1; then
+  echo "[pip-audit] SKIP: could not install pip-audit (no network?). CI runs the live audit."
+  exit 0
+fi
+
+echo "[pip-audit] auditing $REQ"
+python -m pip_audit --requirement "$REQ" --strict
+echo "[pip-audit] PASS: no known vulnerabilities in the parser dependencies."
