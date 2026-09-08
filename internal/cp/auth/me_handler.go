@@ -25,12 +25,20 @@ func (h *MeHandlers) Me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load session user")
 		return
 	}
-	type membershipJSON struct{ TenantID, Slug, Name, Role string }
+	type membershipJSON struct {
+		TenantID string `json:"tenant_id"`
+		Slug     string `json:"slug"`
+		Name     string `json:"name"`
+		Role     string `json:"role"`
+	}
 	out := struct {
-		User            struct{ ID, Email string } `json:"user"`
-		IsPlatformAdmin bool                       `json:"is_platform_admin"`
-		Memberships     []membershipJSON           `json:"memberships"`
-		CSRFToken       string                     `json:"csrf_token"`
+		User struct {
+			ID    string `json:"id"`
+			Email string `json:"email"`
+		} `json:"user"`
+		IsPlatformAdmin bool             `json:"is_platform_admin"`
+		Memberships     []membershipJSON `json:"memberships"`
+		CSRFToken       string           `json:"csrf_token"`
 	}{CSRFToken: sess.CSRFToken, IsPlatformAdmin: v.IsPlatformAdmin}
 	out.User.ID = v.User.ID
 	out.User.Email = v.User.Email

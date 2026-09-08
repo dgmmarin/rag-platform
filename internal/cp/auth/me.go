@@ -43,7 +43,7 @@ func (s *MeService) Me(ctx context.Context, userID string) (MeView, error) {
 	}
 
 	rows, err := s.DB.Query(ctx, `
-		select t.id::text, t.slug, t.name, m.role
+		select t.id::text, t.slug, t.name, m.role::text
 		from tenant_members m join tenants t on t.id = m.tenant_id
 		where m.user_id = $1 order by t.name`, userID)
 	if err != nil {

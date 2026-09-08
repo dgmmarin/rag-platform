@@ -2,8 +2,8 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
@@ -82,15 +82,54 @@ func TestMeServiceReturnsUserAdminFlagAndMemberships(t *testing.T) {
 	}
 }
 
+// meResponse mirrors the GET /v1/auth/me wire contract (SPEC-11 §2.1) so the
+// test fails if the handler ever emits capitalized (Go-default) JSON keys
+// instead of the required snake_case ones.
+type meResponse struct {
+	User struct {
+		ID    string `json:"id"`
+		Email string `json:"email"`
+	} `json:"user"`
+	IsPlatformAdmin bool `json:"is_platform_admin"`
+	Memberships     []struct {
+		TenantID string `json:"tenant_id"`
+		Slug     string `json:"slug"`
+		Name     string `json:"name"`
+		Role     string `json:"role"`
+	} `json:"memberships"`
+	CSRFToken string `json:"csrf_token"`
+}
+
 func TestMeHandler200WithSessionAnd401Without(t *testing.T) {
 	h := &MeHandlers{Service: NewMeService(newFakeMeDB(t))}
 	ctx := ContextWithSession(context.Background(), Session{UserID: "u1", CSRFToken: "csrf-x"})
 	req := httptest.NewRequest("GET", "/v1/auth/me", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 	h.Me(rec, req)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"csrf_token":"csrf-x"`) {
+	if rec.Code != 200 {
 		t.Fatalf("with session: %d %s", rec.Code, rec.Body.String())
 	}
+	var got meResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v; body=%s", err, rec.Body.String())
+	}
+	if got.User.ID != "u1" || got.User.Email != "a@b.com" {
+		t.Fatalf("user: %+v", got.User)
+	}
+	if !got.IsPlatformAdmin {
+		t.Fatalf("is_platform_admin: %+v", got)
+	}
+	if got.CSRFToken != "csrf-x" {
+		t.Fatalf("csrf_token: %+v", got)
+	}
+	if len(got.Memberships) != 1 {
+		t.Fatalf("memberships: %+v", got.Memberships)
+	}
+	m := got.Memberships[0]
+	if m.TenantID != "t1" || m.Slug != "acme" || m.Name != "Acme Inc" || m.Role != "admin" {
+		t.Fatalf("membership: %+v", m)
+	}
+
 	rec = httptest.NewRecorder()
 	h.Me(rec, httptest.NewRequest("GET", "/v1/auth/me", nil))
 	if rec.Code != 401 {
