@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { GET } from "./route";
+import { GET, POST } from "./route";
 
 beforeEach(() => vi.restoreAllMocks());
 
@@ -30,5 +30,31 @@ describe("BFF proxy", () => {
       params: Promise.resolve({ path: ["v1", "auth", "me"] }),
     });
     expect(res.status).toBe(401);
+  });
+
+  it("relays multiple Set-Cookie headers separately, each with Domain stripped", async () => {
+    const upstreamHeaders = new Headers();
+    upstreamHeaders.append("set-cookie", "rag_oidc_state=; Path=/; HttpOnly; Max-Age=0");
+    upstreamHeaders.append("set-cookie", "rag_session=abc; Domain=api.internal; Path=/; HttpOnly");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{\"ok\":true}", { status: 200, headers: upstreamHeaders }),
+    );
+    const res = await GET(new Request("http://ui.example/bff/v1/auth/oidc/callback"), {
+      params: Promise.resolve({ path: ["v1", "auth", "oidc", "callback"] }),
+    });
+    const cookies = res.headers.getSetCookie();
+    expect(cookies).toHaveLength(2);
+    expect(cookies.some((c) => c.startsWith("rag_oidc_state=") && c.includes("Max-Age=0"))).toBe(true);
+    expect(cookies.some((c) => c.startsWith("rag_session=abc") && c.includes("Path=/") && c.includes("HttpOnly"))).toBe(true);
+    for (const c of cookies) expect(c).not.toContain("Domain=api.internal");
+  });
+
+  it("forwards the request body on a mutation", async () => {
+    const upstream = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
+    const body = JSON.stringify({ hello: "world" });
+    const req = new Request("http://ui.example/bff/v1/sources", { method: "POST", body });
+    await POST(req, { params: Promise.resolve({ path: ["v1", "sources"] }) });
+    const sentInit = upstream.mock.calls[0][1] as RequestInit;
+    expect(new TextDecoder().decode(sentInit.body as ArrayBuffer)).toBe(body);
   });
 });

@@ -15,8 +15,16 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
     redirect: "manual",
   });
   const outHeaders = new Headers(upstream.headers);
-  const setCookie = upstream.headers.get("set-cookie");
-  if (setCookie) outHeaders.set("set-cookie", setCookie.replace(/;\s*Domain=[^;]*/i, "")); // host-only on the Next origin
+  // `new Headers(upstream.headers)` already comma-joined multiple Set-Cookie values into one
+  // header, which would corrupt them; getSetCookie() reads each one separately from `upstream`
+  // (not from the already-merged outHeaders), so re-emit them individually below.
+  const setCookies = upstream.headers.getSetCookie();
+  if (setCookies.length > 0) {
+    outHeaders.delete("set-cookie");
+    for (const cookie of setCookies) {
+      outHeaders.append("set-cookie", cookie.replace(/;\s*Domain=[^;]*/i, "")); // host-only on the Next origin
+    }
+  }
   return new Response(upstream.body, { status: upstream.status, headers: outHeaders });
 }
 
