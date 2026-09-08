@@ -35,6 +35,14 @@ func (f fakeRunPipeline) Answer(_ context.Context, q string, _ int) (bool, strin
 	return f.grounded[q], "answer to " + q, nil
 }
 
+// fakeRunJudge scores by a preset verdict per question (no LLM), so the e2e can
+// exercise the judged_correct write path without live keys.
+type fakeRunJudge struct{ verdict map[string]bool }
+
+func (f fakeRunJudge) Judge(_ context.Context, question, _, _ string) (bool, error) {
+	return f.verdict[question], nil
+}
+
 func TestEvalRunWritePath(t *testing.T) {
 	migrateControl(t)
 	ageKey, blob := writeWrappedDEK(t)
@@ -154,5 +162,52 @@ func TestEvalRunWritePath(t *testing.T) {
 	// The effective config was stored on the run.
 	if got := tenantScalarDB(ctx, t, db, `select (config->'retrieval'->>'final_k') from eval_runs where id = $1::uuid`, summary.RunID); got != "8" {
 		t.Errorf("stored config final_k = %q, want 8", got)
+	}
+
+	// --- STORY-12.3: a judged run persists judged_correct + a correctness rate. ---
+	ansA := "expected answer A"
+	jc1, err := svc.Create(ctx, tid, eval.CaseInput{Question: "jq-correct", ExpectedAnswer: &ansA})
+	if err != nil {
+		t.Fatalf("create judged case 1: %v", err)
+	}
+	jc2, err := svc.Create(ctx, tid, eval.CaseInput{Question: "jq-wrong", ExpectedAnswer: &ansA})
+	if err != nil {
+		t.Fatalf("create judged case 2: %v", err)
+	}
+	// jc3 has NO expected_answer → must stay judged_correct NULL even with judging on.
+	jc3, err := svc.Create(ctx, tid, eval.CaseInput{Question: "jq-noexpected"})
+	if err != nil {
+		t.Fatalf("create judged case 3: %v", err)
+	}
+	judgePipe := fakeRunPipeline{grounded: map[string]bool{"jq-correct": true, "jq-wrong": true, "jq-noexpected": true}}
+	judge := fakeRunJudge{verdict: map[string]bool{"jq-correct": true, "jq-wrong": false}}
+
+	jSummary, err := svc.Run(ctx, tid, eval.RunOptions{
+		Pipeline: judgePipe,
+		Judge:    judge,
+		K:        8,
+		Config:   map[string]any{"judge": true},
+	})
+	if err != nil {
+		t.Fatalf("judged Run: %v", err)
+	}
+	// correctness rate = 1 correct / 2 judged. Only jc1/jc2 have an expected_answer,
+	// so only they are judged — the earlier c1/c2/c3 (no expected_answer) and jc3
+	// stay NULL, regardless of how many cases the run covers.
+	if jSummary.CasesJudged != 2 || jSummary.CorrectnessRate != 0.5 {
+		t.Fatalf("correctness = %v over %d, want 0.5 over 2", jSummary.CorrectnessRate, jSummary.CasesJudged)
+	}
+	if got := tenantScalarDB(ctx, t, db, `select judged_correct::text from eval_results where run_id = $1::uuid and case_id = $2::uuid`, jSummary.RunID, jc1.ID); got != "true" {
+		t.Errorf("jc1 judged_correct = %q, want true", got)
+	}
+	if got := tenantScalarDB(ctx, t, db, `select judged_correct::text from eval_results where run_id = $1::uuid and case_id = $2::uuid`, jSummary.RunID, jc2.ID); got != "false" {
+		t.Errorf("jc2 judged_correct = %q, want false", got)
+	}
+	if got := tenantScalarDB(ctx, t, db, `select coalesce(judged_correct::text, 'NULL') from eval_results where run_id = $1::uuid and case_id = $2::uuid`, jSummary.RunID, jc3.ID); got != "NULL" {
+		t.Errorf("jc3 (no expected answer) judged_correct = %q, want NULL", got)
+	}
+	// The stored summary carries the correctness rate.
+	if got := tenantScalarDB(ctx, t, db, `select (summary->>'correctness_rate') from eval_runs where id = $1::uuid`, jSummary.RunID); got != "0.5" {
+		t.Errorf("stored summary correctness_rate = %q, want 0.5", got)
 	}
 }

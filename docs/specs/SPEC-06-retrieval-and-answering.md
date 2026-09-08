@@ -358,7 +358,7 @@ never fabricating the number).
 `eval_runs` row plus one `eval_results` row per case, and prints recall@k, grounded
 rate and mean latency. Used as a gate before changing chunking/retrieval settings
 for a tenant. Authoring the cases (CRUD + CSV import) is STORY-12.1 (ADR-0069);
-running them is STORY-12.2 (ADR-0070); LLM-judged correctness is STORY-12.3.
+running them is STORY-12.2 (ADR-0070); LLM-judged correctness is STORY-12.3 (ADR-0071).
 
 ### 8.1 Definitions (STORY-12.2, ADR-0070)
 - **k** — the retrieval top-k for the run: `settings.retrieval.final_k` (default 8),
@@ -383,5 +383,20 @@ running them is STORY-12.2 (ADR-0070); LLM-judged correctness is STORY-12.3.
 - **per-case errors** — a pipeline failure for one case is **fail-soft**: the case is
   recorded (a recall miss, not grounded, latency measured, error counted) and the run
   continues; only a persistence failure aborts the run.
-- `eval_results.judged_correct` and any correctness figure in `eval_runs.summary` are
-  **left NULL/absent** here — LLM-as-judge is STORY-12.3.
+### 8.2 LLM-as-judge correctness (STORY-12.3, ADR-0071)
+`--judge` (opt-in) scores answer correctness with an LLM. It is OFF by default — a
+plain run makes no judge call and leaves `eval_results.judged_correct` NULL with no
+correctness figure in the summary (§8.1's seam).
+- **What is judged** — only cases with a non-empty `expected_answer` and a successful
+  answer pipeline. A case with no expected answer, a judge error, or an unparseable
+  verdict → `judged_correct` NULL (fail-soft; never a silent "correct"), excluded from
+  the correctness denominator.
+- **judge model** — the tenant's `settings.llm` provider/model, overridable with
+  `--judge-model`, built via the same `llm.Factory` as the answer path (fail-closed on
+  `providers_allowed` + `llm.models_allowed`).
+- **verdict** — the judge replies with exactly `CORRECT` or `INCORRECT` (the three
+  inputs are delimited as data); the parser is strict (`INCORRECT` matched before
+  `CORRECT`; neither present = error).
+- **correctness rate** — `judged-correct / cases_judged` (cases with a non-NULL
+  verdict); both `cases_judged` and `correctness_rate` are added to `eval_runs.summary`
+  and printed, only when judging scored cases.

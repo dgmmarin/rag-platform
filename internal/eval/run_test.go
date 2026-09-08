@@ -241,6 +241,78 @@ func TestRunnerRunConfigStored(t *testing.T) {
 	}
 }
 
+func strp(s string) *string { return &s }
+
+// fakeJudge scores by exact-match of actual to a preset verdict per question, and
+// can be told to error for a given question (fail-soft path).
+type fakeJudge struct {
+	verdict map[string]bool
+	err     map[string]error
+}
+
+func (f fakeJudge) Judge(_ context.Context, question, _, _ string) (bool, error) {
+	if err := f.err[question]; err != nil {
+		return false, err
+	}
+	return f.verdict[question], nil
+}
+
+func TestRunnerRunWithJudge(t *testing.T) {
+	cases := []Case{
+		{ID: "c1", Question: "q1", ExpectedAnswer: strp("expected 1")}, // judged correct
+		{ID: "c2", Question: "q2", ExpectedAnswer: strp("expected 2")}, // judged incorrect
+		{ID: "c3", Question: "q3"},                                     // no expected answer → not judged (NULL)
+		{ID: "c4", Question: "q4", ExpectedAnswer: strp("expected 4")}, // judge errors → NULL (fail-soft)
+	}
+	pipe := fakePipeline{grounded: map[string]bool{"q1": true, "q2": true, "q3": true, "q4": true}}
+	judge := fakeJudge{
+		verdict: map[string]bool{"q1": true, "q2": false},
+		err:     map[string]error{"q4": errors.New("judge down")},
+	}
+	sink := &fakeSink{}
+	r := &Runner{Cases: fakeCaseSource{cs: cases}, Sink: sink, Pipeline: pipe, Judge: judge, K: 3}
+	got, err := r.Run(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// c1 correct, c2 incorrect, c3 not judged (no expected), c4 not judged (error).
+	if sink.results[0].JudgedCorrect == nil || !*sink.results[0].JudgedCorrect {
+		t.Errorf("c1 judged_correct = %v, want true", sink.results[0].JudgedCorrect)
+	}
+	if sink.results[1].JudgedCorrect == nil || *sink.results[1].JudgedCorrect {
+		t.Errorf("c2 judged_correct = %v, want false", sink.results[1].JudgedCorrect)
+	}
+	if sink.results[2].JudgedCorrect != nil {
+		t.Errorf("c3 (no expected answer) should be NULL")
+	}
+	if sink.results[3].JudgedCorrect != nil {
+		t.Errorf("c4 (judge error) should be NULL (fail-soft), not scored")
+	}
+	// correctness rate = 1 correct / 2 judged = 0.5.
+	if got.CasesJudged != 2 || got.CorrectnessRate != 0.5 {
+		t.Errorf("correctness = %v over %d, want 0.5 over 2", got.CorrectnessRate, got.CasesJudged)
+	}
+}
+
+func TestRunnerRunNoJudgeLeavesNull(t *testing.T) {
+	// The default (no judge) run must not populate judged_correct or the summary
+	// correctness fields — the 12.2 behaviour is unchanged.
+	cases := []Case{{ID: "c1", Question: "q1", ExpectedAnswer: strp("e")}}
+	pipe := fakePipeline{grounded: map[string]bool{"q1": true}}
+	sink := &fakeSink{}
+	r := &Runner{Cases: fakeCaseSource{cs: cases}, Sink: sink, Pipeline: pipe, K: 1}
+	got, err := r.Run(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if sink.results[0].JudgedCorrect != nil {
+		t.Errorf("no judge → judged_correct must stay NULL")
+	}
+	if got.CasesJudged != 0 || got.CorrectnessRate != 0 {
+		t.Errorf("no judge → no correctness figure, got %d / %v", got.CasesJudged, got.CorrectnessRate)
+	}
+}
+
 // newStepClock returns a Now func that advances by step on every call, starting
 // at start, so per-case latency is deterministic in tests.
 func newStepClock(start, step time.Duration) func() time.Time {

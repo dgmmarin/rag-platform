@@ -36,10 +36,18 @@ const defaultEvalFinalK = 8
 // RUN ONLY — it never mutates stored settings. The effective (merged) settings are
 // stored in eval_runs.config. The flag is named --config-file rather than
 // --config because the global --config (ADR-0009) is the ragctl config-file flag.
+//
+// --judge (STORY-12.3, ADR-0071) is opt-in LLM-as-judge correctness: when set,
+// each case with an expected_answer has its produced answer scored correct/
+// incorrect by the tenant's LLM (or the --judge-model override), populating
+// eval_results.judged_correct and a correctness rate in the summary. Without it
+// the run is unchanged: no judging, no judge cost, judged_correct NULL.
 type EvalRunCmd struct {
 	Slug       string `arg:"" help:"Tenant slug."`
 	ConfigFile string `help:"Optional JSON settings overlay applied to this run only (retrieval/answering/reranker/llm)." name:"config-file" type:"existingfile"`
 	Limit      int    `help:"Maximum cases to run (0 = all)." default:"0"`
+	Judge      bool   `help:"Score answer correctness with an LLM judge (opt-in; only cases with an expected_answer)." name:"judge"`
+	JudgeModel string `help:"Judge model id (defaults to the tenant's settings.llm.model)." name:"judge-model"`
 }
 
 // Run wires the pipeline (mirroring the serve composition root), resolves the
@@ -110,8 +118,19 @@ func (c *EvalRunCmd) Run(k *kong.Context, g *Globals) error {
 	svc := eval.NewService(resolver, eval.NewTenantStore())
 	svc.Runs = eval.NewRunStore()
 
+	// Optional LLM judge (STORY-12.3): build the provider through the same factory
+	// as the answer path, fail-closed on the tenant's provider + model allowlists.
+	var judge eval.Judge
+	if c.Judge {
+		judge, err = buildJudge(llmFactory, effective, c.JudgeModel)
+		if err != nil {
+			return err
+		}
+	}
+
 	summary, err := svc.Run(ctx, tid, eval.RunOptions{
 		Pipeline: evalPipeline{retrieve: retrieveSvc, query: querySvc, tid: tid},
+		Judge:    judge,
 		K:        kValue,
 		Config:   effective,
 		Limit:    c.Limit,
@@ -150,6 +169,56 @@ func (p evalPipeline) Answer(ctx context.Context, question string, k int) (bool,
 		return false, "", err
 	}
 	return res.Grounded, res.Answer, nil
+}
+
+// buildJudge constructs the LLM judge from the effective settings.llm block
+// (provider/model + the provider & model allowlists), fail-closed inside the
+// factory exactly like the answer path. --judge-model overrides the model; an
+// unset model (no override, none in settings) is an actionable error rather than
+// a silent default.
+func buildJudge(factory llm.Factory, effective map[string]any, modelOverride string) (eval.Judge, error) {
+	provider, model, modelsAllowed := llmSelection(effective)
+	if modelOverride != "" {
+		model = modelOverride
+	}
+	if provider == "" || model == "" {
+		return nil, fmt.Errorf("eval run: --judge needs an llm provider and model (set settings.llm or --judge-model)")
+	}
+	p, err := factory.Provider(provider, model, providersAllowed(effective), modelsAllowed)
+	if err != nil {
+		return nil, fmt.Errorf("eval run: build judge provider: %w", err)
+	}
+	return eval.NewLLMJudge(p, model), nil
+}
+
+// llmSelection extracts settings.llm.{provider,model,models_allowed} from a
+// settings document.
+func llmSelection(doc map[string]any) (provider, model string, modelsAllowed []string) {
+	l, ok := doc["llm"].(map[string]any)
+	if !ok {
+		return "", "", nil
+	}
+	provider, _ = l["provider"].(string)
+	model, _ = l["model"].(string)
+	return provider, model, stringSlice(l["models_allowed"])
+}
+
+// providersAllowed extracts settings.providers_allowed from a settings document.
+func providersAllowed(doc map[string]any) []string { return stringSlice(doc["providers_allowed"]) }
+
+// stringSlice coerces a JSON []any of strings to []string.
+func stringSlice(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, a := range arr {
+		if s, ok := a.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // fixedSettings is a SettingsSource returning a precomputed (merged) settings
@@ -236,14 +305,24 @@ func finalKFromSettings(doc map[string]any) int {
 	return defaultEvalFinalK
 }
 
-// printEvalSummary writes the human-readable run summary to stdout.
+// printEvalSummary writes the human-readable run summary to stdout. The
+// correctness line is printed only when the LLM judge actually scored cases
+// (STORY-12.3); a non-judged run prints exactly as it did before.
 func printEvalSummary(k *kong.Context, s eval.Summary) error {
-	_, err := fmt.Fprintf(k.Stdout,
+	if _, err := fmt.Fprintf(k.Stdout,
 		"ragctl eval run: run %s\n"+
 			"  cases:         %d (%d errored)\n"+
 			"  recall@%d:      %.3f (over %d cases with expected docs)\n"+
 			"  grounded rate: %.3f\n"+
 			"  mean latency:  %d ms\n",
-		s.RunID, s.Cases, s.Errors, s.K, s.RecallAtK, s.CasesScoredForRecall, s.GroundedRate, s.MeanLatencyMs)
-	return err
+		s.RunID, s.Cases, s.Errors, s.K, s.RecallAtK, s.CasesScoredForRecall, s.GroundedRate, s.MeanLatencyMs); err != nil {
+		return err
+	}
+	if s.CasesJudged > 0 {
+		if _, err := fmt.Fprintf(k.Stdout,
+			"  correctness:   %.3f (over %d cases judged)\n", s.CorrectnessRate, s.CasesJudged); err != nil {
+			return err
+		}
+	}
+	return nil
 }

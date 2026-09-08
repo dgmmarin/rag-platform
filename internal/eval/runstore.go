@@ -44,18 +44,19 @@ func (RunStore) CreateRun(ctx context.Context, db *tenant.DB, config map[string]
 	return id, err
 }
 
-// RecordResult inserts one eval_results row. recall_hit is a *bool so a
-// nil-recall case (no expected docs) is written as NULL; retrieved_doc_ids is
-// cast to uuid[]; judged_correct is left to its NULL default (STORY-12.3).
+// RecordResult inserts one eval_results row. recall_hit and judged_correct are
+// *bool so a nil (no ground truth, or a fail-soft judge/pipeline error) is written
+// as NULL; retrieved_doc_ids is cast to uuid[]. judged_correct is nil unless the
+// LLM judge scored the case (STORY-12.3).
 func (RunStore) RecordResult(ctx context.Context, db *tenant.DB, runID string, r CaseResult) error {
 	var answer *string
 	if r.Answer != "" {
 		answer = &r.Answer
 	}
 	_, err := db.Exec(ctx, `
-		insert into eval_results (run_id, case_id, retrieved_doc_ids, recall_hit, answer, latency_ms)
-		values ($1, $2, $3::uuid[], $4, $5, $6)`,
-		runID, r.CaseID, docIDsParam(r.RetrievedDocIDs), r.RecallHit, answer, r.LatencyMs)
+		insert into eval_results (run_id, case_id, retrieved_doc_ids, recall_hit, answer, judged_correct, latency_ms)
+		values ($1, $2, $3::uuid[], $4, $5, $6, $7)`,
+		runID, r.CaseID, docIDsParam(r.RetrievedDocIDs), r.RecallHit, answer, r.JudgedCorrect, r.LatencyMs)
 	return err
 }
 

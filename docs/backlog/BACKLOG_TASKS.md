@@ -467,7 +467,7 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] `ragctl eval run` (recall@k, grounded rate, latency) (internal/eval runner + RunStore; `ragctl eval run <slug> [--config-file]`; definitions ADR-0070, ISSUE-0053)
 
 ### STORY-12.3 — LLM-as-judge correctness scoring (optional flag)
-- [ ] LLM-as-judge correctness scoring (optional flag)
+- [x] LLM-as-judge correctness scoring (optional flag) (`--judge`/`--judge-model` on `eval run`; Judge port + llmJudge; ADR-0071, ISSUE-0054)
 
 ### STORY-12.4 — Eval report in admin UI and CI gate for settings changes
 - [ ] eval report in admin UI + CI gate on settings changes

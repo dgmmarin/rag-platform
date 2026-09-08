@@ -299,7 +299,7 @@ Suggested sprint order: EPIC-01 → 02 → 03 → 04 → 05 (+06 in parallel) �
 
 **STORY-12.1 Eval cases CRUD and import (CSV)** (3) ✅ — Traces: FR-ADM-04, ADR-0069
 **STORY-12.2 `ragctl eval run` with recall@k, grounded rate, latency** (5) ✅ — Traces: SPEC-06 §8, ADR-0070
-**STORY-12.3 LLM-as-judge correctness scoring (optional flag)** (3)
+**STORY-12.3 LLM-as-judge correctness scoring (optional flag)** (3) ✅ — Traces: FR-ADM-04, SPEC-06 §8, ADR-0071
 **STORY-12.4 Eval report in admin UI and CI gate for settings changes** (2)
 
 ---

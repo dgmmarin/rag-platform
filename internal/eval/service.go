@@ -153,6 +153,7 @@ func (s *Service) Run(ctx context.Context, tid tenant.ID, opts RunOptions) (Summ
 		Cases:    dbCaseSource{store: s.Store, db: db, limit: opts.Limit},
 		Sink:     dbRunSink{runs: runs, db: db},
 		Pipeline: opts.Pipeline,
+		Judge:    opts.Judge,
 		K:        opts.K,
 	}
 	summary, err := runner.Run(ctx, opts.Config)

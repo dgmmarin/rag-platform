@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -22,6 +23,16 @@ import (
 type Pipeline interface {
 	Retrieve(ctx context.Context, question string, k int) ([]string, error)
 	Answer(ctx context.Context, question string, k int) (grounded bool, answer string, err error)
+}
+
+// Judge scores a produced answer against its expected answer (STORY-12.3,
+// LLM-as-judge). It is OPTIONAL on the Runner (nil = no judging; the default run
+// leaves judged_correct NULL). The runner calls it only for cases with a
+// non-empty expected answer; a judge error (or unparseable verdict, surfaced as
+// an error by the implementation) is fail-soft — that case's judged_correct stays
+// NULL and the run continues (never a silent "correct").
+type Judge interface {
+	Judge(ctx context.Context, question, expected, actual string) (correct bool, err error)
 }
 
 // caseSource supplies the cases to run; runSink persists the run and its
@@ -47,8 +58,11 @@ type CaseResult struct {
 	RecallHit       *bool // nil when the case has no expected_doc_ids (excluded from recall@k)
 	Answer          string
 	Grounded        bool
-	LatencyMs       int
-	Err             error // pipeline error for this case (fail-soft; the run continues)
+	// JudgedCorrect is the LLM-judge verdict (STORY-12.3). nil (→ NULL) when
+	// judging is off, the case has no expected_answer, or the judge failed.
+	JudgedCorrect *bool
+	LatencyMs     int
+	Err           error // pipeline error for this case (fail-soft; the run continues)
 }
 
 // Summary is the printed + stored run summary (SPEC-06 §8): recall@k, grounded
@@ -62,12 +76,23 @@ type Summary struct {
 	GroundedRate         float64 `json:"grounded_rate"`
 	MeanLatencyMs        int     `json:"mean_latency_ms"`
 	Errors               int     `json:"errors"`
+	// Correctness (STORY-12.3), present only when judging ran: CasesJudged is the
+	// count with a non-NULL verdict (the denominator); CorrectnessRate =
+	// judged-correct / CasesJudged. Both omitempty so a non-judged run's summary is
+	// byte-identical to STORY-12.2. (An all-incorrect judged run reports
+	// CasesJudged>0 with the rate omitted at 0 — the denominator still signals that
+	// judging happened.)
+	CasesJudged     int     `json:"cases_judged,omitempty"`
+	CorrectnessRate float64 `json:"correctness_rate,omitempty"`
 }
 
 // RunOptions configures a run.
 type RunOptions struct {
 	// Pipeline runs retrieval + answering for the tenant. Required.
 	Pipeline Pipeline
+	// Judge scores answers against expected answers (STORY-12.3). Optional: nil
+	// disables judging (the default run).
+	Judge Judge
 	// K is the recall@k / retrieval top-k for the run (resolved from the effective
 	// settings.retrieval.final_k, with the --config-file overlay applied).
 	K int
@@ -85,7 +110,10 @@ type Runner struct {
 	Cases    caseSource
 	Sink     runSink
 	Pipeline Pipeline
-	K        int
+	// Judge scores answers against expected answers (STORY-12.3). Optional: nil
+	// disables judging (the default run).
+	Judge Judge
+	K     int
 	// Now is the clock used to time the answer call; defaults to time.Now.
 	Now func() time.Time
 }
@@ -148,6 +176,15 @@ func (r *Runner) runCase(ctx context.Context, now func() time.Time, c Case) Case
 	case aerr != nil:
 		res.Err = aerr
 	}
+
+	// LLM-as-judge (STORY-12.3): only when a judge is wired, the case has ground
+	// truth (a non-empty expected answer), and an answer was actually produced.
+	// A judge error leaves judged_correct NULL (fail-soft), never a silent pass.
+	if r.Judge != nil && res.Err == nil && c.ExpectedAnswer != nil && strings.TrimSpace(*c.ExpectedAnswer) != "" {
+		if correct, jerr := r.Judge.Judge(ctx, c.Question, *c.ExpectedAnswer, res.Answer); jerr == nil {
+			res.JudgedCorrect = &correct
+		}
+	}
 	return res
 }
 
@@ -195,7 +232,7 @@ func recallHit(expected, retrieved []string) *bool {
 // and denominator); grounded rate and mean latency are over all cases run.
 func summarize(k int, results []CaseResult) Summary {
 	s := Summary{Cases: len(results), K: k}
-	var latencySum, grounded, recallHits, recallDenom, errs int
+	var latencySum, grounded, recallHits, recallDenom, errs, judged, judgedCorrect int
 	for _, r := range results {
 		latencySum += r.LatencyMs
 		if r.Grounded {
@@ -210,11 +247,21 @@ func summarize(k int, results []CaseResult) Summary {
 				recallHits++
 			}
 		}
+		if r.JudgedCorrect != nil {
+			judged++
+			if *r.JudgedCorrect {
+				judgedCorrect++
+			}
+		}
 	}
 	s.Errors = errs
 	s.CasesScoredForRecall = recallDenom
 	if recallDenom > 0 {
 		s.RecallAtK = float64(recallHits) / float64(recallDenom)
+	}
+	s.CasesJudged = judged
+	if judged > 0 {
+		s.CorrectnessRate = float64(judgedCorrect) / float64(judged)
 	}
 	if len(results) > 0 {
 		s.GroundedRate = float64(grounded) / float64(len(results))
