@@ -13,6 +13,12 @@ run:
     - e2e
 
 linters:
+  # The admin UI (EPIC-11) lives in web/ as a Next.js/TypeScript app; its
+  # node_modules ships stray Go example files (e.g. flatted) that are not part
+  # of this module. Keep the Go linter out of web/ entirely (ADR-0073).
+  exclusions:
+    paths:
+      - 'web/'
   default: standard
   enable:
     - errcheck
