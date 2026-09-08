@@ -153,6 +153,26 @@ func TestEvalCommandsRequireURL(t *testing.T) {
 	}
 }
 
+// admin bootstrap (STORY-11.1 Task 6, FR-ADM-07) needs a control-plane URL to
+// dial the users table. With none set it must fail closed with a clear,
+// actionable error mentioning the missing URL — before any DB dial — and never
+// return ErrNotImplemented. RAGCTL_ADMIN_PASSWORD is set so the password source
+// is not what blocks the command: the URL check must fire first.
+func TestAdminBootstrapRequiresURL(t *testing.T) {
+	t.Setenv("RAGCTL_ADMIN_PASSWORD", "correct-horse-battery-staple")
+	var stdout, stderr bytes.Buffer
+	err := Run([]string{"admin", "bootstrap", "--email", "x@y.z"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("want an error when no control-plane URL is set, got nil")
+	}
+	if errors.Is(err, ErrNotImplemented) {
+		t.Fatal("admin bootstrap is implemented; must not return ErrNotImplemented")
+	}
+	if !strings.Contains(err.Error(), "control-plane URL") {
+		t.Fatalf("error %q should mention the missing control-plane URL", err.Error())
+	}
+}
+
 // A scheduled delete and its cancellation are mutually exclusive; the grammar
 // must reject asking for both at once rather than silently picking one.
 func TestTenantDeleteRejectsCancelAndRunTogether(t *testing.T) {

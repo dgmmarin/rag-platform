@@ -437,6 +437,9 @@ breakdown, tasks are derived from the acceptance criteria.
 
 ### STORY-11.1 — App shell, auth, tenant switcher
 - [ ] app shell, auth, tenant switcher
+- [x] `ragctl admin bootstrap` (create-or-promote platform admin) + `mise run seed` dev task —
+  unblocks "no login credentials"/"seed the database" (ADR-0074, ISSUE-0057); story itself not
+  marked done here
 
 ### STORY-11.2 — Sources list/create/edit with per-kind forms and test-connection (FR-ADM-01)
 - [ ] per-kind source forms + test-connection
