@@ -37,6 +37,7 @@ type CLI struct {
 	Enroll  EnrollCmd  `cmd:"" help:"Enrol a new tenant."`
 	Tenant  TenantCmd  `cmd:"" help:"Manage tenant lifecycle (suspend, resume, delete)."`
 	Keys    KeysCmd    `cmd:"" help:"Data-encryption key management (new-dek, rotate-dek)."`
+	Eval    EvalCmd    `cmd:"" help:"Manage a tenant's evaluation cases (add, list, edit, rm, import)."`
 	OpenAPI OpenAPICmd `cmd:"" name:"openapi" help:"Print the OpenAPI spec (regenerates api/openapi.yaml)."`
 }
 

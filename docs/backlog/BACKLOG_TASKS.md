@@ -461,7 +461,7 @@ breakdown, tasks are derived from the acceptance criteria.
 ## EPIC-12 · Evaluation harness and quality
 
 ### STORY-12.1 — Eval cases CRUD and import (CSV) (FR-ADM-04)
-- [ ] eval cases CRUD + CSV import
+- [x] eval cases CRUD + CSV import (internal/eval + `ragctl eval add/list/edit/rm/import`; CSV format ADR-0069, ISSUE-0052)
 
 ### STORY-12.2 — `ragctl eval run` with recall@k, grounded rate, latency (SPEC-06 §8)
 - [ ] `ragctl eval run` (recall@k, grounded rate, latency)

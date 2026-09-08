@@ -121,6 +121,36 @@ func TestTenantLifecycleCommandsRequireURL(t *testing.T) {
 	}
 }
 
+// The eval commands (STORY-12.1, FR-ADM-04) reach tenant content through the
+// resolver, so each needs a control-plane URL to look up the tenant and build the
+// resolver. With none set they must fail closed with a clear, actionable error
+// mentioning the missing URL — before any DEK load or database dial — and never
+// return ErrNotImplemented. (import is excluded here: its --file flag is validated
+// by kong at parse time, so it cannot reach the URL check without a real file.)
+func TestEvalCommandsRequireURL(t *testing.T) {
+	cases := [][]string{
+		{"eval", "add", "--slug", "acme", "--question", "why?"},
+		{"eval", "list", "--slug", "acme"},
+		{"eval", "edit", "--slug", "acme", "--id", "11111111-1111-1111-1111-111111111111"},
+		{"eval", "rm", "--slug", "acme", "--id", "11111111-1111-1111-1111-111111111111"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := Run(args, &stdout, &stderr)
+			if err == nil {
+				t.Fatal("want an error when no control-plane URL is set, got nil")
+			}
+			if errors.Is(err, ErrNotImplemented) {
+				t.Fatal("eval commands are implemented; must not return ErrNotImplemented")
+			}
+			if !strings.Contains(err.Error(), "control-plane URL") {
+				t.Fatalf("error %q should mention the missing control-plane URL", err.Error())
+			}
+		})
+	}
+}
+
 // A scheduled delete and its cancellation are mutually exclusive; the grammar
 // must reject asking for both at once rather than silently picking one.
 func TestTenantDeleteRejectsCancelAndRunTogether(t *testing.T) {
