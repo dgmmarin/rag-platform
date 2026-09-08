@@ -70,6 +70,20 @@ func validateSitemapSemantics(c config) error {
 	return nil
 }
 
+// Fields returns the sitemap form-field descriptors (SPEC-11 §10). sitemap_urls is
+// the only field sitemapConfigSchema's `required` names, so it is the only one
+// marked Required — the drift guard (internal/connector/kinds_test.go) checks that
+// omitting it fails ValidateConfig. A sitemap authenticates nothing (Test below),
+// so there is no secret field here.
+func (sitemapConnector) Fields() []connector.FieldSpec {
+	return []connector.FieldSpec{
+		{Name: "sitemap_urls", Label: "Sitemap URLs", Type: "text", Required: true},
+		{Name: "max_pages", Label: "Max Pages", Type: "number", Required: false},
+		{Name: "delay_ms", Label: "Delay (ms)", Type: "number", Required: false},
+		{Name: "concurrency", Label: "Concurrency", Type: "number", Required: false},
+	}
+}
+
 // Test validates the config, then fetches AND parses the first sitemap URL through
 // the SSRF-guarded egress Doer, bounded by the ≤10 s probe deadline (FR-SRC-14,
 // STORY-07.8). It reuses the STORY-07.5 sitemap fetch (gzip + size cap) and parser.

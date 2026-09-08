@@ -218,6 +218,31 @@ func validateSemantics(c apiConfig) error {
 	return nil
 }
 
+// Fields returns the API connector's form-field descriptors (SPEC-11 §10):
+// base_url/auth/endpoints are configSchema's top-level `required` keys, so those
+// three (and only those) are marked Required — the drift guard
+// (internal/connector/kinds_test.go) checks that omitting any one fails
+// ValidateConfig. The credential fields (api_key/token/username/password/
+// client_id/client_secret) are NOT part of `config` at all — they live in the
+// separate `credentials` map ValidateConfig never sees (SPEC-04 §6) — so they are
+// listed here as optional (Required:false, never checked by the drift guard) with
+// Type:"secret" purely so the admin UI knows to render a write-only credential
+// input; which of them apply depends on the chosen auth.type (buildAuthedClient,
+// auth.go, enforces that at Test/Sync time, not here).
+func (apiConnector) Fields() []connector.FieldSpec {
+	return []connector.FieldSpec{
+		{Name: "base_url", Label: "Base URL", Type: "url", Required: true},
+		{Name: "auth", Label: "Auth Config", Type: "text", Required: true},
+		{Name: "endpoints", Label: "Endpoints", Type: "text", Required: true},
+		{Name: credKeyAPIKey, Label: "API Key", Type: "secret", Required: false},
+		{Name: credKeyToken, Label: "Bearer Token", Type: "secret", Required: false},
+		{Name: credKeyUsername, Label: "Username", Type: "text", Required: false},
+		{Name: credKeyPassword, Label: "Password", Type: "secret", Required: false},
+		{Name: credKeyClientID, Label: "OAuth Client ID", Type: "text", Required: false},
+		{Name: credKeyClientSecret, Label: "OAuth Client Secret", Type: "secret", Required: false},
+	}
+}
+
 // Test validates the config, then makes ONE lightweight, authenticated, SSRF-guarded
 // request to verify reachability AND credentials (FR-SRC-14, STORY-07.8), bounded by
 // the ≤10 s probe deadline. It builds the authed client with the decrypted

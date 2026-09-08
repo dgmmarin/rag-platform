@@ -71,6 +71,8 @@ func (c e2eFakeCrawl) Sync(_ context.Context, _ connector.SyncRun, _ connector.S
 	return connector.Stats{}, nil
 }
 
+func (c e2eFakeCrawl) Fields() []connector.FieldSpec { return nil }
+
 func TestConnectorFrameworkGoldenPath(t *testing.T) {
 	migrateControl(t)
 	pool := controlPool(t)

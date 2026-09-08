@@ -124,4 +124,27 @@ type Connector interface {
 	// Sync enumerates the source's content and streams it into the sink. It must be
 	// cancellable via ctx. Implemented by the concrete connectors (EPIC-07).
 	Sync(ctx context.Context, run SyncRun, sink Sink) (Stats, error)
+	// Fields returns the form-field descriptors for this connector's kind-specific
+	// config (SPEC-11 §10, STORY-11.2), so the admin UI can render a schema-driven
+	// source form (GET /admin/connector-kinds). Each Required:true field MUST be one
+	// this connector's ValidateConfig actually rejects when absent — the drift-guard
+	// test (internal/connector/kinds_test.go) enforces that a FieldSpec and
+	// ValidateConfig never silently drift apart. Never a credential VALUE — only the
+	// descriptor (Type:"secret" marks a field whose value the UI must write-only).
+	Fields() []FieldSpec
+}
+
+// FieldSpec is one form-field descriptor for a connector's kind-specific config
+// (SPEC-11 §10). It carries no value — only the shape the admin UI needs to render
+// an input: what to call it, what kind of input, and whether the config is invalid
+// without it. Name is the JSON key inside the source's `config` document (e.g.
+// "start_urls"), except for a credential field (Type:"secret"), whose Name is the
+// key the sources API expects in the separate `credentials` map (SPEC-04 §6) —
+// never a key inside `config` — since a secret's VALUE never round-trips through
+// config or this endpoint.
+type FieldSpec struct {
+	Name     string
+	Label    string
+	Type     string // one of "text" | "url" | "number" | "secret" | "bool"
+	Required bool
 }

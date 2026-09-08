@@ -60,6 +60,47 @@ func (r *Registry) Kinds() []Kind {
 	return kinds
 }
 
+// KindSchema is one registered kind's form schema (SPEC-11 §10, STORY-11.2): its
+// key, a human-readable label, and its connector's field descriptors.
+type KindSchema struct {
+	Kind   string
+	Label  string
+	Fields []FieldSpec
+}
+
+// kindLabels are the human-readable names for the SPEC-04 §1 kinds. A kind absent
+// here (should never happen for a registered connector — every Kind constant has
+// an entry) falls back to its raw string so Schemas() never panics or drops a kind.
+var kindLabels = map[Kind]string{
+	KindUpload:   "Upload",
+	KindWebCrawl: "Web Crawl",
+	KindSitemap:  "Sitemap",
+	KindAPI:      "API",
+	KindS3:       "S3",
+}
+
+// Schemas returns every REGISTERED kind's form schema (SPEC-11 §10), sorted by
+// kind, for the GET /admin/connector-kinds endpoint (STORY-11.2). A kind with no
+// connector registered yet (e.g. s3, EPIC-07) is simply absent — exactly like
+// ValidateConfig/Test already defer for an unregistered kind (NFR-MNT-01): adding a
+// connector and registering it is the only change needed for its schema to appear.
+func (r *Registry) Schemas() []KindSchema {
+	kinds := r.Kinds()
+	schemas := make([]KindSchema, 0, len(kinds))
+	for _, k := range kinds {
+		c, ok := r.Lookup(k)
+		if !ok {
+			continue // registered-then-unregistered race; Kinds() is a snapshot
+		}
+		label := kindLabels[k]
+		if label == "" {
+			label = string(k)
+		}
+		schemas = append(schemas, KindSchema{Kind: string(k), Label: label, Fields: c.Fields()})
+	}
+	return schemas
+}
+
 // defaultRegistry is the process-wide registry connectors register into from their
 // package init (SPEC-04 §1: `connector.Register(...)`), and that the worker
 // resolves against by sources.kind.

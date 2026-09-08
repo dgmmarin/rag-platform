@@ -155,6 +155,14 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	sourcesSvc.Decrypter = cipher
 	sourceHandlers := sources.NewHandlers(sourcesSvc)
 
+	// Connector-kind form schema (SPEC-11 §10, ADR-0075, STORY-11.2): GET
+	// /admin/connector-kinds serves the same DefaultRegistry() the sources
+	// validator above resolves against, so a kind's schema and its enforcement
+	// are always the same source of truth (drift-guarded, internal/connector/
+	// kinds_test.go). Session-authenticated, platform-global — wired on Deps
+	// below, not through sourcesSvc.
+	connectorKindsHandlers := connector.NewHandlers(connector.DefaultRegistry())
+
 	// Settings service (control-plane): used by the rate limiter, the admin-tenant
 	// surface, and the per-tenant upload ceiling (STORY-06.3).
 	settingsSvc := tenants.NewSettingsService(tenants.SettingsFromPool(pool))
@@ -346,6 +354,7 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		OIDCStart:          oidcStart,
 		OIDCCallback:       oidcCallback,
 		Me:                 http.HandlerFunc(meHandlers.Me),
+		ConnectorKinds:     http.HandlerFunc(connectorKindsHandlers.List),
 		AuditList:          http.HandlerFunc(auditHandlers.List),
 		UsageList:          http.HandlerFunc(usageHandlers.List),
 		ImpersonationStart: http.HandlerFunc(impHandlers.Start),

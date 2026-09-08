@@ -47,6 +47,11 @@ func (uploadConnector) ValidateConfig(cfg json.RawMessage) error {
 	return configSchema.Validate(cfg)
 }
 
+// Fields returns no descriptors: an upload source carries no meaningful
+// kind-specific config (ValidateConfig above accepts any well-formed object, empty
+// included) — there is nothing for the admin UI to render (SPEC-11 §10).
+func (uploadConnector) Fields() []connector.FieldSpec { return nil }
+
 // Test is a no-op success (FR-SRC-14, STORY-07.8). Unlike the web_crawl/sitemap/api
 // connectors — whose Test now probes a live external system for reachability and
 // credentials — an upload source has NO external system and NO credentials to verify:

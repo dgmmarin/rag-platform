@@ -15,6 +15,7 @@ type fakeConnector struct {
 	testErr   error
 	testCalls *int
 	gotCreds  *Credentials // if set, Test records the credentials it received
+	fields    []FieldSpec
 }
 
 func (c fakeConnector) Kind() Kind { return c.kind }
@@ -39,6 +40,8 @@ func (c fakeConnector) Test(_ context.Context, _ json.RawMessage, creds Credenti
 func (c fakeConnector) Sync(_ context.Context, _ SyncRun, _ Sink) (Stats, error) {
 	return Stats{}, nil
 }
+
+func (c fakeConnector) Fields() []FieldSpec { return c.fields }
 
 func TestRegistryLookupReturnsRegisteredConnector(t *testing.T) {
 	reg := NewRegistry()
@@ -103,11 +106,54 @@ func TestRegistryKindsSorted(t *testing.T) {
 }
 
 func TestPackageLevelRegisterAndLookup(t *testing.T) {
-	// Uses the default registry; a kind unique to this test avoids cross-test
-	// duplicate-registration panics.
-	Register(KindSitemap, func() Connector { return fakeConnector{kind: KindSitemap} })
-	c, ok := Lookup(KindSitemap)
-	if !ok || c.Kind() != KindSitemap {
+	// Uses the default registry; a kind unique to this test (not one of the real
+	// SPEC-04 §1 kinds) avoids a duplicate-registration panic against the real
+	// connectors' own init() registrations — the drift-guard test
+	// (kinds_test.go) imports those packages into this same test binary.
+	const testKind Kind = "test_pkg_level_only"
+	Register(testKind, func() Connector { return fakeConnector{kind: testKind} })
+	c, ok := Lookup(testKind)
+	if !ok || c.Kind() != testKind {
 		t.Fatalf("package-level lookup failed: ok=%v", ok)
+	}
+}
+
+// TestRegistrySchemasListsRegisteredKindsWithFields (SPEC-11 §10, STORY-11.2):
+// Schemas() returns one KindSchema per REGISTERED kind, sorted, carrying the
+// label and the connector's own Fields() — an unregistered kind (KindS3 here) is
+// simply absent, same as Lookup/ValidateConfig already defer for it.
+func TestRegistrySchemasListsRegisteredKindsWithFields(t *testing.T) {
+	reg := NewRegistry()
+	wcFields := []FieldSpec{{Name: "start_urls", Label: "Start URLs", Type: "text", Required: true}}
+	apiFields := []FieldSpec{{Name: "base_url", Label: "Base URL", Type: "url", Required: true}}
+	reg.Register(KindWebCrawl, func() Connector { return fakeConnector{kind: KindWebCrawl, fields: wcFields} })
+	reg.Register(KindAPI, func() Connector { return fakeConnector{kind: KindAPI, fields: apiFields} })
+
+	schemas := reg.Schemas()
+	if len(schemas) != 2 {
+		t.Fatalf("Schemas() len = %d, want 2: %+v", len(schemas), schemas)
+	}
+	if schemas[0].Kind != string(KindAPI) || schemas[1].Kind != string(KindWebCrawl) {
+		t.Fatalf("Schemas() not sorted by kind: %+v", schemas)
+	}
+	if schemas[0].Label != "API" {
+		t.Fatalf("api label = %q, want %q", schemas[0].Label, "API")
+	}
+	if len(schemas[0].Fields) != 1 || schemas[0].Fields[0] != apiFields[0] {
+		t.Fatalf("api fields = %+v, want %+v", schemas[0].Fields, apiFields)
+	}
+	if schemas[1].Label != "Web Crawl" {
+		t.Fatalf("web_crawl label = %q, want %q", schemas[1].Label, "Web Crawl")
+	}
+	if len(schemas[1].Fields) != 1 || schemas[1].Fields[0] != wcFields[0] {
+		t.Fatalf("web_crawl fields = %+v, want %+v", schemas[1].Fields, wcFields)
+	}
+}
+
+func TestRegistrySchemasEmptyRegistry(t *testing.T) {
+	reg := NewRegistry()
+	schemas := reg.Schemas()
+	if len(schemas) != 0 {
+		t.Fatalf("Schemas() on empty registry = %+v, want empty", schemas)
 	}
 }

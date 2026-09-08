@@ -48,6 +48,7 @@ type Deps struct {
 	OIDCStart          http.Handler
 	OIDCCallback       http.Handler
 	Me                 http.Handler // GET /v1/auth/me (session required, no CSRF)
+	ConnectorKinds     http.Handler // GET /admin/connector-kinds (session required, no CSRF)
 	AuditList          http.Handler
 	UsageList          http.Handler
 	ImpersonationStart http.Handler
@@ -139,6 +140,12 @@ func New(d Deps) http.Handler {
 	// Session hydration for the admin UI (SPEC-11 §2.1): session required, no
 	// platform-admin gate, GET so no CSRF.
 	mux.Handle("GET /v1/auth/me", chain(handlerOr(d.Me), mw(d.RequireSession)))
+
+	// Connector-kind form schema (SPEC-11 §10, ADR-0075, STORY-11.2): session
+	// required ONLY — platform-global (not tenant-scoped, no RequirePlatformAdmin
+	// gate: any signed-in member renders the sources form), GET so no CSRF. The
+	// admin UI reads it once to drive every kind's schema-driven create/edit form.
+	mux.Handle("GET /admin/connector-kinds", chain(handlerOr(d.ConnectorKinds), mw(d.RequireSession)))
 
 	// --- Platform-admin surface (/admin): session then platform-admin gate. ---
 	platformAdmin := func(h http.Handler) http.Handler {

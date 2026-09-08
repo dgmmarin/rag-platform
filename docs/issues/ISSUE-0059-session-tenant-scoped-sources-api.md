@@ -1,6 +1,6 @@
-# ISSUE-0059: Session tenant-scoped sources API — `RequireTenantAccess` (STORY-11.2, Task 1)
+# ISSUE-0059: Session tenant-scoped sources API — `RequireTenantAccess` (STORY-11.2, Tasks 1-2)
 
-**Type:** Feature · **Status:** In progress · **Story:** STORY-11.2 · **Traces:** FR-ADM-01, ADR-0075
+**Type:** Feature · **Status:** Done · **Story:** STORY-11.2 · **Traces:** FR-ADM-01, ADR-0075
 
 > Note: the *what* lives in the delivery backlog (`docs/backlog/`), the *why* in ADRs (ADR-0075).
 
@@ -47,6 +47,31 @@ tenant differs).
   `authz.RequireTenantAccess(auth.PermQuery)` / `authz.RequireTenantAccess(auth.PermManageSources)`,
   and reuses the SAME `sourceHandlers` already built for the Bearer surface.
 
+### Task 2: `GET /admin/connector-kinds` schema endpoint (SPEC-11 §10, ADR-0075)
+- **`internal/connector/connector.go`** — `FieldSpec{Name, Label, Type, Required}` (Type one of
+  `text|url|number|secret|bool`) and a `Fields() []FieldSpec` method on the `Connector` interface,
+  implemented by each connector (`upload`, `webcrawl.webCrawlConnector`,
+  `webcrawl.sitemapConnector`, `api.apiConnector`) alongside its existing `ValidateConfig` — the
+  same file, so a field and its enforcement are reviewed together. `Required:true` fields mirror
+  exactly the connector's own JSON-Schema `required` keys (the ONLY thing the drift guard checks);
+  the API connector's credential fields (`api_key`/`token`/`username`/`password`/`client_id`/
+  `client_secret`, reusing its existing `credKey*` constants) are listed `Type:"secret",
+  Required:false` — they live in the separate `credentials` map (SPEC-04 §6), never in `config`,
+  so `ValidateConfig` never sees them and they are never drift-guarded as required.
+- **`internal/connector/registry.go`** — `Registry.Schemas() []KindSchema{Kind, Label, Fields}`,
+  one entry per REGISTERED kind (sorted): `s3` (no connector built yet) is simply absent, same as
+  `Lookup`/`ValidateConfig` already defer for it — no code changes elsewhere once it registers
+  (NFR-MNT-01).
+- **`internal/connector/handler.go`** (new) — `Handlers{Registry}.List` serves
+  `{ "kinds": [ {kind,label,fields:[{name,label,type,required}]} ] }`; DESCRIPTORS only, never a
+  secret VALUE.
+- **`internal/api/router.go`** — `Deps.ConnectorKinds`; `GET /admin/connector-kinds` mounted behind
+  `RequireSession` ONLY — platform-global (no `RequireTenantSourcesRead`/`RequirePlatformAdmin`, no
+  tenant path segment), no CSRF (a GET), mirroring `GET /v1/auth/me`'s session-only mount.
+- **`internal/cli/api_server.go`** — wires `connector.NewHandlers(connector.DefaultRegistry())`, the
+  SAME registry `SourcesValidator` resolves against, so a kind's advertised schema and its actual
+  enforcement can never point at two different registries.
+
 ## Tests / runnable checks
 - **`internal/cp/auth/tenant_access_test.go`** (table test over a fake `MembershipDB`, reusing
   `authzMemStore` from `authz_test.go`): no session → 401; invalid tenant id → 404; unknown
@@ -61,9 +86,22 @@ tenant differs).
   without CSRF, GET unaffected). `go test ./internal/api/`: **PASS**.
 - **Build/lint**: `mise run build` PASS; `go build ./...`, `go vet ./...`, `go test ./...` all
   PASS; `mise run lint` — 10 issues, unchanged from baseline (0 new).
+- **Task 2 — `internal/connector/registry_test.go`/`handler_test.go`/`kinds_test.go`**:
+  `Registry.Schemas()` lists only registered kinds, sorted, with their fields (RED: `Schemas`
+  undefined, confirmed, then GREEN); `Handlers.List` serializes the JSON shape; the drift guard
+  instantiates the REAL `upload`/`webcrawl` (web_crawl + sitemap)/`api` connectors, builds a valid
+  baseline config per kind, and for every `Required:true` `FieldSpec` removes exactly that key and
+  asserts `ValidateConfig` now rejects it — verified it has teeth by transiently marking a
+  non-enforced field `Required:true` (`web_crawl.max_depth`) and confirming the test fails, then
+  reverting. `internal/api/router_test.go`: `TestConnectorKindsRouteSessionOnly` /
+  `…SessionRejected` (`RequireSession` only, no platform-admin, no CSRF). `go test
+  ./internal/connector/... ./internal/cp/sources/... ./internal/api/`: **PASS**; `mise run lint` —
+  10 issues, unchanged (0 new).
 
 ## Out of scope (later STORY-11.2 tasks / later stories)
-- The admin UI screens that call these routes, and the `GET /admin/connector-kinds` schema
-  endpoint (ADR-0075) — later tasks in this story.
+- The admin UI screens that call these routes and render forms from
+  `GET /admin/connector-kinds` (the web client / form renderer) — later tasks in this story.
 - Mounting `jobs`/`documents`/members/settings behind `RequireTenantAccess` — STORY-11.3–11.6
   reuse the same middleware, added there.
+- An `s3` connector (and its `Fields()`) — `KindS3` has no registered connector yet (EPIC-07);
+  `Schemas()` will include it automatically once one registers, no code change needed here.

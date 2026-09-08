@@ -57,6 +57,7 @@ func (c credsRecordingConnector) Test(_ context.Context, _ json.RawMessage, cred
 func (c credsRecordingConnector) Sync(_ context.Context, _ connector.SyncRun, _ connector.Sink) (connector.Stats, error) {
 	return connector.Stats{}, nil
 }
+func (c credsRecordingConnector) Fields() []connector.FieldSpec { return nil }
 
 func TestSourceCredentialsGoldenPath(t *testing.T) {
 	migrateControl(t)

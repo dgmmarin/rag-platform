@@ -155,6 +155,22 @@ func validateSemantics(c config) error {
 	return nil
 }
 
+// Fields returns the web-crawl form-field descriptors (SPEC-11 §10). start_urls is
+// the only field configSchema's `required` names, so it is the only one marked
+// Required — the drift guard (internal/connector/kinds_test.go) checks that
+// omitting it fails ValidateConfig. web_crawl authenticates nothing (Test above),
+// so there is no secret field here.
+func (webCrawlConnector) Fields() []connector.FieldSpec {
+	return []connector.FieldSpec{
+		{Name: "start_urls", Label: "Start URLs", Type: "text", Required: true},
+		{Name: "max_depth", Label: "Max Depth", Type: "number", Required: false},
+		{Name: "max_pages", Label: "Max Pages", Type: "number", Required: false},
+		{Name: "delay_ms", Label: "Delay (ms)", Type: "number", Required: false},
+		{Name: "concurrency", Label: "Concurrency", Type: "number", Required: false},
+		{Name: "render_js", Label: "Render JavaScript", Type: "bool", Required: false},
+	}
+}
+
 // Test validates the config, then probes reachability of the source (FR-SRC-14,
 // STORY-07.8): a single GET of the first start_url through the SSRF-guarded egress
 // Doer, bounded by the ≤10 s probe deadline. Outcomes map to actionable, secret-free

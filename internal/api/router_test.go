@@ -64,6 +64,7 @@ func newTestDeps(ran *[]string) Deps {
 		Logout:             okHandler(ran, "logout"),
 		OIDCStart:          okHandler(ran, "oidc-start"),
 		OIDCCallback:       okHandler(ran, "oidc-callback"),
+		ConnectorKinds:     okHandler(ran, "connector-kinds"),
 		AuditList:          okHandler(ran, "audit-list"),
 		UsageList:          okHandler(ran, "usage-list"),
 		ImpersonationStart: okHandler(ran, "impersonation-start"),
@@ -118,6 +119,45 @@ func TestLoginRouteReachesHandler(t *testing.T) {
 	}
 	if !contains(ran, "login") {
 		t.Fatalf("login handler not reached; ran=%v", ran)
+	}
+}
+
+// GET /admin/connector-kinds (SPEC-11 §10, STORY-11.2) runs RequireSession only —
+// no platform-admin gate (it is platform-global but every signed-in member reads
+// it) and no CSRF (a GET).
+func TestConnectorKindsRouteSessionOnly(t *testing.T) {
+	var ran []string
+	h := New(newTestDeps(&ran))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/admin/connector-kinds", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("connector-kinds = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if !contains(ran, "connector-kinds") {
+		t.Fatalf("handler not reached; ran=%v", ran)
+	}
+	if !contains(ran, "session") {
+		t.Fatalf("session middleware did not run; ran=%v", ran)
+	}
+	if contains(ran, "platform-admin") || contains(ran, "csrf") {
+		t.Fatalf("connector-kinds must run neither platform-admin nor csrf; ran=%v", ran)
+	}
+}
+
+// A rejected session 401s and never reaches the handler.
+func TestConnectorKindsRouteSessionRejected(t *testing.T) {
+	var ran []string
+	deps := newTestDeps(&ran)
+	deps.RequireSession = stubMW(&ran, "session", http.StatusUnauthorized, CodeUnauthorized)
+	h := New(deps)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/admin/connector-kinds", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("connector-kinds = %d, want 401", rr.Code)
+	}
+	if contains(ran, "connector-kinds") {
+		t.Fatalf("handler reached despite 401; ran=%v", ran)
 	}
 }
 
