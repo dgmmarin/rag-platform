@@ -119,6 +119,11 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	auditHandlers := audit.NewHandlers(audit.NewService(audit.FromPool(pool)))
 	impSvc := auth.NewImpersonationService(auth.FromPool(pool), audit.FromPool(pool))
 	impHandlers := auth.NewImpersonationHandlers(impSvc)
+	// RequireTenantAccess (STORY-11.2, ADR-0075) audits a platform admin's
+	// cross-tenant session access the same way ImpersonationService.Start audits
+	// an explicit grant (details.impersonation=true); reuse its AuditFunc rather
+	// than wiring a second audit.Record closure over the same pool.
+	authz.Audit = impSvc.Audit
 
 	// --- Usage (tenant-scoped read + background flush). ---
 	usageCounter := usage.NewCounter(usage.FromPool(pool))
@@ -326,6 +331,14 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		RequireScopeAdmin:    verifier.RequireScope(auth.ScopeAdmin),
 		RequireRoleAdmin:     authz.RequireRole(auth.PermManageMembers),
 		RateLimit:            rl.Handler,
+
+		// Session admin sources (STORY-11.2, ADR-0075): PermQuery is the SPEC-02
+		// §4 matrix's baseline permission every role (including viewer) grants, so
+		// it doubles as "any member may read"; PermManageSources is already
+		// "manage sources, trigger sync" (owner/admin only) — no new Permission
+		// constants needed for this pattern.
+		RequireTenantSourcesRead:  authz.RequireTenantAccess(auth.PermQuery),
+		RequireTenantSourcesWrite: authz.RequireTenantAccess(auth.PermManageSources),
 
 		Signup:             http.HandlerFunc(authHandlers.Signup),
 		Login:              http.HandlerFunc(authHandlers.Login),

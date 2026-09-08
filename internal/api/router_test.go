@@ -56,6 +56,9 @@ func newTestDeps(ran *[]string) Deps {
 		RequireRoleAdmin:     passMW(ran, "role-admin"),
 		RateLimit:            passMW(ran, "rate-limit"),
 
+		RequireTenantSourcesRead:  passMW(ran, "tenant-sources-read"),
+		RequireTenantSourcesWrite: passMW(ran, "tenant-sources-write"),
+
 		Signup:             okHandler(ran, "signup"),
 		Login:              okHandler(ran, "login"),
 		Logout:             okHandler(ran, "logout"),
@@ -295,6 +298,72 @@ func TestSourcesRoutesChain(t *testing.T) {
 		if !contains(ran, c.handler) {
 			t.Fatalf("%s %s did not reach %s; ran=%v", c.method, c.path, c.handler, ran)
 		}
+	}
+}
+
+// The session admin sources routes (STORY-11.2, ADR-0075) reuse the SAME
+// handlers as the Bearer /v1/sources surface, mounted behind session ->
+// tenant-access instead of scope -> rate-limit, with {tenantId} distinct from
+// the sources handlers' own {id} (the source id). Reads use the read gate,
+// mutations the write gate, in RequireSession -> RequireTenant... order.
+func TestTenantSourcesRoutesChain(t *testing.T) {
+	cases := []struct {
+		method, path, handler, gate string
+	}{
+		{http.MethodGet, "/admin/tenants/t-1/sources", "source-list", "tenant-sources-read"},
+		{http.MethodPost, "/admin/tenants/t-1/sources", "source-create", "tenant-sources-write"},
+		{http.MethodGet, "/admin/tenants/t-1/sources/abc", "source-get", "tenant-sources-read"},
+		{http.MethodPatch, "/admin/tenants/t-1/sources/abc", "source-update", "tenant-sources-write"},
+		{http.MethodDelete, "/admin/tenants/t-1/sources/abc", "source-delete", "tenant-sources-write"},
+		{http.MethodPost, "/admin/tenants/t-1/sources/abc/sync", "source-sync", "tenant-sources-write"},
+		{http.MethodPost, "/admin/tenants/t-1/sources/abc/test", "source-test", "tenant-sources-write"},
+	}
+	for _, c := range cases {
+		var ran []string
+		h := New(newTestDeps(&ran))
+		rr := httptest.NewRecorder()
+		r := httptest.NewRequest(c.method, c.path, nil)
+		h.ServeHTTP(rr, r)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s %s = %d, want 200; body=%s", c.method, c.path, rr.Code, rr.Body.String())
+		}
+		if idxOf(ran, "session") < 0 || idxOf(ran, c.gate) < 0 {
+			t.Fatalf("%s %s did not run session -> %s; ran=%v", c.method, c.path, c.gate, ran)
+		}
+		if idxOf(ran, "session") > idxOf(ran, c.gate) {
+			t.Fatalf("%s %s ran %s before session; ran=%v", c.method, c.path, c.gate, ran)
+		}
+		if !contains(ran, c.handler) {
+			t.Fatalf("%s %s did not reach %s; ran=%v", c.method, c.path, c.handler, ran)
+		}
+	}
+}
+
+// A mutation on the session admin sources surface carries CSRF like every
+// other session-cookie mutation (SPEC-09 §3); the corresponding GET does not.
+func TestTenantSourcesCSRF(t *testing.T) {
+	var ran []string
+	deps := newTestDeps(&ran)
+	deps.CSRF = stubMW(&ran, "csrf", http.StatusForbidden, CodeForbidden)
+	h := New(deps)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/admin/tenants/t-1/sources", nil))
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("POST sources without CSRF = %d, want 403", rr.Code)
+	}
+	if contains(ran, "source-create") {
+		t.Fatalf("handler reached despite CSRF block; ran=%v", ran)
+	}
+
+	ran = nil
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/admin/tenants/t-1/sources", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET sources = %d, want 200 (no CSRF on reads)", rr.Code)
+	}
+	if contains(ran, "csrf") {
+		t.Fatalf("CSRF ran on a GET route; ran=%v", ran)
 	}
 }
 

@@ -25,6 +25,16 @@ type AuthzService struct {
 	DB interface {
 		QueryRow(ctx context.Context, sql string, args ...any) Row
 	}
+	// Audit records a platform admin's cross-tenant access via RequireTenantAccess
+	// (STORY-11.2, ADR-0075, FR-ADM-05). It is the same AuditFunc seam
+	// ImpersonationService.Start writes through, so a caller already wiring one
+	// audit sink can hand it to both. Nil is a hard failure on that path only
+	// (fail closed): an unauditable cross-tenant access is not granted silently.
+	// RequireRole's own platform-admin path writes no audit event today (its
+	// callers are all `/v1/*` Bearer routes with a tenant from the API key, so
+	// "cross-tenant" does not apply the same way); this field is scoped to
+	// RequireTenantAccess.
+	Audit AuditFunc
 }
 
 // NewAuthzService builds an AuthzService over the given DB.

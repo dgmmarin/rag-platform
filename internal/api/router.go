@@ -28,6 +28,19 @@ type Deps struct {
 	RequireRoleAdmin     Middleware // session role check (SPEC-02 §4)
 	RateLimit            Middleware // per-key/per-tenant token bucket (NFR-SEC-07)
 
+	// Tenant-scoped session middleware (STORY-11.2, ADR-0075): authorises the
+	// session user against the tenant named by the {tenantId} path segment —
+	// platform-admin or a member role satisfying the route's permission — then
+	// injects tenant.WithTenantID so the reused tenant-scoped handlers (e.g.
+	// sources.Handlers) read it exactly as they do on the Bearer /v1/* surface.
+	// Reads use RequireTenantSourcesRead (any role); writes use
+	// RequireTenantSourcesWrite (owner/admin per the SPEC-02 §4 matrix). Each is
+	// one auth.AuthzService.RequireTenantAccess(perm) instance, pre-built in
+	// api_server.go so this package stays free of cp/auth's concrete types (the
+	// same shape as RequireRoleAdmin above).
+	RequireTenantSourcesRead  Middleware
+	RequireTenantSourcesWrite Middleware
+
 	// Handlers that already exist (auth + the 03.x admin handlers).
 	Signup             http.Handler
 	Login              http.Handler
@@ -163,6 +176,26 @@ func New(d Deps) http.Handler {
 	mux.Handle("DELETE /v1/sources/{id}", tenantScoped(d.RequireScopeAdmin, d.SourceDelete))
 	mux.Handle("POST /v1/sources/{id}/sync", tenantScoped(d.RequireScopeAdmin, d.SourceSync))
 	mux.Handle("POST /v1/sources/{id}/test", tenantScoped(d.RequireScopeAdmin, d.SourceTest))
+
+	// Session admin sources (STORY-11.2, ADR-0075, SPEC-11 §10): the SAME
+	// sources.Handlers as the Bearer /v1/sources surface above, mounted behind
+	// the session tenant-access gate instead of an API key. Session +
+	// RequireTenantAccess resolves and authorises {tenantId} from the path (no
+	// RateLimit here — that guards credential-keyed Bearer traffic, ADR-0027).
+	// {id} in these routes is still the SOURCE id (unchanged from the handlers'
+	// own r.PathValue("id") lookup); the tenant path segment is named
+	// {tenantId} to avoid colliding with it. GET carries no CSRF; the mutations
+	// do (SPEC-09 §3).
+	tenantSources := func(access Middleware, h http.Handler) http.Handler {
+		return chain(handlerOr(h), mw(d.RequireSession), mw(access))
+	}
+	mux.Handle("GET /admin/tenants/{tenantId}/sources", tenantSources(d.RequireTenantSourcesRead, d.SourceList))
+	mux.Handle("POST /admin/tenants/{tenantId}/sources", tenantSources(d.RequireTenantSourcesWrite, mustCSRF(d, d.SourceCreate)))
+	mux.Handle("GET /admin/tenants/{tenantId}/sources/{id}", tenantSources(d.RequireTenantSourcesRead, d.SourceGet))
+	mux.Handle("PATCH /admin/tenants/{tenantId}/sources/{id}", tenantSources(d.RequireTenantSourcesWrite, mustCSRF(d, d.SourceUpdate)))
+	mux.Handle("DELETE /admin/tenants/{tenantId}/sources/{id}", tenantSources(d.RequireTenantSourcesWrite, mustCSRF(d, d.SourceDelete)))
+	mux.Handle("POST /admin/tenants/{tenantId}/sources/{id}/sync", tenantSources(d.RequireTenantSourcesWrite, mustCSRF(d, d.SourceSync)))
+	mux.Handle("POST /admin/tenants/{tenantId}/sources/{id}/test", tenantSources(d.RequireTenantSourcesWrite, mustCSRF(d, d.SourceTest)))
 
 	// Documents (STORY-04.4, FR-SRC-02/FR-ADM-03, SPEC-07 §2). Tenant content
 	// reached through the resolver (ADR-0003); the tenant is derived from the API
