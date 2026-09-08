@@ -36,6 +36,7 @@ type CLI struct {
 	Migrate MigrateCmd `cmd:"" help:"Apply database migrations."`
 	Enroll  EnrollCmd  `cmd:"" help:"Enrol a new tenant."`
 	Tenant  TenantCmd  `cmd:"" help:"Manage tenant lifecycle (suspend, resume, delete)."`
+	Keys    KeysCmd    `cmd:"" help:"Data-encryption key management (new-dek, rotate-dek)."`
 	OpenAPI OpenAPICmd `cmd:"" name:"openapi" help:"Print the OpenAPI spec (regenerates api/openapi.yaml)."`
 }
 

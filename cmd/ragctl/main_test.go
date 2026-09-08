@@ -2,23 +2,38 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/rag-platform/ragctl/internal/cli"
 )
 
-// The entrypoint maps a stub subcommand (ErrNotImplemented) to exit code 2 so
-// callers and the e2e test can distinguish "wired but unimplemented" from a
-// clean run (0) and a parse/usage error. Traces: STORY-01.1, ADR-0009.
-func TestRunStubReturnsExitCode2(t *testing.T) {
-	// `work` remains a pure stub; `serve` now loads the DEK at startup
-	// (STORY-01.4) and so is no longer a not-implemented-only path.
-	var stdout, stderr bytes.Buffer
-	code := run([]string{"work"}, &stdout, &stderr)
-	if code != 2 {
-		t.Fatalf("stub subcommand: want exit code 2, got %d (stderr=%q)", code, stderr.String())
+// The entrypoint maps Run's error sentinels to the ADR-0010 exit-code contract:
+// 0 (clean/help), 2 (wired-but-unimplemented stub), 1 (any real error). `work`
+// was the last STORY-01.1 stub and is now implemented (STORY-09.1), so no live
+// command returns ErrNotImplemented — codeFor is tested directly so the exit-2
+// mapping stays guarded (ADR-0010: CI gates on exit codes, not text). Traces:
+// ADR-0010, ADR-0009.
+func TestCodeForMapsErrorsToExitCodes(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"success", nil, 0},
+		{"help printed", cli.ErrHelpRequested, 0},
+		{"unimplemented stub", cli.ErrNotImplemented, 2},
+		{"wrapped stub sentinel", fmt.Errorf("work: %w", cli.ErrNotImplemented), 2},
+		{"real error", errors.New("boom"), 1},
 	}
-	if !strings.Contains(stdout.String(), "work") {
-		t.Fatalf("expected work stub output, got %q", stdout.String())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := codeFor(tc.err); got != tc.want {
+				t.Fatalf("codeFor(%v) = %d, want %d", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

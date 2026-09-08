@@ -70,26 +70,102 @@ type UploadLimits interface {
 	MaxUploadBytes(ctx context.Context, tenantID string) (int64, error)
 }
 
-// ControlJobs implements JobEnqueuer over the control-plane pgx pool.
-type ControlJobs struct{ pool *pgxpool.Pool }
+// IngestQueue enqueues the durable River ingest_document job in the caller's
+// transaction and reports the River job id (to link the mirror row) plus whether
+// River collapsed it onto an already-active job (STORY-09.2, ADR-0005, ADR-0060). It
+// is implemented in internal/cli over a River insert client; a nil IngestQueue keeps
+// the pre-09.2 path — a jobs row with no River job — which hermetic unit tests use to
+// assert enqueue without a running queue.
+type IngestQueue interface {
+	EnqueueIngestTx(ctx context.Context, tx pgx.Tx, nj NewIngestJob) (riverJobID int64, duplicate bool, err error)
+}
 
-// JobsFromPool wraps a control-plane pool as a JobEnqueuer.
+// querier is the read/write surface shared by *pgxpool.Pool and pgx.Tx, so the row
+// insert runs on the pool (legacy path) or inside a transaction (River path).
+type querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// ControlJobs implements JobEnqueuer over the control-plane pgx pool. With a River
+// IngestQueue it enqueues the queue job and its mirror row atomically; without one it
+// writes the mirror row alone.
+type ControlJobs struct {
+	pool  *pgxpool.Pool
+	queue IngestQueue
+}
+
+// JobsFromPool wraps a control-plane pool as a JobEnqueuer (jobs-row-only until a
+// queue is attached).
 func JobsFromPool(pool *pgxpool.Pool) ControlJobs { return ControlJobs{pool: pool} }
 
+// WithQueue returns a copy that enqueues the River ingest_document job transactionally
+// with the mirror row (ADR-0005). The composition root attaches it in `ragctl serve`.
+func (c ControlJobs) WithQueue(q IngestQueue) ControlJobs { c.queue = q; return c }
+
 // EnqueueIngest inserts a queued ingest_document job (SPEC-08 §1). source_id is
-// nullable; the FK is to control-plane sources(id).
+// nullable; the FK is to control-plane sources(id). With a queue attached it enqueues
+// the River job first (same tx) and links the row by river_job_id; if River treated
+// the insert as a duplicate of an active job, the existing mirror row is returned
+// (idempotent) rather than a second row for the same River job.
 func (c ControlJobs) EnqueueIngest(ctx context.Context, nj NewIngestJob) (Job, error) {
+	if c.queue == nil {
+		return insertIngestRow(ctx, c.pool, nj, nil)
+	}
+	tx, err := c.pool.Begin(ctx)
+	if err != nil {
+		return Job{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	riverID, dup, err := c.queue.EnqueueIngestTx(ctx, tx, nj)
+	if err != nil {
+		return Job{}, err
+	}
+	var j Job
+	if dup {
+		j, err = findIngestByRiverID(ctx, tx, riverID)
+	} else {
+		j, err = insertIngestRow(ctx, tx, nj, &riverID)
+	}
+	if err != nil {
+		return Job{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Job{}, err
+	}
+	return j, nil
+}
+
+// insertIngestRow writes the queued ingest_document mirror row, optionally linked to
+// its River job (riverID nil = legacy jobs-row-only path).
+func insertIngestRow(ctx context.Context, q querier, nj NewIngestJob, riverID *int64) (Job, error) {
 	var j Job
 	var sid *string
 	payload := nj.Payload
 	if len(payload) == 0 {
 		payload = json.RawMessage(`{}`)
 	}
-	err := c.pool.QueryRow(ctx, `
-		insert into jobs (tenant_id, source_id, kind, status, payload)
-		values ($1, $2, 'ingest_document', 'queued', $3)
+	err := q.QueryRow(ctx, `
+		insert into jobs (tenant_id, source_id, kind, status, payload, river_job_id)
+		values ($1, $2, 'ingest_document', 'queued', $3, $4)
 		returning id::text, tenant_id::text, source_id::text, kind::text, status::text, payload, queued_at`,
-		nj.TenantID, nj.SourceID, []byte(payload)).
+		nj.TenantID, nj.SourceID, []byte(payload), riverID).
+		Scan(&j.ID, &j.TenantID, &sid, &j.Kind, &j.Status, &j.Payload, &j.QueuedAt)
+	if err != nil {
+		return Job{}, err
+	}
+	j.SourceID = sid
+	return j, nil
+}
+
+// findIngestByRiverID returns the mirror row already linked to a River job (used when
+// River deduplicated the insert onto an active job).
+func findIngestByRiverID(ctx context.Context, q querier, riverID int64) (Job, error) {
+	var j Job
+	var sid *string
+	err := q.QueryRow(ctx, `
+		select id::text, tenant_id::text, source_id::text, kind::text, status::text, payload, queued_at
+		from jobs where river_job_id = $1`, riverID).
 		Scan(&j.ID, &j.TenantID, &sid, &j.Kind, &j.Status, &j.Payload, &j.QueuedAt)
 	if err != nil {
 		return Job{}, err

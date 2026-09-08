@@ -290,3 +290,27 @@ create table impersonation_sessions (
 create index on impersonation_sessions (admin_user_id);
 create index on impersonation_sessions (tenant_id);
 create index on impersonation_sessions (expires_at) where ended_at is null;
+
+-- ---------------------------------------------------------------------------
+-- Link a jobs mirror row to its River queue job (STORY-09.2, FR-ADM-02, SPEC-08 §3)
+-- ---------------------------------------------------------------------------
+-- ADR-0005 makes River authoritative and the control-plane `jobs` table its
+-- mirror. river_job_id is the id of the River queue job a producer enqueued in the
+-- SAME transaction as this row (ADR-0060); the worker's mirror middleware locates
+-- the row to transition (queued->running->succeeded/failed/cancelled) by it.
+-- Nullable: a row for a kind not yet enqueued through River — and any pre-migration
+-- row — simply carries no link and is left untouched by the middleware. The partial
+-- unique index keeps one River job mapped to at most one mirror row.
+alter table jobs add column river_job_id bigint;
+create unique index jobs_river_job_id_key on jobs (river_job_id) where river_job_id is not null;
+
+-- ---------------------------------------------------------------------------
+-- Scheduler run counter for cron sources (STORY-09.3, FR-SRC-11, SPEC-08 §2)
+-- ---------------------------------------------------------------------------
+-- The leader-elected scheduler enqueues an incremental sync_source each time a
+-- source's cron is due and a FULL sync every Nth run (SPEC-08 §2). sync_run_count is
+-- that per-source counter: the scheduler reads it to decide full vs incremental and
+-- increments it in the same transaction as the enqueue and the next_run_at update, so
+-- the decision is deterministic and survives restarts. Starts at 0, so the first
+-- scheduled run is a full sync.
+alter table sources add column sync_run_count integer not null default 0;

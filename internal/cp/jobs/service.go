@@ -136,6 +136,14 @@ func (s *Service) Cancel(ctx context.Context, tenantID, id string) (Job, error) 
 		return Job{}, err // ErrNotFound
 	}
 	if job.Status == StatusQueued {
+		// Drop the River job first so no worker can claim it (SPEC-08 §4: River cancels
+		// queued jobs immediately), then flip the mirror row. With no Canceller wired
+		// (legacy jobs-row-only), the mirror flip alone is authoritative.
+		if s.Canceller != nil {
+			if err := s.Canceller.Cancel(ctx, tenantID, job.ID); err != nil {
+				return Job{}, fmt.Errorf("jobs: cancel queued: %w", err)
+			}
+		}
 		updated, changed, err := s.Store.CancelQueued(ctx, tenantID, id)
 		if err != nil {
 			return Job{}, fmt.Errorf("jobs: cancel: %w", err)

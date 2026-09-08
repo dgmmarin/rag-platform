@@ -216,6 +216,29 @@ func TestCancelQueuedIsEffectiveNow(t *testing.T) {
 	}
 }
 
+// With the River Canceller wired (STORY-09.4), cancelling a QUEUED job also drops the
+// River job — not just the mirror flip — so the worker can never claim it.
+func TestCancelQueuedDropsRiverJob(t *testing.T) {
+	fs := newFakeStore()
+	j := fs.add(Job{TenantID: "t1", Kind: "sync_source", Status: StatusQueued})
+	c := &fakeCanceller{}
+	svc := NewService(fs)
+	svc.Canceller = c
+	got, err := svc.Cancel(context.Background(), "t1", j.ID)
+	if err != nil {
+		t.Fatalf("Cancel queued: %v", err)
+	}
+	if got.Status != StatusCancelled {
+		t.Fatalf("status = %q, want cancelled", got.Status)
+	}
+	if len(c.called) != 1 || c.called[0] != j.ID {
+		t.Fatalf("River job was not dropped on a queued cancel: %+v", c.called)
+	}
+	if len(fs.cancelled) != 1 {
+		t.Fatal("store did not flip the queued mirror row")
+	}
+}
+
 func TestCancelRunningWithoutCancellerIsSeam(t *testing.T) {
 	fs := newFakeStore()
 	j := fs.add(Job{TenantID: "t1", Kind: "sync_source", Status: StatusRunning})

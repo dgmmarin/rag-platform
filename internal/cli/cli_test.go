@@ -3,37 +3,38 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
 
-// Each subcommand is a stub for STORY-01.1: the CLI wiring must be real, but the
-// command bodies return ErrNotImplemented and print a recognisable line. Traces:
-// ADR-0002, ADR-0009, SPEC-02 §7.
-func TestSubcommandsAreWiredAndReturnNotImplemented(t *testing.T) {
-	cases := []struct {
-		name string
-		args []string
-		want string // substring expected on stdout
-	}{
-		// serve is no longer a pure stub: it loads the DEK at startup and fails
-		// closed without one (STORY-01.4); see secrets_test.go for its contract.
-		{"work", []string{"work"}, "work"},
-		// migrate control (STORY-01.5), migrate tenants (STORY-02.2) and enroll
-		// (STORY-02.3) are implemented; see their *RequiresURL tests.
-	}
+// TestMain keeps the cli unit tests hermetic: the "RequiresURL" tests assert a
+// command fails closed when no connection URL is set, but kong resolves these
+// from the environment (env tags), so a developer's shell exporting them would
+// mask the precondition. Strip them once for the whole test binary. Tests that
+// need a URL pass it explicitly via --control-plane-url.
+func TestMain(m *testing.M) {
+	_ = os.Unsetenv("CONTROL_PLANE_URL")
+	_ = os.Unsetenv("PROVISION_DB_URL")
+	os.Exit(m.Run())
+}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			err := Run(tc.args, &stdout, &stderr)
-			if !errors.Is(err, ErrNotImplemented) {
-				t.Fatalf("args %v: want ErrNotImplemented, got %v (stderr=%q)", tc.args, err, stderr.String())
-			}
-			if got := stdout.String(); !strings.Contains(got, tc.want) {
-				t.Fatalf("args %v: stdout %q does not contain %q", tc.args, got, tc.want)
-			}
-		})
+// work is no longer a stub: STORY-09.1 wired it to the River worker. Like serve it
+// loads the startup DEK and fails closed without one, so it must NOT return
+// ErrNotImplemented. Its full consume/drain behaviour is covered by the worker e2e
+// (test/e2e/worker_e2e_test.go). Traces: ADR-0005, SPEC-08 §1.
+func TestWorkIsImplementedAndNotAStub(t *testing.T) {
+	// Force a deterministic fail-closed at the startup DEK load (local KMS, no key)
+	// so the worker never actually starts and blocks — regardless of ambient env.
+	t.Setenv("KMS_PROVIDER", "local")
+	t.Setenv("AGE_SECRET_KEY", "")
+	var stdout, stderr bytes.Buffer
+	err := Run([]string{"work"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("want a startup error when no DEK/control-plane URL is set, got nil")
+	}
+	if errors.Is(err, ErrNotImplemented) {
+		t.Fatalf("work is implemented (STORY-09.1); must not return ErrNotImplemented (stderr=%q)", stderr.String())
 	}
 }
 
@@ -137,12 +138,23 @@ func TestTenantDeleteRejectsCancelAndRunTogether(t *testing.T) {
 // Global flags resolve flag -> env -> config file (ADR-0009). At minimum the
 // grammar must accept the documented global flags without error.
 func TestGlobalFlagsAreAccepted(t *testing.T) {
+	// Fail closed at the DEK load so `work` never starts the worker (see above).
+	t.Setenv("KMS_PROVIDER", "local")
+	t.Setenv("AGE_SECRET_KEY", "")
 	var stdout, stderr bytes.Buffer
-	// Use `work` (a pure stub) so the assertion is about global-flag acceptance,
-	// not serve's DEK requirement (STORY-01.4).
+	// `work` exercises global-flag acceptance: with the flags parsed it proceeds into
+	// Run and fails closed on the missing startup DEK — which proves the grammar
+	// accepted the globals (a rejected flag would surface as a usage error before Run
+	// is ever reached).
 	err := Run([]string{"--log-level", "debug", "--control-plane-url", "postgres://x", "work"}, &stdout, &stderr)
-	if !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("want ErrNotImplemented with global flags set, got %v (stderr=%q)", err, stderr.String())
+	if err == nil {
+		t.Fatalf("want a fail-closed startup error after accepting the globals, got nil (stderr=%q)", stderr.String())
+	}
+	if errors.Is(err, ErrNotImplemented) {
+		t.Fatalf("unexpected ErrNotImplemented with global flags set (stderr=%q)", stderr.String())
+	}
+	if strings.Contains(err.Error(), "usage error") {
+		t.Fatalf("global flags were rejected as a usage error: %v", err)
 	}
 }
 

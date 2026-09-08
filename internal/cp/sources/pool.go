@@ -10,13 +10,39 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// SyncQueue enqueues durable River jobs for the sources domain in the caller's
+// transaction and reports the River job id (to link the mirror row) plus whether River
+// collapsed it onto an already-active job (STORY-09.2/09.6, ADR-0005, ADR-0060). It is
+// implemented in internal/cli over a River insert client; a nil SyncQueue keeps the
+// pre-queue path — a jobs row with no River job — which hermetic unit tests use.
+type SyncQueue interface {
+	EnqueueSyncTx(ctx context.Context, tx pgx.Tx, nj NewJob) (riverJobID int64, duplicate bool, err error)
+	EnqueueDeleteSourceTx(ctx context.Context, tx pgx.Tx, nj NewJob) (riverJobID int64, duplicate bool, err error)
+}
+
+// querier is the read/write surface shared by *pgxpool.Pool and pgx.Tx, so the job
+// row insert runs on the pool (legacy path) or inside a transaction (River path).
+type querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // PoolDB implements Store over the control-plane pgx pool. It touches only
 // control-plane tables (sources, jobs) — never a tenant database (C-3). Every
 // query is filtered by tenant_id so the store can never cross the tenant boundary.
-type PoolDB struct{ pool *pgxpool.Pool }
+// With a River SyncQueue it enqueues a sync_source queue job and its mirror row
+// atomically; without one (or for other kinds) it writes the mirror row alone.
+type PoolDB struct {
+	pool  *pgxpool.Pool
+	queue SyncQueue
+}
 
-// FromPool wraps a control-plane pool as a sources Store.
+// FromPool wraps a control-plane pool as a sources Store (jobs-row-only until a queue
+// is attached).
 func FromPool(pool *pgxpool.Pool) PoolDB { return PoolDB{pool: pool} }
+
+// WithQueue returns a copy that enqueues the River sync_source job transactionally
+// with the mirror row (ADR-0005). The composition root attaches it in `ragctl serve`.
+func (p PoolDB) WithQueue(q SyncQueue) PoolDB { p.queue = q; return p }
 
 // sourceColumns is the shared projection scanned into a Source. credentials_enc is
 // deliberately never selected (FR-SRC-10).
@@ -198,17 +224,88 @@ func (p PoolDB) MarkDeleting(ctx context.Context, tenantID, id string) (bool, bo
 	return false, exists, nil
 }
 
-// EnqueueJob writes a queued jobs row (the history/mirror the EPIC-09 worker will
-// consume). A sync_source insert that trips the partial unique index
-// jobs_one_active_sync_per_source becomes ErrActiveSyncExists (SPEC-07 §2 409).
+// EnqueueJob writes a queued jobs row (the history/mirror the worker consumes). A
+// sync_source insert that trips the partial unique index
+// jobs_one_active_sync_per_source becomes ErrActiveSyncExists (SPEC-07 §2 409). With a
+// River queue attached, a sync_source job is enqueued into River first (same tx) and
+// the row is linked by river_job_id; if River collapsed it onto an active sync, that
+// is the same conflict and becomes ErrActiveSyncExists. Other kinds (delete_source,
+// whose handler is STORY-09.6) keep the jobs-row-only path until their story wires a
+// River handler.
 func (p PoolDB) EnqueueJob(ctx context.Context, nj NewJob) (Job, error) {
+	if p.queue == nil || (nj.Kind != "sync_source" && nj.Kind != "delete_source") {
+		return insertJobRow(ctx, p.pool, nj, nil)
+	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return Job{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var riverID int64
+	var dup bool
+	switch nj.Kind {
+	case "sync_source":
+		riverID, dup, err = p.queue.EnqueueSyncTx(ctx, tx, nj)
+	case "delete_source":
+		riverID, dup, err = p.queue.EnqueueDeleteSourceTx(ctx, tx, nj)
+	}
+	if err != nil {
+		return Job{}, err
+	}
+	if dup {
+		// A sync_source duplicate is the "one active sync" conflict (409). A
+		// delete_source duplicate is idempotent — an active delete already exists, so
+		// return its mirror row rather than a second row for the same River job.
+		if nj.Kind == "sync_source" {
+			return Job{}, ErrActiveSyncExists
+		}
+		j, err := findJobByRiverID(ctx, tx, riverID)
+		if err != nil {
+			return Job{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Job{}, err
+		}
+		return j, nil
+	}
+	j, err := insertJobRow(ctx, tx, nj, &riverID)
+	if err != nil {
+		return Job{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Job{}, err
+	}
+	return j, nil
+}
+
+// findJobByRiverID returns the mirror row already linked to a River job (used when
+// River deduplicated a delete_source onto an active one).
+func findJobByRiverID(ctx context.Context, q querier, riverID int64) (Job, error) {
 	var j Job
 	var sid *string
-	err := p.pool.QueryRow(ctx, `
-		insert into jobs (tenant_id, source_id, kind, status, payload)
-		values ($1, $2, $3::job_kind, 'queued', $4)
+	err := q.QueryRow(ctx, `
+		select id::text, tenant_id::text, source_id::text, kind::text, status::text, payload, queued_at
+		  from jobs where river_job_id = $1`, riverID).
+		Scan(&j.ID, &j.TenantID, &sid, &j.Kind, &j.Status, &j.Payload, &j.QueuedAt)
+	if err != nil {
+		return Job{}, err
+	}
+	j.SourceID = sid
+	return j, nil
+}
+
+// insertJobRow writes the queued mirror row, optionally linked to its River job
+// (riverID nil = legacy jobs-row-only path). A partial-unique-index violation on a
+// second active sync_source becomes ErrActiveSyncExists.
+func insertJobRow(ctx context.Context, q querier, nj NewJob, riverID *int64) (Job, error) {
+	var j Job
+	var sid *string
+	err := q.QueryRow(ctx, `
+		insert into jobs (tenant_id, source_id, kind, status, payload, river_job_id)
+		values ($1, $2, $3::job_kind, 'queued', $4, $5)
 		returning id::text, tenant_id::text, source_id::text, kind::text, status::text, payload, queued_at`,
-		nj.TenantID, nj.SourceID, nj.Kind, []byte(nj.Payload)).
+		nj.TenantID, nj.SourceID, nj.Kind, []byte(nj.Payload), riverID).
 		Scan(&j.ID, &j.TenantID, &sid, &j.Kind, &j.Status, &j.Payload, &j.QueuedAt)
 	if isUniqueViolation(err) {
 		return Job{}, ErrActiveSyncExists

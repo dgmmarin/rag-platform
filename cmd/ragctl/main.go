@@ -22,16 +22,28 @@ import (
 //	2 — command is wired but not yet implemented (STORY-01.1 stubs)
 func run(args []string, stdout, stderr io.Writer) int {
 	err := cli.Run(args, stdout, stderr)
+	code := codeFor(err)
+	// A real command/usage failure (exit 1). Kong prints its own parse errors, but
+	// an error surfaced from a command Run (e.g. a missing control-plane URL) would
+	// otherwise be lost, so report it on stderr.
+	if code == 1 {
+		_, _ = fmt.Fprintln(stderr, "ragctl:", err)
+	}
+	return code
+}
+
+// codeFor maps a cli.Run error to the ADR-0010 exit-code contract: 0 for a clean
+// run or printed help, 2 for a wired-but-unimplemented stub (ErrNotImplemented),
+// 1 for any other (real) error. It stays a pure function so the contract — the
+// exit-2 mapping included, now that every command is implemented and no live
+// command returns ErrNotImplemented — remains unit-testable without a stub.
+func codeFor(err error) int {
 	switch {
 	case err == nil, errors.Is(err, cli.ErrHelpRequested):
 		return 0
 	case errors.Is(err, cli.ErrNotImplemented):
 		return 2
 	default:
-		// A real command/usage failure. Kong prints its own parse errors, but an
-		// error surfaced from a command Run (e.g. a missing control-plane URL)
-		// would otherwise be lost, so report it on stderr.
-		_, _ = fmt.Fprintln(stderr, "ragctl:", err)
 		return 1
 	}
 }

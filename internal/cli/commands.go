@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -12,17 +11,8 @@ import (
 	"github.com/rag-platform/ragctl/internal/api"
 	"github.com/rag-platform/ragctl/internal/migrate"
 	"github.com/rag-platform/ragctl/internal/provision"
+	"github.com/rag-platform/ragctl/internal/worker"
 )
-
-// stub writes a recognisable "not implemented" line for a wired-but-unfinished
-// command and returns ErrNotImplemented. A write failure is surfaced so callers
-// do not mistake a broken stdout for a clean run.
-func stub(w io.Writer, format string, args ...any) error {
-	if _, err := fmt.Fprintf(w, format+" (not implemented)\n", args...); err != nil {
-		return err
-	}
-	return ErrNotImplemented
-}
 
 // ServeCmd starts the HTTP API (SPEC-02 §7: `ragctl serve --addr :8080`).
 type ServeCmd struct {
@@ -44,7 +34,7 @@ type ServeCmd struct {
 // output. The DEK the cipher holds encrypts/decrypts tenant secrets the server
 // handles.
 func (c *ServeCmd) Run(k *kong.Context, g *Globals) error {
-	cipher, err := LoadStartupCipher(context.Background(), g.Secrets)
+	cipher, err := LoadStartupKeyring(context.Background(), g.Secrets)
 	if err != nil {
 		return err
 	}
@@ -77,14 +67,43 @@ func (c *OpenAPICmd) Run(k *kong.Context) error {
 }
 
 // WorkCmd starts the job worker (SPEC-02 §7:
-// `ragctl work --queues ingest,maintenance,platform`).
+// `ragctl work --queues ingest,maintenance,platform`). Per SPEC-08 §1 each queue has
+// independent worker concurrency so a long reindex on `maintenance` cannot starve
+// syncs on `ingest`.
 type WorkCmd struct {
-	Queues []string `help:"Queues to consume." env:"RAGCTL_QUEUES" default:"ingest,maintenance,platform"`
+	Queues                 []string `help:"Queues to consume." env:"RAGCTL_QUEUES" default:"ingest,maintenance,platform"`
+	IngestConcurrency      int      `help:"Max concurrent ingest-queue jobs." env:"RAGCTL_INGEST_CONCURRENCY" default:"8"`
+	MaintenanceConcurrency int      `help:"Max concurrent maintenance-queue jobs." env:"RAGCTL_MAINTENANCE_CONCURRENCY" default:"2"`
+	PlatformConcurrency    int      `help:"Max concurrent platform-queue jobs." env:"RAGCTL_PLATFORM_CONCURRENCY" default:"2"`
+	IngestPerTenantCap     int      `help:"Max concurrent ingest jobs per tenant (fairness cap)." env:"RAGCTL_INGEST_PER_TENANT_CAP" default:"2"`
+	MetricsAddr            string   `help:"Listen address for the worker's Prometheus /metrics endpoint (empty disables it)." env:"RAGCTL_WORKER_METRICS_ADDR" default:":9091"`
 }
 
-// Run is a STORY-01.1 stub; STORY-09.1 replaces it with the River worker.
-func (c *WorkCmd) Run(k *kong.Context) error {
-	return stub(k.Stdout, "ragctl work: worker on queues %v", c.Queues)
+// Run loads the data-encryption key at startup and fails closed if it is missing
+// (SPEC-09 §2), then builds and runs the River worker on the control-plane database
+// (ADR-0005, STORY-09.1): it applies River's own schema, works the selected queues
+// with their per-queue concurrency, and blocks until SIGINT/SIGTERM triggers a
+// graceful drain of in-flight jobs. Structured logs go to stderr so they never
+// intermix with a command's stdout.
+func (c *WorkCmd) Run(k *kong.Context, g *Globals) error {
+	cipher, err := LoadStartupKeyring(context.Background(), g.Secrets)
+	if err != nil {
+		return err
+	}
+	return runWorker(context.Background(), workerConfig{
+		Queues: c.Queues,
+		Concurrency: worker.QueueConcurrency{
+			Ingest:      c.IngestConcurrency,
+			Maintenance: c.MaintenanceConcurrency,
+			Platform:    c.PlatformConcurrency,
+		},
+		IngestPerTenantCap: c.IngestPerTenantCap,
+		MetricsAddr:        c.MetricsAddr,
+		Obs:                g.Obs,
+		Cfg:                g.Config,
+		ControlURL:         g.ControlPlaneURL,
+		Cipher:             cipher,
+	}, k.Stderr)
 }
 
 // MigrateCmd groups migration subcommands (SPEC-02 §7).
@@ -126,7 +145,7 @@ func (c *MigrateTenantsCmd) Run(k *kong.Context, g *Globals) error {
 	if g.ControlPlaneURL == "" {
 		return fmt.Errorf("migrate tenants: no control-plane URL (set --control-plane-url or CONTROL_PLANE_URL)")
 	}
-	cipher, err := LoadStartupCipher(context.Background(), g.Secrets)
+	cipher, err := LoadStartupKeyring(context.Background(), g.Secrets)
 	if err != nil {
 		return err
 	}
@@ -195,7 +214,7 @@ func (c *EnrollCmd) Run(k *kong.Context, g *Globals) error {
 		return fmt.Errorf("enroll: no provisioning URL (set --control-plane-url/CONTROL_PLANE_URL or PROVISION_DB_URL)")
 	}
 
-	cipher, err := LoadStartupCipher(context.Background(), g.Secrets)
+	cipher, err := LoadStartupKeyring(context.Background(), g.Secrets)
 	if err != nil {
 		return err
 	}
@@ -333,7 +352,7 @@ func (c *TenantMoveCmd) Run(k *kong.Context, g *Globals) error {
 	if err != nil {
 		return err
 	}
-	cipher, err := LoadStartupCipher(context.Background(), g.Secrets)
+	cipher, err := LoadStartupKeyring(context.Background(), g.Secrets)
 	if err != nil {
 		return err
 	}
