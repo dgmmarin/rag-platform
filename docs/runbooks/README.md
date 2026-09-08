@@ -13,6 +13,7 @@ to use it, preconditions, the procedure, and verification.
 | [provider-outage.md](provider-outage.md) | An LLM / embedding / rerank provider is failing. |
 | [stuck-job.md](stuck-job.md) | A job is wedged, failing, or a queue is backing up. |
 | [backup-and-pitr.md](backup-and-pitr.md) | Backups and point-in-time recovery (pgBackRest). |
+| [admin-ui.md](admin-ui.md) | Admin UI (Next.js) service: deployment, `RAGCTL_API_URL`, OIDC `redirect_uri`. |
 | [incident-response.md](incident-response.md) | Entry point when the cause is unknown — triages to the above. |
 
 The alert `runbook_url` anchors in `deploy/prometheus/rules/ragctl.rules.yml` are checked

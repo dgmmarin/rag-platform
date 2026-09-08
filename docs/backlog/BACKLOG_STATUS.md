@@ -23,9 +23,9 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-08 | Retrieval and answering | 39 | 39 | ✅ Complete |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 21 | ✅ Complete |
 | EPIC-10 | Security, observability, operations | 26 | 26 | ✅ Complete |
-| EPIC-11 | Admin UI (reference) | 34 | 0 | 🔲 Todo |
+| EPIC-11 | Admin UI (reference) | 34 | 5 | 🚧 In progress |
 | EPIC-12 | Evaluation harness and quality | 13 | 12 | 🚧 In progress |
-| **Total** | | **337** | **254** | **75%** |
+| **Total** | | **337** | **259** | **77%** |
 
 ---
 
@@ -1611,11 +1611,11 @@ only the KMS-wrapped blob is ever written (0600), never key material. Hermetic c
 decrypt-any-version/fail-closed; Reencrypt idempotency); real-binary e2e rotates a v1 tenant password and a v1
 source credential to v2 and proves both decrypt to their originals, with a second rotation a no-op.
 
-## EPIC-11 · Admin UI (reference) — 🔲 0/34 pts
+## EPIC-11 · Admin UI (reference) — 🚧 5/34 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
-| STORY-11.1 | App shell, auth, tenant switcher | 5 | 🔲 Todo | — |
+| STORY-11.1 | App shell, auth, tenant switcher | 5 | ✅ Done | SPEC-11, ISSUE-0056 |
 | STORY-11.2 | Sources list/create/edit with per-kind forms and test-connection | 8 | 🔲 Todo | FR-ADM-01 |
 | STORY-11.3 | Jobs list and detail with cancel | 5 | 🔲 Todo | FR-ADM-02 |
 | STORY-11.4 | Documents and chunks browser | 5 | 🔲 Todo | FR-ADM-03 |
@@ -1623,6 +1623,18 @@ source credential to v2 and proves both decrypt to their originals, with a secon
 | STORY-11.6 | Query playground with citations and feedback | 3 | 🔲 Todo | — |
 | STORY-11.7 | Platform admin: tenants list, enrol, suspend, delete | 3 | 🔲 Todo | — |
 
+> **STORY-11.1 is done.** A Next.js admin UI service fronts `ragctl` through a same-origin
+> BFF proxy (`web/app/bff/[...path]/route.ts`, no CORS, SPEC-11 §3); `GET /v1/auth/me`
+> (SPEC-11 §2.1) hydrates identity + tenant memberships; the auth client/provider/guard gate
+> every `/admin/*` route; the login page supports email/password and OIDC; the app shell
+> renders nav + a tenant switcher (localStorage-persisted pick) with `/admin` -> first
+> section. Beyond the original shell scope, the story also delivered `ragctl admin
+> bootstrap` + `mise run seed` onboarding (ISSUE-0057, ADR-0074) and a Tailwind redesign
+> (light/dark). Playwright golden-path E2E (`web/e2e/shell.spec.ts`, `mise run web-e2e`,
+> self-skipping without a live stack) covers guarded route -> login -> shell -> tenant
+> switch (persists across a reload) -> logout; CI adds `web` (build+unit) and `web-e2e`
+> (live-stack Playwright) jobs. Ops note: `docs/runbooks/admin-ui.md`.
+>
 > **Carried in from STORY-12.4:** the eval report **render** (a runs list + per-run
 > drill-down over the `ragctl eval report` / `eval run --json` data contract shipped in
 > STORY-12.4, ISSUE-0055, ADR-0072) is a natural EPIC-11 admin-UI addition. The data layer

@@ -1,6 +1,6 @@
 # ISSUE-0056: Admin UI shell, auth and tenant switcher (STORY-11.1)
 
-**Type:** Feature · **Status:** In progress · **Story:** STORY-11.1 · **Traces:** FR-ADM-01..03,
+**Type:** Feature · **Status:** Done · **Story:** STORY-11.1 · **Traces:** FR-ADM-01..03,
 FR-ACC-03, SPEC-11, ADR-0073
 
 > The *what* lives in the delivery backlog (`docs/backlog/`), the *why* in ADRs (ADR-0073).
@@ -8,8 +8,10 @@ FR-ACC-03, SPEC-11, ADR-0073
 ## Summary
 STORY-11.1 stands up the reference Admin UI: a **Next.js (App Router) + TypeScript** app running
 as its own Node service, with a **BFF proxy** so the browser stays same-origin to Next while Next
-relays session-cookie + CSRF auth to `ragctl` server-to-server (ADR-0073, SPEC-11). The story is
-split into 6 tasks; this issue tracks the whole story and is updated as tasks land.
+relays session-cookie + CSRF auth to `ragctl` server-to-server (ADR-0073, SPEC-11). The story ran
+as 8 tasks; all 8 are shipped and STORY-11.1 is done (`docs/backlog/BACKLOG_STATUS.md`). Beyond
+the original shell scope, the story also delivered `ragctl admin bootstrap` + `mise run seed`
+onboarding (ISSUE-0057, ADR-0074) and a Tailwind redesign of the login page and app shell.
 
 ## Scope (Task 1 of 6 — shipped)
 - **`web/`** — the Next.js app scaffold (`create-next-app --ts --app --no-tailwind --eslint

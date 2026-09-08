@@ -284,7 +284,9 @@ Suggested sprint order: EPIC-01 → 02 → 03 → 04 → 05 (+06 in parallel) �
 ## EPIC-11 · Admin UI (reference)
 *Goal: minimal UI over the API for tenant admins and platform admins. Can run in parallel from sprint 4.* — 34 pts
 
-**STORY-11.1 App shell, auth, tenant switcher** (5)
+**STORY-11.1 App shell, auth, tenant switcher** (5) ✅ — Traces: SPEC-11, ISSUE-0056 — also
+delivered `ragctl admin bootstrap` + `mise run seed` onboarding (ISSUE-0057) and the Tailwind
+redesign, beyond the original shell scope
 **STORY-11.2 Sources list/create/edit with per-kind forms and test-connection** (8) — Traces: FR-ADM-01
 **STORY-11.3 Jobs list and detail with cancel** (5) — Traces: FR-ADM-02
 **STORY-11.4 Documents and chunks browser** (5) — Traces: FR-ADM-03

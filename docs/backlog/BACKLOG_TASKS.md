@@ -436,10 +436,15 @@ breakdown, tasks are derived from the acceptance criteria.
 ## EPIC-11 · Admin UI (reference)
 
 ### STORY-11.1 — App shell, auth, tenant switcher
-- [ ] app shell, auth, tenant switcher
+- [x] Next.js admin UI service + same-origin BFF proxy (`web/app/bff/[...path]/route.ts` -> `RAGCTL_API_URL`, no CORS; SPEC-11 §1/§3)
+- [x] `GET /v1/auth/me` (identity, `is_platform_admin`, tenant memberships, CSRF token; SPEC-11 §2.1)
+- [x] auth client (`web/lib/auth.tsx`), `AuthProvider`, `RequireAuth` route guard
+- [x] login page (email/password + OIDC) and providers wiring
+- [x] app shell (nav + `TenantSwitcher`, localStorage-persisted pick) and `/admin` -> first-section redirect
 - [x] `ragctl admin bootstrap` (create-or-promote platform admin) + `mise run seed` dev task —
-  unblocks "no login credentials"/"seed the database" (ADR-0074, ISSUE-0057); story itself not
-  marked done here
+  unblocks "no login credentials"/"seed the database" (ADR-0074, ISSUE-0057)
+- [x] Tailwind redesign of login + app shell (light/dark)
+- [x] Playwright golden-path E2E (`web/e2e/shell.spec.ts`: guarded route -> login -> shell -> tenant switch -> logout; self-skips without `E2E_BASE_URL`), `mise-tasks/web-test` + `mise-tasks/web-e2e`, CI `web` + `web-e2e` jobs, ops note `docs/runbooks/admin-ui.md` (ISSUE-0056)
 
 ### STORY-11.2 — Sources list/create/edit with per-kind forms and test-connection (FR-ADM-01)
 - [ ] per-kind source forms + test-connection
