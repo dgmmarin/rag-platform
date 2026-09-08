@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Build the admin UI (Next.js) for production"
+set -euo pipefail
+cd web
+npm ci
+npm run build

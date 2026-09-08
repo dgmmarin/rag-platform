@@ -14,3 +14,9 @@ procs:
   worker:
     shell: "mise run worker"
     autostart: false   # ragctl work is a stub (STORY-01.1); enable in STORY-09.1
+  web:
+    shell: "mise run web-dev"
+    # Admin UI (Next.js, EPIC-11): the BFF proxies to `api`'s RAGCTL_API_URL (default
+    # http://localhost:8080), so bring `api` up alongside this. autostart off for the
+    # same reason as `api` above (opt in once you want the UI running).
+    autostart: false

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Run the admin UI (Next.js) dev server against the local ragctl API"
+set -euo pipefail
+cd web
+npm run dev
