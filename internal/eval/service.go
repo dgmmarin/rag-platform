@@ -20,6 +20,9 @@ var ErrTenantUnavailable = errors.New("eval: tenant unavailable")
 type Service struct {
 	Resolver tenant.Resolver
 	Store    Store
+	// Runs persists eval_runs/eval_results (STORY-12.2). Optional: Run defaults it
+	// to NewRunStore() when nil, so 12.1 callers are unaffected.
+	Runs RunWriter
 }
 
 // NewService builds an eval service.
@@ -127,6 +130,36 @@ func (s *Service) Import(ctx context.Context, tid tenant.ID, r io.Reader) (Impor
 		return ImportResult{}, mapWrite(err)
 	}
 	return res, nil
+}
+
+// Run executes the tenant's eval cases through the pipeline, recording an
+// eval_run plus one eval_result per case, and returns the summary (recall@k,
+// grounded rate, mean latency). It opens the tenant DB once (for the eval tables)
+// via the resolver (ADR-0003); the pipeline resolves the tenant independently for
+// retrieval/answering. A per-case pipeline error is fail-soft (SPEC-06 §8).
+func (s *Service) Run(ctx context.Context, tid tenant.ID, opts RunOptions) (Summary, error) {
+	if opts.Pipeline == nil {
+		return Summary{}, fmt.Errorf("eval: run requires a pipeline")
+	}
+	db, err := s.open(ctx, tid)
+	if err != nil {
+		return Summary{}, err
+	}
+	runs := s.Runs
+	if runs == nil {
+		runs = NewRunStore()
+	}
+	runner := &Runner{
+		Cases:    dbCaseSource{store: s.Store, db: db, limit: opts.Limit},
+		Sink:     dbRunSink{runs: runs, db: db},
+		Pipeline: opts.Pipeline,
+		K:        opts.K,
+	}
+	summary, err := runner.Run(ctx, opts.Config)
+	if err != nil {
+		return Summary{}, mapWrite(err)
+	}
+	return summary, nil
 }
 
 // mapWrite turns a suspended-tenant write refusal into ErrTenantUnavailable and

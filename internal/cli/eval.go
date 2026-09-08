@@ -29,6 +29,7 @@ type EvalCmd struct {
 	Edit   EvalEditCmd   `cmd:"" help:"Edit an existing eval case (only the flags you pass change)."`
 	Rm     EvalRmCmd     `cmd:"" help:"Remove an eval case."`
 	Import EvalImportCmd `cmd:"" help:"Import eval cases from a CSV file (see docs/adr/0069)."`
+	Run    EvalRunCmd    `cmd:"" help:"Run all eval cases and report recall@k, grounded rate and latency (SPEC-06 §8)."`
 }
 
 // evalService builds the eval Service for a tenant slug: it opens the

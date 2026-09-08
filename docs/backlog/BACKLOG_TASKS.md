@@ -464,7 +464,7 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] eval cases CRUD + CSV import (internal/eval + `ragctl eval add/list/edit/rm/import`; CSV format ADR-0069, ISSUE-0052)
 
 ### STORY-12.2 — `ragctl eval run` with recall@k, grounded rate, latency (SPEC-06 §8)
-- [ ] `ragctl eval run` (recall@k, grounded rate, latency)
+- [x] `ragctl eval run` (recall@k, grounded rate, latency) (internal/eval runner + RunStore; `ragctl eval run <slug> [--config-file]`; definitions ADR-0070, ISSUE-0053)
 
 ### STORY-12.3 — LLM-as-judge correctness scoring (optional flag)
 - [ ] LLM-as-judge correctness scoring (optional flag)

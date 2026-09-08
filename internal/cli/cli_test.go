@@ -133,6 +133,7 @@ func TestEvalCommandsRequireURL(t *testing.T) {
 		{"eval", "list", "--slug", "acme"},
 		{"eval", "edit", "--slug", "acme", "--id", "11111111-1111-1111-1111-111111111111"},
 		{"eval", "rm", "--slug", "acme", "--id", "11111111-1111-1111-1111-111111111111"},
+		{"eval", "run", "acme"},
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {

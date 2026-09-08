@@ -354,4 +354,34 @@ dev — the harness runs at the largest local scale and treats 1 M as a target,
 never fabricating the number).
 
 ## 8. Evaluation harness
-`ragctl eval run <slug> [--config file]` runs all `eval_cases`, records `eval_results`, prints recall@k (expected_doc_ids ∩ retrieved), grounded rate, LLM-judged correctness (optional), mean latency. Used as a gate before changing chunking/retrieval settings for a tenant.
+`ragctl eval run <slug> [--config-file file]` runs all `eval_cases`, records an
+`eval_runs` row plus one `eval_results` row per case, and prints recall@k, grounded
+rate and mean latency. Used as a gate before changing chunking/retrieval settings
+for a tenant. Authoring the cases (CRUD + CSV import) is STORY-12.1 (ADR-0069);
+running them is STORY-12.2 (ADR-0070); LLM-judged correctness is STORY-12.3.
+
+### 8.1 Definitions (STORY-12.2, ADR-0070)
+- **k** — the retrieval top-k for the run: `settings.retrieval.final_k` (default 8),
+  overridable per run by the `--config-file` overlay.
+- **recall_hit** (per case, `eval_results.recall_hit`) — `true` when at least one of
+  the case's `expected_doc_ids` is among the DISTINCT document ids behind the top-k
+  retrieved chunks; `false` otherwise. A case with **no** `expected_doc_ids` is
+  **excluded** from recall (`recall_hit = NULL`) — recall is undefined without a
+  ground-truth set.
+- **recall@k** (printed/summary) — `hits / cases-with-expected-docs` (nil cases in
+  neither numerator nor denominator).
+- **grounded rate** — fraction of ALL cases whose answer returned `grounded=true`
+  (from `POST /v1/query` semantics, §4/§6).
+- **mean latency** — mean over all cases of the wall-clock time around the answer
+  (query) call, in ms.
+- **`--config-file`** — an optional partial settings document (same shape as
+  §5/SPEC-02 §5) overlaid on the tenant's live settings **for this run only** (never
+  mutating stored settings). It can override retrieval/answering/reranker/llm
+  settings; the effective (merged) settings are stored in `eval_runs.config`. It is
+  named `--config-file` because the global `--config` (ADR-0009) is the ragctl
+  config-file flag.
+- **per-case errors** — a pipeline failure for one case is **fail-soft**: the case is
+  recorded (a recall miss, not grounded, latency measured, error counted) and the run
+  continues; only a persistence failure aborts the run.
+- `eval_results.judged_correct` and any correctness figure in `eval_runs.summary` are
+  **left NULL/absent** here — LLM-as-judge is STORY-12.3.
