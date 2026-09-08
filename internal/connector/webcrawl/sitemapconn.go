@@ -84,6 +84,12 @@ func (sitemapConnector) Fields() []connector.FieldSpec {
 	}
 }
 
+// RequiredConfigFields exposes sitemapConfigSchema's own top-level `required` keys
+// (here: sitemap_urls) for the reverse drift guard (internal/connector/
+// kinds_test.go, SPEC-11 §10) — NOT part of connector.Connector, a test-only
+// introspection hook.
+func (sitemapConnector) RequiredConfigFields() []string { return sitemapConfigSchema.Required() }
+
 // Test validates the config, then fetches AND parses the first sitemap URL through
 // the SSRF-guarded egress Doer, bounded by the ≤10 s probe deadline (FR-SRC-14,
 // STORY-07.8). It reuses the STORY-07.5 sitemap fetch (gzip + size cap) and parser.

@@ -52,6 +52,11 @@ func (uploadConnector) ValidateConfig(cfg json.RawMessage) error {
 // included) — there is nothing for the admin UI to render (SPEC-11 §10).
 func (uploadConnector) Fields() []connector.FieldSpec { return nil }
 
+// RequiredConfigFields exposes configSchema's own top-level `required` keys (here:
+// none) for the reverse drift guard (internal/connector/kinds_test.go, SPEC-11
+// §10) — NOT part of connector.Connector, a test-only introspection hook.
+func (uploadConnector) RequiredConfigFields() []string { return configSchema.Required() }
+
 // Test is a no-op success (FR-SRC-14, STORY-07.8). Unlike the web_crawl/sitemap/api
 // connectors — whose Test now probes a live external system for reachability and
 // credentials — an upload source has NO external system and NO credentials to verify:

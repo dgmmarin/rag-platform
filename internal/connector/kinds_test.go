@@ -10,21 +10,30 @@ import (
 	"github.com/rag-platform/ragctl/internal/connector/webcrawl"
 )
 
+// requiredFieldser is implemented by each real connector via RequiredConfigFields
+// — a small, deliberately separate accessor (NOT part of connector.Connector)
+// exposing its own JSON-Schema top-level `required` array, the input to the
+// reverse-direction drift guard below.
+type requiredFieldser interface {
+	RequiredConfigFields() []string
+}
+
 // TestConnectorKindsDriftGuard (SPEC-11 §10, STORY-11.2, ADR-0075) is the
-// drift-guard: for each real, registered connector, take a config baseline that
-// satisfies its ValidateConfig, then for every field its Fields() marks
-// Required:true, remove exactly that key from the baseline and assert
-// ValidateConfig now rejects it. A FieldSpec claiming Required:true that
-// ValidateConfig does not actually enforce — the rendered form and the server
-// would silently drift — fails this test.
+// drift-guard, checked in BOTH directions so a connector's Fields() and its
+// ValidateConfig schema can never silently point at two different truths:
 //
-// ponytail: this only guards ONE direction (a claimed-required field that isn't
-// enforced). It does not detect the opposite drift — a field ValidateConfig
-// truly requires but that is missing from Fields() entirely, or wrongly marked
-// Required:false — since that would need re-deriving each JSON Schema's
-// `required` list independently of Fields() itself. Upgrade path: assert each
-// configSchema's `required` array against Fields() directly if that direction of
-// drift is ever hit in practice.
+//  1. Forward: take a config baseline that satisfies ValidateConfig, then for
+//     every field Fields() marks Required:true, remove exactly that key from the
+//     baseline and assert ValidateConfig now rejects it. A FieldSpec claiming
+//     Required:true that ValidateConfig does not actually enforce fails this.
+//  2. Reverse (the more harmful direction for the schema-driven admin UI, SPEC-11
+//     §10.1: a form that omits a truly-required field lets create fail
+//     server-side with no client-side signal): every key in the connector's own
+//     JSON-Schema top-level `required` array (RequiredConfigFields) must appear
+//     in Fields() marked Required:true. Deliberately top-level only — the `api`
+//     connector's nested `auth`/`endpoints` object schemas have their own nested
+//     `required` (e.g. auth.type), which is not something a flat FieldSpec list
+//     represents or needs to.
 func TestConnectorKindsDriftGuard(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -77,16 +86,17 @@ func TestConnectorKindsDriftGuard(t *testing.T) {
 			}
 
 			fields := tc.conn.Fields()
-			if len(fields) == 0 && len(tc.baseline) == 0 {
-				return // e.g. upload: nothing required, nothing to drift-guard
-			}
-
+			declaredRequired := make(map[string]bool, len(fields))
 			required := 0
 			for _, f := range fields {
 				if !f.Required {
 					continue
 				}
+				declaredRequired[f.Name] = true
 				required++
+				if len(tc.baseline) == 0 {
+					continue // nothing in the baseline to omit (e.g. upload)
+				}
 				variant := make(map[string]any, len(tc.baseline))
 				for k, v := range tc.baseline {
 					if k == f.Name {
@@ -99,11 +109,22 @@ func TestConnectorKindsDriftGuard(t *testing.T) {
 					t.Fatalf("marshal variant omitting %q: %v", f.Name, err)
 				}
 				if err := tc.conn.ValidateConfig(vb); err == nil {
-					t.Errorf("field %q is marked Required but ValidateConfig accepted a config without it (drift): cfg=%s", f.Name, vb)
+					t.Errorf("field %q is marked Required but ValidateConfig accepted a config without it (forward drift): cfg=%s", f.Name, vb)
 				}
 			}
-			if required == 0 {
-				t.Fatalf("%s: Fields() has no Required:true field but the baseline config is non-empty; nothing drift-guarded", tc.name)
+			if required == 0 && len(tc.baseline) != 0 {
+				t.Fatalf("%s: Fields() has no Required:true field but the baseline config is non-empty; nothing forward-drift-guarded", tc.name)
+			}
+
+			// Reverse: every schema-required key must be declared Required:true.
+			rf, ok := tc.conn.(requiredFieldser)
+			if !ok {
+				t.Fatalf("%s: connector does not implement RequiredConfigFields; reverse drift guard cannot run", tc.name)
+			}
+			for _, key := range rf.RequiredConfigFields() {
+				if !declaredRequired[key] {
+					t.Errorf("schema requires %q but Fields() does not declare it Required:true (reverse drift): the admin UI would render a form that can never satisfy this field, so create would fail server-side with no client-side signal", key)
+				}
 			}
 		})
 	}

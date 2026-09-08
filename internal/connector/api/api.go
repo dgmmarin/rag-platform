@@ -243,6 +243,12 @@ func (apiConnector) Fields() []connector.FieldSpec {
 	}
 }
 
+// RequiredConfigFields exposes configSchema's own top-level `required` keys (here:
+// base_url, auth, endpoints) for the reverse drift guard (internal/connector/
+// kinds_test.go, SPEC-11 §10) — NOT part of connector.Connector, a test-only
+// introspection hook.
+func (apiConnector) RequiredConfigFields() []string { return configSchema.Required() }
+
 // Test validates the config, then makes ONE lightweight, authenticated, SSRF-guarded
 // request to verify reachability AND credentials (FR-SRC-14, STORY-07.8), bounded by
 // the ≤10 s probe deadline. It builds the authed client with the decrypted

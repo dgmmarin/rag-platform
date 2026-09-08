@@ -80,6 +80,14 @@ func MustSchemaValidator(schemaJSON []byte) *SchemaValidator {
 	return v
 }
 
+// Required returns this schema's top-level `required` keys (empty/nil if the
+// schema declares none) — the exact set ValidateConfig's schema check treats as
+// mandatory. It is the single source of truth the reverse drift guard
+// (internal/connector/kinds_test.go, SPEC-11 §10) checks every connector's
+// Fields() against: a key here that Fields() does not mark Required:true would
+// render a form that cannot satisfy a truly required field.
+func (v *SchemaValidator) Required() []string { return v.schema.Required }
+
 // Validate checks a config document against the schema. It returns nil on success
 // and a *ConfigError listing every leaf violation (sorted by field) otherwise.
 // Malformed JSON and a non-object root are reported as ConfigErrors too.

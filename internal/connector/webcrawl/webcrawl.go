@@ -171,6 +171,11 @@ func (webCrawlConnector) Fields() []connector.FieldSpec {
 	}
 }
 
+// RequiredConfigFields exposes configSchema's own top-level `required` keys (here:
+// start_urls) for the reverse drift guard (internal/connector/kinds_test.go,
+// SPEC-11 §10) — NOT part of connector.Connector, a test-only introspection hook.
+func (webCrawlConnector) RequiredConfigFields() []string { return configSchema.Required() }
+
 // Test validates the config, then probes reachability of the source (FR-SRC-14,
 // STORY-07.8): a single GET of the first start_url through the SSRF-guarded egress
 // Doer, bounded by the ≤10 s probe deadline. Outcomes map to actionable, secret-free
