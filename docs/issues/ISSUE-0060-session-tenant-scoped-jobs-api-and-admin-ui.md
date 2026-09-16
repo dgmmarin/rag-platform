@@ -1,6 +1,6 @@
 # ISSUE-0060: Session tenant-scoped jobs API + admin UI jobs screens (STORY-11.3)
 
-**Type:** Feature · **Status:** In progress · **Story:** STORY-11.3 · **Traces:** FR-ADM-02, ADR-0075, ADR-0031
+**Type:** Feature · **Status:** Done · **Story:** STORY-11.3 · **Traces:** FR-ADM-02, ADR-0075, ADR-0031
 
 > Note: the *what* lives in the delivery backlog (`docs/backlog/`), the *why* in ADRs
 > (ADR-0075 session tenant-scoped API, ADR-0031 jobs cancel semantics).
@@ -33,4 +33,12 @@ ADR-0075 (auth) + ADR-0031 (cancel semantics).
   refetch, not a socket.
 
 ## Tests / runnable checks
-- (filled as tasks land)
+- **`internal/api/router_test.go`**: `TestTenantJobsRoutesChain` (all 3 routes: session → read/write
+  gate order, correct handler reached) + `TestTenantJobsCSRF` (cancel blocked without CSRF, GET
+  unaffected). RED confirmed (404, routes unmounted) then GREEN. `go test ./internal/api/`: **PASS**;
+  `go build ./...`: **PASS**.
+- **web (`web/`, vitest + Testing Library, TDD)**: `web/components/JobsTable.test.tsx` (columns,
+  empty state, cancel-visibility on queued/running only, row link + cancel wiring, busy disable) and
+  `web/components/JobDetail.test.tsx` (cancel wiring, cancel hidden on terminal, busy disable,
+  known+unknown stats, `errors[]`). `cd web && npx vitest run`: **PASS** (43/43, +10 new); `npm run
+  build`: clean, routes `/admin/jobs` + `/admin/jobs/[id]` present.

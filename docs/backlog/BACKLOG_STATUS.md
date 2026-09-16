@@ -23,7 +23,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-08 | Retrieval and answering | 39 | 39 | ✅ Complete |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 21 | ✅ Complete |
 | EPIC-10 | Security, observability, operations | 26 | 26 | ✅ Complete |
-| EPIC-11 | Admin UI (reference) | 34 | 13 | 🚧 In progress |
+| EPIC-11 | Admin UI (reference) | 34 | 18 | 🚧 In progress |
 | EPIC-12 | Evaluation harness and quality | 13 | 12 | 🚧 In progress |
 | **Total** | | **337** | **259** | **77%** |
 
@@ -1611,13 +1611,13 @@ only the KMS-wrapped blob is ever written (0600), never key material. Hermetic c
 decrypt-any-version/fail-closed; Reencrypt idempotency); real-binary e2e rotates a v1 tenant password and a v1
 source credential to v2 and proves both decrypt to their originals, with a second rotation a no-op.
 
-## EPIC-11 · Admin UI (reference) — 🚧 13/34 pts
+## EPIC-11 · Admin UI (reference) — 🚧 18/34 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-11.1 | App shell, auth, tenant switcher | 5 | ✅ Done | SPEC-11, ISSUE-0056 |
 | STORY-11.2 | Sources list/create/edit with per-kind forms and test-connection | 8 | ✅ Done | FR-ADM-01, ADR-0075, ISSUE-0059 |
-| STORY-11.3 | Jobs list and detail with cancel | 5 | 🔲 Todo | FR-ADM-02 |
+| STORY-11.3 | Jobs list and detail with cancel | 5 | ✅ Done | FR-ADM-02, ADR-0075, ISSUE-0060 |
 | STORY-11.4 | Documents and chunks browser | 5 | 🔲 Todo | FR-ADM-03 |
 | STORY-11.5 | Members, API keys, settings pages | 5 | 🔲 Todo | — |
 | STORY-11.6 | Query playground with citations and feedback | 3 | 🔲 Todo | — |

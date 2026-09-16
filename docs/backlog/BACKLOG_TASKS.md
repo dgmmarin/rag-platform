@@ -453,7 +453,9 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] schema-driven create/edit form + test-connection (`web/components/SourceForm.tsx`, `web/lib/connectorKinds.ts`, new/edit routes; secret fields write-only; config vs credentials split SPEC-04 §6)
 
 ### STORY-11.3 — Jobs list and detail with cancel (FR-ADM-02)
-- [ ] jobs list/detail with cancel
+- [x] tenant-scoped jobs routes behind `RequireTenantAccess` (`GET/POST /admin/tenants/{tenantId}/jobs…`, reusing `jobs.Handlers`; read=PermQuery, cancel=PermManageSources+CSRF; ADR-0075/0031, ISSUE-0060)
+- [x] jobs list page (`web/app/admin/jobs`, `JobsTable`, `web/lib/jobs.ts`: status/kind/source/attempt/duration/timing; status filter; cancel on queued/running rows)
+- [x] job detail page (`web/app/admin/jobs/[id]`, `JobDetail`: timing, error, stats known-first with generic fallback + `errors[]`; cancel when cancellable)
 
 ### STORY-11.4 — Documents and chunks browser (FR-ADM-03)
 - [ ] documents and chunks browser
