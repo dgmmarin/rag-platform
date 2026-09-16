@@ -143,8 +143,8 @@ type Connector interface {
 // never a key inside `config` — since a secret's VALUE never round-trips through
 // config or this endpoint.
 type FieldSpec struct {
-	Name     string
-	Label    string
+	Name  string
+	Label string
 	// Type is the input shape the admin UI renders. Scalars: "text" | "url" |
 	// "number" | "secret" | "bool". Composite config values: "stringlist" (a JSON
 	// array of strings — the UI collects one value per line and submits an array,

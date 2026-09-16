@@ -167,6 +167,15 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	// surface, and the per-tenant upload ceiling (STORY-06.3).
 	settingsSvc := tenants.NewSettingsService(tenants.SettingsFromPool(pool))
 
+	// Session-admin settings/members/api-keys handlers (STORY-11.5, ADR-0075,
+	// ISSUE-0064): the reused settings handlers plus thin wrappers over the
+	// existing MembershipService/APIKeyService, all on the control-plane pool (C-3:
+	// members/keys/settings are registry data, never tenant content). Mounted below
+	// under /admin/tenants/{tenantId}/... behind session -> tenant-access.
+	settingsHandlers := tenants.NewSettingsHandlers(settingsSvc)
+	membershipHandlers := auth.NewMembershipHandlers(auth.NewMembershipService(membershipDB))
+	apiKeyHandlers := auth.NewAPIKeyHandlers(auth.NewAPIKeyService(membershipDB))
+
 	// --- Documents (tenant-content list/get/chunks/soft-delete + upload,
 	// STORY-04.4/06.3). Reads reach the tenant database via the resolver
 	// (ADR-0003, C-3); the ingest_document enqueue writes the control-plane jobs
@@ -348,6 +357,13 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		RequireTenantSourcesRead:  authz.RequireTenantAccess(auth.PermQuery),
 		RequireTenantSourcesWrite: authz.RequireTenantAccess(auth.PermManageSources),
 
+		// Session-admin settings/members/api-keys gates (STORY-11.5, SPEC-02 §4):
+		// PermChangeSettings gates the settings PATCH; PermManageMembers gates the
+		// members/api-keys writes (and the sensitive keys list). Reads reuse
+		// RequireTenantSourcesRead (PermQuery) above.
+		RequireTenantChangeSettings: authz.RequireTenantAccess(auth.PermChangeSettings),
+		RequireTenantManageMembers:  authz.RequireTenantAccess(auth.PermManageMembers),
+
 		Signup:             http.HandlerFunc(authHandlers.Signup),
 		Login:              http.HandlerFunc(authHandlers.Login),
 		Logout:             http.HandlerFunc(authHandlers.Logout),
@@ -382,6 +398,16 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		JobList:   http.HandlerFunc(jobHandlers.List),
 		JobGet:    http.HandlerFunc(jobHandlers.Get),
 		JobCancel: http.HandlerFunc(jobHandlers.Cancel),
+
+		SettingsGet:   http.HandlerFunc(settingsHandlers.Get),
+		SettingsPatch: http.HandlerFunc(settingsHandlers.Patch),
+		MemberList:    http.HandlerFunc(membershipHandlers.List),
+		MemberAdd:     http.HandlerFunc(membershipHandlers.Add),
+		MemberSetRole: http.HandlerFunc(membershipHandlers.SetRole),
+		MemberRemove:  http.HandlerFunc(membershipHandlers.Remove),
+		KeyList:       http.HandlerFunc(apiKeyHandlers.List),
+		KeyCreate:     http.HandlerFunc(apiKeyHandlers.Create),
+		KeyRevoke:     http.HandlerFunc(apiKeyHandlers.Revoke),
 
 		Retrieve:  http.HandlerFunc(retrieveHandlers.Retrieve),
 		Query:     http.HandlerFunc(queryHandlers.Query),

@@ -41,6 +41,16 @@ type Deps struct {
 	RequireTenantSourcesRead  Middleware
 	RequireTenantSourcesWrite Middleware
 
+	// Tenant-scoped session middleware for the settings/members/api-keys surface
+	// (STORY-11.5, ADR-0075). RequireTenantChangeSettings gates the settings PATCH
+	// (PermChangeSettings, owner/admin); RequireTenantManageMembers gates every
+	// members/api-keys write plus the sensitive api-keys list (PermManageMembers,
+	// owner/admin). Reads of settings/members reuse RequireTenantSourcesRead
+	// (PermQuery, any member). Each is one RequireTenantAccess(perm) instance
+	// pre-built in api_server.go.
+	RequireTenantChangeSettings Middleware
+	RequireTenantManageMembers  Middleware
+
 	// Handlers that already exist (auth + the 03.x admin handlers).
 	Signup             http.Handler
 	Login              http.Handler
@@ -82,6 +92,21 @@ type Deps struct {
 	DocumentGet    http.Handler // GET /v1/documents/{id} (query scope)
 	DocumentDelete http.Handler // DELETE /v1/documents/{id} (ingest scope)
 	DocumentChunks http.Handler // GET /v1/documents/{id}/chunks (admin scope)
+
+	// Session-admin settings/members/api-keys handlers (STORY-11.5, ADR-0075,
+	// ISSUE-0064). SettingsGet/Patch are the reused tenants.SettingsHandlers; the
+	// member/key handlers wrap the existing MembershipService/APIKeyService. All
+	// read the tenant from context (FR-ACC-03); a nil handler is the seam. Mounted
+	// under /admin/tenants/{tenantId} behind session -> tenant-access.
+	SettingsGet   http.Handler // GET .../settings
+	SettingsPatch http.Handler // PATCH .../settings
+	MemberList    http.Handler // GET .../members
+	MemberAdd     http.Handler // POST .../members
+	MemberSetRole http.Handler // PATCH .../members/{userId}
+	MemberRemove  http.Handler // DELETE .../members/{userId}
+	KeyList       http.Handler // GET .../api-keys
+	KeyCreate     http.Handler // POST .../api-keys
+	KeyRevoke     http.Handler // DELETE .../api-keys/{keyId}
 
 	// Jobs resource handlers (STORY-04.5, FR-ADM-02). Jobs are control-plane
 	// tracking rows (the history/mirror view, C-3); a nil handler is the
@@ -216,6 +241,24 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /admin/tenants/{tenantId}/jobs/{id}", tenantSources(d.RequireTenantSourcesRead, d.JobGet))
 	mux.Handle("POST /admin/tenants/{tenantId}/jobs/{id}/cancel", tenantSources(d.RequireTenantSourcesWrite, mustCSRF(d, d.JobCancel)))
 
+	// Session admin settings/members/api-keys (STORY-11.5, ADR-0075, ISSUE-0064):
+	// the reused SettingsHandlers + the members/api-key handlers, mounted behind
+	// session -> tenant-access via the same tenantSources helper (session then the
+	// per-route permission gate). Reads use the read gate (PermQuery, any member);
+	// settings PATCH uses the change-settings gate; every members/keys write, and
+	// the sensitive api-keys list, uses the manage-members gate (SPEC-02 §4).
+	// {userId}/{keyId} are the handlers' own resource ids; {tenantId} is the tenant
+	// path segment. Mutations carry CSRF (SPEC-09 §3); the GETs do not.
+	mux.Handle("GET /admin/tenants/{tenantId}/settings", tenantSources(d.RequireTenantSourcesRead, d.SettingsGet))
+	mux.Handle("PATCH /admin/tenants/{tenantId}/settings", tenantSources(d.RequireTenantChangeSettings, mustCSRF(d, d.SettingsPatch)))
+	mux.Handle("GET /admin/tenants/{tenantId}/members", tenantSources(d.RequireTenantSourcesRead, d.MemberList))
+	mux.Handle("POST /admin/tenants/{tenantId}/members", tenantSources(d.RequireTenantManageMembers, mustCSRF(d, d.MemberAdd)))
+	mux.Handle("PATCH /admin/tenants/{tenantId}/members/{userId}", tenantSources(d.RequireTenantManageMembers, mustCSRF(d, d.MemberSetRole)))
+	mux.Handle("DELETE /admin/tenants/{tenantId}/members/{userId}", tenantSources(d.RequireTenantManageMembers, mustCSRF(d, d.MemberRemove)))
+	mux.Handle("GET /admin/tenants/{tenantId}/api-keys", tenantSources(d.RequireTenantManageMembers, d.KeyList))
+	mux.Handle("POST /admin/tenants/{tenantId}/api-keys", tenantSources(d.RequireTenantManageMembers, mustCSRF(d, d.KeyCreate)))
+	mux.Handle("DELETE /admin/tenants/{tenantId}/api-keys/{keyId}", tenantSources(d.RequireTenantManageMembers, mustCSRF(d, d.KeyRevoke)))
+
 	// Documents (STORY-04.4, FR-SRC-02/FR-ADM-03, SPEC-07 §2). Tenant content
 	// reached through the resolver (ADR-0003); the tenant is derived from the API
 	// key (FR-ACC-03). Scopes follow SPEC-07 §2: ingest for upload/delete, query
@@ -252,10 +295,10 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /v1/feedback", tenantScoped(d.RequireScopeQuery, d.Feedback))
 	mux.Handle("GET /v1/queries", tenantScoped(d.RequireScopeAdmin, d.QueryList))
 
-	// Settings/members/api-keys routes are later EPIC-04 work. They are
-	// intentionally NOT registered here: an unregistered path yields the not_found
-	// envelope below, which is the seam their handlers slot into. (The admin tenant
-	// routes landed in STORY-04.6, above.)
+	// The Bearer /v1/settings, /v1/members and /v1/api-keys surfaces remain later
+	// EPIC-04 work (unregistered paths fall through to the not_found envelope
+	// below). The session-admin equivalents landed above under
+	// /admin/tenants/{tenantId}/... (STORY-11.5).
 
 	// Global chain (outer -> inner), SPEC-07 §1 order with the credential-keyed
 	// rate limiter moved inside per-route auth (ADR-0027):

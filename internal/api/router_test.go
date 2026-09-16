@@ -476,6 +476,90 @@ func TestTenantJobsCSRF(t *testing.T) {
 	}
 }
 
+// The session admin settings/members/api-keys routes (STORY-11.5, ADR-0075,
+// ISSUE-0064) mount the reused SettingsHandlers + the members/api-key handlers
+// behind session -> tenant-access. Reads use the read gate (PermQuery, any
+// role); settings PATCH uses the change-settings gate; every members/keys write
+// (and the keys list, sensitive) uses the manage-members gate. {tenantId} is the
+// tenant path segment; {userId}/{keyId} are the handlers' own resource ids.
+func TestTenantMembersKeysSettingsRoutesChain(t *testing.T) {
+	cases := []struct {
+		method, path, handler, gate string
+	}{
+		{http.MethodGet, "/admin/tenants/t-1/settings", "settings-get", "tenant-sources-read"},
+		{http.MethodPatch, "/admin/tenants/t-1/settings", "settings-patch", "tenant-change-settings"},
+		{http.MethodGet, "/admin/tenants/t-1/members", "member-list", "tenant-sources-read"},
+		{http.MethodPost, "/admin/tenants/t-1/members", "member-add", "tenant-manage-members"},
+		{http.MethodPatch, "/admin/tenants/t-1/members/u-9", "member-setrole", "tenant-manage-members"},
+		{http.MethodDelete, "/admin/tenants/t-1/members/u-9", "member-remove", "tenant-manage-members"},
+		{http.MethodGet, "/admin/tenants/t-1/api-keys", "key-list", "tenant-manage-members"},
+		{http.MethodPost, "/admin/tenants/t-1/api-keys", "key-create", "tenant-manage-members"},
+		{http.MethodDelete, "/admin/tenants/t-1/api-keys/k-9", "key-revoke", "tenant-manage-members"},
+	}
+	for _, c := range cases {
+		var ran []string
+		deps := newTestDeps(&ran)
+		deps.RequireTenantChangeSettings = passMW(&ran, "tenant-change-settings")
+		deps.RequireTenantManageMembers = passMW(&ran, "tenant-manage-members")
+		deps.SettingsGet = okHandler(&ran, "settings-get")
+		deps.SettingsPatch = okHandler(&ran, "settings-patch")
+		deps.MemberList = okHandler(&ran, "member-list")
+		deps.MemberAdd = okHandler(&ran, "member-add")
+		deps.MemberSetRole = okHandler(&ran, "member-setrole")
+		deps.MemberRemove = okHandler(&ran, "member-remove")
+		deps.KeyList = okHandler(&ran, "key-list")
+		deps.KeyCreate = okHandler(&ran, "key-create")
+		deps.KeyRevoke = okHandler(&ran, "key-revoke")
+		h := New(deps)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(c.method, c.path, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s %s = %d, want 200; body=%s", c.method, c.path, rr.Code, rr.Body.String())
+		}
+		if idxOf(ran, "session") < 0 || idxOf(ran, c.gate) < 0 {
+			t.Fatalf("%s %s did not run session -> %s; ran=%v", c.method, c.path, c.gate, ran)
+		}
+		if idxOf(ran, "session") > idxOf(ran, c.gate) {
+			t.Fatalf("%s %s ran %s before session; ran=%v", c.method, c.path, c.gate, ran)
+		}
+		if !contains(ran, c.handler) {
+			t.Fatalf("%s %s did not reach %s; ran=%v", c.method, c.path, c.handler, ran)
+		}
+	}
+}
+
+// Mutations on the session admin members/keys/settings surface carry CSRF like
+// every other session-cookie mutation (SPEC-09 §3); the corresponding GET does
+// not.
+func TestTenantMembersKeysSettingsCSRF(t *testing.T) {
+	var ran []string
+	deps := newTestDeps(&ran)
+	deps.RequireTenantManageMembers = passMW(&ran, "tenant-manage-members")
+	deps.MemberAdd = okHandler(&ran, "member-add")
+	deps.MemberList = okHandler(&ran, "member-list")
+	deps.CSRF = stubMW(&ran, "csrf", http.StatusForbidden, CodeForbidden)
+	h := New(deps)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/admin/tenants/t-1/members", nil))
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("POST members without CSRF = %d, want 403", rr.Code)
+	}
+	if contains(ran, "member-add") {
+		t.Fatalf("handler reached despite CSRF block; ran=%v", ran)
+	}
+
+	ran = nil
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/admin/tenants/t-1/members", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET members = %d, want 200 (no CSRF on reads)", rr.Code)
+	}
+	if contains(ran, "csrf") {
+		t.Fatalf("CSRF ran on a GET route; ran=%v", ran)
+	}
+}
+
 // The retrieve route is mounted behind the `query` scope -> rate-limit chain and
 // reaches its handler (STORY-08.2, FR-RET-08). The tenant is derived from the API
 // key by the scope gate (FR-ACC-03) — never a body/param.
