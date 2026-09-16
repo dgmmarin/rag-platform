@@ -23,6 +23,11 @@ import (
 type KeyedEmbedderFactory struct {
 	APIKey  string
 	BaseURL string
+	// Concurrency / MaxBatchTexts throttle the embedder for a slow self-hosted
+	// provider (a CPU TEI/Ollama endpoint serves roughly serially). 0 keeps the
+	// embed package defaults (4 in flight, 96 texts/batch) — ISSUE-0063.
+	Concurrency   int
+	MaxBatchTexts int
 	// Metrics is threaded into the embedder for provider_request metrics (SPEC-10 §2).
 	Metrics *obs.Metrics
 }
@@ -30,12 +35,14 @@ type KeyedEmbedderFactory struct {
 // Embedder builds the embedder for the tenant's configured provider/model.
 func (f KeyedEmbedderFactory) Embedder(_ context.Context, s ingestdoc.Settings) (embed.Embedder, error) {
 	return embed.New(embed.Config{
-		Provider: s.EmbeddingProvider,
-		Model:    s.EmbeddingModel,
-		Allowed:  s.ProvidersAllowed,
-		APIKey:   f.APIKey,
-		BaseURL:  f.BaseURL,
-		Metrics:  f.Metrics,
+		Provider:      s.EmbeddingProvider,
+		Model:         s.EmbeddingModel,
+		Allowed:       s.ProvidersAllowed,
+		APIKey:        f.APIKey,
+		BaseURL:       f.BaseURL,
+		Concurrency:   f.Concurrency,
+		MaxBatchTexts: f.MaxBatchTexts,
+		Metrics:       f.Metrics,
 	})
 }
 

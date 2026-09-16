@@ -126,6 +126,13 @@ type Config struct {
 	// endpoint for a self-hosted/proxy deployment (e.g. TEI).
 	EmbeddingAPIKey  string
 	EmbeddingBaseURL string
+	// EmbeddingMaxConcurrency / EmbeddingMaxBatchTexts throttle the ingest
+	// embedder for a slow self-hosted provider (a CPU TEI/Ollama endpoint serves
+	// requests roughly serially, so the default 4-in-flight × 96-text batches blow
+	// the per-request timeout and trip the circuit breaker). 0 keeps the embed
+	// package defaults (ISSUE-0063).
+	EmbeddingMaxConcurrency int
+	EmbeddingMaxBatchTexts  int
 
 	// LLM answering (STORY-08.4, SPEC-06 §5–6, NFR-MNT-02/REL-04, ADR-0053). The
 	// per-provider platform keys the answering layer (STORY-08.5/08.6) uses to reach
@@ -279,6 +286,21 @@ func Load(filePath string) (Config, error) {
 	// on its clean-error path (no provider reached).
 	cfg.EmbeddingAPIKey = mustGet(get, "EMBEDDING_API_KEY")
 	cfg.EmbeddingBaseURL = mustGet(get, "EMBEDDING_BASE_URL")
+	for _, e := range []struct {
+		key string
+		dst *int
+	}{
+		{"EMBEDDING_MAX_CONCURRENCY", &cfg.EmbeddingMaxConcurrency},
+		{"EMBEDDING_MAX_BATCH_TEXTS", &cfg.EmbeddingMaxBatchTexts},
+	} {
+		if raw := mustGet(get, e.key); raw != "" {
+			v, err := strconv.Atoi(raw)
+			if err != nil || v < 0 {
+				return Config{}, fmt.Errorf("config: invalid %s %q (want a non-negative integer)", e.key, raw)
+			}
+			*e.dst = v
+		}
+	}
 
 	// LLM answering providers (STORY-08.4, SPEC-06 §5–6). Empty leaves a provider
 	// unusable; never logged (C-4).

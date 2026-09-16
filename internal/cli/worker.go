@@ -220,7 +220,7 @@ func buildWorkerDeps(ctx context.Context, log *slog.Logger, wc workerConfig, poo
 		Local:              parse.Default(),
 		Sidecar:            sidecarClient,
 		Fetcher:            fetcher,
-		Embedder:           worker.KeyedEmbedderFactory{APIKey: wc.Cfg.EmbeddingAPIKey, BaseURL: wc.Cfg.EmbeddingBaseURL, Metrics: metrics},
+		Embedder:           worker.KeyedEmbedderFactory{APIKey: wc.Cfg.EmbeddingAPIKey, BaseURL: wc.Cfg.EmbeddingBaseURL, Concurrency: wc.Cfg.EmbeddingMaxConcurrency, MaxBatchTexts: wc.Cfg.EmbeddingMaxBatchTexts, Metrics: metrics},
 		Metrics:            metrics,
 		Log:                log,
 		Concurrency:        wc.Concurrency,
