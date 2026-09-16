@@ -45,6 +45,14 @@ const KINDS: ConnectorKind[] = [
       { name: "verify_tls", label: "Verify TLS", type: "bool", required: false },
     ],
   },
+  {
+    kind: "crawl",
+    label: "Crawl",
+    fields: [
+      { name: "start_urls", label: "Start URLs", type: "stringlist", required: true },
+      { name: "auth", label: "Auth Config", type: "json", required: false },
+    ],
+  },
 ];
 
 function renderForm(ui: ReactNode) {
@@ -115,6 +123,47 @@ describe("SourceForm (create)", () => {
     renderForm(<SourceForm />);
     fireEvent.change(screen.getByLabelText(/connector kind/i), { target: { value: "api" } });
     expect(screen.queryByRole("button", { name: /test connection/i })).not.toBeInTheDocument();
+  });
+
+  it("submits a stringlist field as an array and a json field as a parsed object", async () => {
+    createSource.mockResolvedValue({ id: "s10" });
+    renderForm(<SourceForm />);
+
+    fireEvent.change(screen.getByLabelText(/connector kind/i), { target: { value: "crawl" } });
+    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: "Docs crawl" } });
+    // one URL per line, with a trailing blank line to prove blanks are dropped
+    fireEvent.change(screen.getByLabelText("Start URLs"), {
+      target: { value: "https://a.example.com\nhttps://b.example.com\n" },
+    });
+    fireEvent.change(screen.getByLabelText("Auth Config"), {
+      target: { value: '{ "type": "bearer" }' },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /save|create/i }));
+
+    await waitFor(() => expect(createSource).toHaveBeenCalledTimes(1));
+    expect(createSource).toHaveBeenCalledWith("t1", "tok", {
+      kind: "crawl",
+      name: "Docs crawl",
+      config: {
+        start_urls: ["https://a.example.com", "https://b.example.com"],
+        auth: { type: "bearer" },
+      },
+    });
+  });
+
+  it("blocks submit when a json field does not parse", async () => {
+    renderForm(<SourceForm />);
+
+    fireEvent.change(screen.getByLabelText(/connector kind/i), { target: { value: "crawl" } });
+    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: "Docs crawl" } });
+    fireEvent.change(screen.getByLabelText("Start URLs"), { target: { value: "https://a.example.com" } });
+    fireEvent.change(screen.getByLabelText("Auth Config"), { target: { value: "{ not json" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /save|create/i }));
+
+    expect(await screen.findByText(/valid json for:/i)).toBeInTheDocument();
+    expect(createSource).not.toHaveBeenCalled();
   });
 });
 

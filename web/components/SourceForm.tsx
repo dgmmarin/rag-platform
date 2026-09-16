@@ -27,7 +27,11 @@ function initialValue(field: ConnectorField, source?: Source): FieldValue {
   if (field.type === "bool") return Boolean(source?.config?.[field.name]);
   if (field.type === "secret" || !source) return "";
   const v = source.config?.[field.name];
-  return v == null ? "" : String(v);
+  if (v == null) return "";
+  // stringlist edits as one entry per line; json edits as pretty-printed text.
+  if (field.type === "stringlist") return Array.isArray(v) ? (v as unknown[]).join("\n") : String(v);
+  if (field.type === "json") return typeof v === "string" ? v : JSON.stringify(v, null, 2);
+  return String(v);
 }
 
 function fieldInputType(type: ConnectorField["type"]): string {
@@ -45,6 +49,9 @@ function fieldInputType(type: ConnectorField["type"]): string {
 
 const inputClass =
   "h-9 w-full rounded-md border border-border bg-bg px-3 text-sm text-fg placeholder:text-fg-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-text";
+
+const textareaClass =
+  "w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg placeholder:text-fg-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-text";
 
 export function SourceForm({ source }: { source?: Source }) {
   const editing = !!source;
@@ -92,10 +99,11 @@ export function SourceForm({ source }: { source?: Source }) {
     onError: (e: Error) => setTestResult({ ok: false, text: e.message }),
   });
 
-  function assemble(): { input: SourceInput; missing: string[] } {
+  function assemble(): { input: SourceInput; missing: string[]; invalid: string[] } {
     const config: Record<string, unknown> = {};
     const credentials: Record<string, string> = {};
     const missing: string[] = [];
+    const invalid: string[] = []; // fields whose JSON did not parse
 
     for (const field of fields) {
       const v = valueOf(field);
@@ -111,6 +119,32 @@ export function SourceForm({ source }: { source?: Source }) {
         continue;
       }
       const s = typeof v === "string" ? v : "";
+      if (field.type === "stringlist") {
+        // One entry per line; blanks trimmed away. The config value is an ARRAY,
+        // not a string (the connector's ValidateConfig requires it — ISSUE-0061).
+        const items = s
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line !== "");
+        if (items.length === 0) {
+          if (field.required) missing.push(field.label);
+          continue;
+        }
+        config[field.name] = items;
+        continue;
+      }
+      if (field.type === "json") {
+        if (s.trim() === "") {
+          if (field.required) missing.push(field.label);
+          continue;
+        }
+        try {
+          config[field.name] = JSON.parse(s);
+        } catch {
+          invalid.push(field.label);
+        }
+        continue;
+      }
       if (field.type === "number") {
         if (s.trim() === "") {
           if (field.required) missing.push(field.label);
@@ -125,7 +159,7 @@ export function SourceForm({ source }: { source?: Source }) {
 
     const input: SourceInput = { kind, name, config };
     if (Object.keys(credentials).length > 0) input.credentials = credentials;
-    return { input, missing };
+    return { input, missing, invalid };
   }
 
   function onSubmit(e: React.FormEvent) {
@@ -139,7 +173,11 @@ export function SourceForm({ source }: { source?: Source }) {
       setFormError("Select a connector kind.");
       return;
     }
-    const { input, missing } = assemble();
+    const { input, missing, invalid } = assemble();
+    if (invalid.length > 0) {
+      setFormError(`Enter valid JSON for: ${invalid.join(", ")}.`);
+      return;
+    }
     if (missing.length > 0) {
       setFormError(`Fill the required fields: ${missing.join(", ")}.`);
       return;
@@ -214,18 +252,45 @@ export function SourceForm({ source }: { source?: Source }) {
             </div>
           );
         }
+        const labelBlock = (
+          <div className="flex items-center gap-1">
+            <label htmlFor={id} className="text-sm font-medium text-fg">
+              {field.label}
+            </label>
+            {field.required ? (
+              <span aria-hidden className="text-danger-text">
+                *
+              </span>
+            ) : null}
+          </div>
+        );
+        // stringlist (array of strings, one per line) and json (raw JSON
+        // object/array) render as a textarea and submit a composite value, not a
+        // scalar string — a scalar would fail the connector's ValidateConfig
+        // ("got string, want array", ISSUE-0061).
+        if (field.type === "stringlist" || field.type === "json") {
+          const isJSON = field.type === "json";
+          return (
+            <div key={field.name} className="flex flex-col gap-1.5">
+              {labelBlock}
+              <textarea
+                id={id}
+                className={`${textareaClass} ${isJSON ? "font-mono" : ""}`}
+                rows={isJSON ? 6 : 3}
+                value={typeof v === "string" ? v : ""}
+                onChange={(e) => setValue(field, e.target.value)}
+                required={field.required}
+                placeholder={isJSON ? '{ "type": "bearer" }' : "One entry per line"}
+              />
+              <p className="text-xs text-fg-subtle">
+                {isJSON ? "Enter valid JSON." : "One entry per line."}
+              </p>
+            </div>
+          );
+        }
         return (
           <div key={field.name} className="flex flex-col gap-1.5">
-            <div className="flex items-center gap-1">
-              <label htmlFor={id} className="text-sm font-medium text-fg">
-                {field.label}
-              </label>
-              {field.required ? (
-                <span aria-hidden className="text-danger-text">
-                  *
-                </span>
-              ) : null}
-            </div>
+            {labelBlock}
             <input
               id={id}
               type={fieldInputType(field.type)}

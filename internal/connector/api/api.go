@@ -232,8 +232,8 @@ func validateSemantics(c apiConfig) error {
 func (apiConnector) Fields() []connector.FieldSpec {
 	return []connector.FieldSpec{
 		{Name: "base_url", Label: "Base URL", Type: "url", Required: true},
-		{Name: "auth", Label: "Auth Config", Type: "text", Required: true},
-		{Name: "endpoints", Label: "Endpoints", Type: "text", Required: true},
+		{Name: "auth", Label: "Auth Config", Type: "json", Required: true},
+		{Name: "endpoints", Label: "Endpoints", Type: "json", Required: true},
 		{Name: credKeyAPIKey, Label: "API Key", Type: "secret", Required: false},
 		{Name: credKeyToken, Label: "Bearer Token", Type: "secret", Required: false},
 		{Name: credKeyUsername, Label: "Username", Type: "text", Required: false},

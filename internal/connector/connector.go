@@ -145,6 +145,13 @@ type Connector interface {
 type FieldSpec struct {
 	Name     string
 	Label    string
-	Type     string // one of "text" | "url" | "number" | "secret" | "bool"
+	// Type is the input shape the admin UI renders. Scalars: "text" | "url" |
+	// "number" | "secret" | "bool". Composite config values: "stringlist" (a JSON
+	// array of strings — the UI collects one value per line and submits an array,
+	// e.g. start_urls) and "json" (an arbitrary JSON object/array the UI collects
+	// as raw JSON and submits parsed, e.g. the api connector's auth/endpoints). A
+	// scalar type for an array/object config key makes the UI submit a string the
+	// connector's ValidateConfig rejects ("got string, want array").
+	Type     string
 	Required bool
 }

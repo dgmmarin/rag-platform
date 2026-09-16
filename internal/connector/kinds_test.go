@@ -126,6 +126,32 @@ func TestConnectorKindsDriftGuard(t *testing.T) {
 					t.Errorf("schema requires %q but Fields() does not declare it Required:true (reverse drift): the admin UI would render a form that can never satisfy this field, so create would fail server-side with no client-side signal", key)
 				}
 			}
+
+			// Type drift: a field whose config value is an ARRAY or OBJECT must NOT
+			// carry a scalar input type — otherwise the schema-driven form submits a
+			// string the connector rejects ("got string, want array", ISSUE-0061).
+			// The baseline carries a representative value per required key, so its Go
+			// kind is the source of truth for the field's config shape.
+			specByName := make(map[string]connector.FieldSpec, len(fields))
+			for _, f := range fields {
+				specByName[f.Name] = f
+			}
+			for key, val := range tc.baseline {
+				f, ok := specByName[key]
+				if !ok {
+					continue // baseline may carry a key with no rendered field
+				}
+				switch val.(type) {
+				case []string, []any, []map[string]any:
+					if f.Type != "stringlist" && f.Type != "json" {
+						t.Errorf("field %q holds a JSON array but its FieldSpec Type is %q (want \"stringlist\" or \"json\"); the form would submit a scalar string", key, f.Type)
+					}
+				case map[string]any:
+					if f.Type != "json" {
+						t.Errorf("field %q holds a JSON object but its FieldSpec Type is %q (want \"json\"); the form would submit a scalar string", key, f.Type)
+					}
+				}
+			}
 		})
 	}
 }

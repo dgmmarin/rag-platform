@@ -77,7 +77,7 @@ func validateSitemapSemantics(c config) error {
 // so there is no secret field here.
 func (sitemapConnector) Fields() []connector.FieldSpec {
 	return []connector.FieldSpec{
-		{Name: "sitemap_urls", Label: "Sitemap URLs", Type: "text", Required: true},
+		{Name: "sitemap_urls", Label: "Sitemap URLs", Type: "stringlist", Required: true},
 		{Name: "max_pages", Label: "Max Pages", Type: "number", Required: false},
 		{Name: "delay_ms", Label: "Delay (ms)", Type: "number", Required: false},
 		{Name: "concurrency", Label: "Concurrency", Type: "number", Required: false},

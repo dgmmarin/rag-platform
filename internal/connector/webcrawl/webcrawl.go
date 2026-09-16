@@ -162,7 +162,7 @@ func validateSemantics(c config) error {
 // so there is no secret field here.
 func (webCrawlConnector) Fields() []connector.FieldSpec {
 	return []connector.FieldSpec{
-		{Name: "start_urls", Label: "Start URLs", Type: "text", Required: true},
+		{Name: "start_urls", Label: "Start URLs", Type: "stringlist", Required: true},
 		{Name: "max_depth", Label: "Max Depth", Type: "number", Required: false},
 		{Name: "max_pages", Label: "Max Pages", Type: "number", Required: false},
 		{Name: "delay_ms", Label: "Delay (ms)", Type: "number", Required: false},

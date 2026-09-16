@@ -26,7 +26,11 @@ export type SourceListPage = { items: Source[]; next_cursor?: string };
 // ConnectorField / ConnectorKind describe the per-kind form schema served by
 // GET /admin/connector-kinds. Task 4 renders these into inputs; the type is
 // defined here so both slices share one source of truth.
-export type ConnectorFieldType = "text" | "url" | "number" | "secret" | "bool";
+// Scalar types map to one input; "stringlist" is a JSON array of strings (one
+// per line) and "json" is an arbitrary JSON object/array (e.g. the api
+// connector's auth/endpoints). A scalar type for an array/object config key
+// makes the form submit a string the connector rejects (ISSUE-0061).
+export type ConnectorFieldType = "text" | "url" | "number" | "secret" | "bool" | "stringlist" | "json";
 export type ConnectorField = {
   name: string;
   label: string;
