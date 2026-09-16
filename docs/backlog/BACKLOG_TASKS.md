@@ -447,7 +447,10 @@ breakdown, tasks are derived from the acceptance criteria.
 - [x] Playwright golden-path E2E (`web/e2e/shell.spec.ts`: guarded route -> login -> shell -> tenant switch -> logout; self-skips without `E2E_BASE_URL`), `mise-tasks/web-test` + `mise-tasks/web-e2e`, CI `web` + `web-e2e` jobs, ops note `docs/runbooks/admin-ui.md` (ISSUE-0056)
 
 ### STORY-11.2 — Sources list/create/edit with per-kind forms and test-connection (FR-ADM-01)
-- [ ] per-kind source forms + test-connection
+- [x] `RequireTenantAccess` session middleware + tenant-scoped sources routes (`/admin/tenants/{tenantId}/sources…`, reusing `sources.Handlers`; 404/403 authz per SPEC-02 §4, impersonation audit; ADR-0075, ISSUE-0059)
+- [x] `GET /admin/connector-kinds` per-kind form-field schema endpoint + drift-guard vs `ValidateConfig` (`internal/connector`; session-only, platform-global)
+- [x] sources list page (`web/app/admin/sources`, `SourcesTable`, `web/lib/sources.ts`: status/last-sync/next-sync/error; sync/test/delete row actions)
+- [x] schema-driven create/edit form + test-connection (`web/components/SourceForm.tsx`, `web/lib/connectorKinds.ts`, new/edit routes; secret fields write-only; config vs credentials split SPEC-04 §6)
 
 ### STORY-11.3 — Jobs list and detail with cancel (FR-ADM-02)
 - [ ] jobs list/detail with cancel

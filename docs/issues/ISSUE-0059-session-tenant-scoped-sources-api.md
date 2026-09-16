@@ -1,4 +1,4 @@
-# ISSUE-0059: Session tenant-scoped sources API — `RequireTenantAccess` (STORY-11.2, Tasks 1-2)
+# ISSUE-0059: Session tenant-scoped sources API + admin UI sources screens (STORY-11.2)
 
 **Type:** Feature · **Status:** Done · **Story:** STORY-11.2 · **Traces:** FR-ADM-01, ADR-0075
 
@@ -7,11 +7,13 @@
 ## Summary
 STORY-11.2 gives the session admin UI a way to manage a tenant's sources without a Bearer API
 key (a platform admin holds none, and a session user should not need one — ADR-0073/ADR-0075).
-This is Task 1 of that story: the reusable `RequireTenantAccess` session middleware and the
-`/admin/tenants/{tenantId}/sources…` routes, mounted behind it, reusing the EXISTING
+The server side (Tasks 1-2) is the reusable `RequireTenantAccess` session middleware and the
+`/admin/tenants/{tenantId}/sources…` routes mounted behind it, reusing the EXISTING
 `sources.Handlers`/`sources.Service` verbatim (no source CRUD/test logic duplicated between the
 Bearer `/v1/sources` surface and this session surface — only the middleware that resolves the
-tenant differs).
+tenant differs), plus the platform-global `GET /admin/connector-kinds` form-schema endpoint. The
+admin UI side (Tasks 3-4) is the sources list page and the schema-driven create/edit form with
+test-connection that consume those routes.
 
 ## Scope (shipped)
 - **`internal/cp/auth/tenant_access.go`** — `(*AuthzService).RequireTenantAccess(perm Permission)
@@ -72,6 +74,24 @@ tenant differs).
   SAME registry `SourcesValidator` resolves against, so a kind's advertised schema and its actual
   enforcement can never point at two different registries.
 
+### Task 3-4: Admin UI sources screens (SPEC-11 §10.1, web)
+- **`web/lib/sources.ts`** — typed client over the Task-1 routes (`listSources`/`getSource`/
+  `createSource`/`updateSource`/`deleteSource`/`syncSource`/`testSource`) + a `useSources()` query
+  hook, all through `apiFetch` (same-origin BFF, CSRF from `useAuth().me.csrf_token` on mutations).
+  Carries the `Source`, `SourceInput` (incl. a `credentials` map), `ConnectorKind`/`ConnectorField`
+  types and `listConnectorKinds()`.
+- **`web/app/admin/sources/page.tsx` + `web/components/SourcesTable.tsx`** — the list page (loading
+  skeleton / error / empty states) and a presentational table (name, kind, status, last-sync,
+  next-sync, error summary) with sync/test/edit/delete row actions. Replaces the `[section]`
+  placeholder for `/admin/sources` (the dynamic route is untouched).
+- **`web/components/SourceForm.tsx` + `web/lib/connectorKinds.ts` + `new`/`[id]/edit` route pages**
+  — a schema-driven create/edit form: the kind picker renders exactly the selected kind's
+  `GET /admin/connector-kinds` fields by type (text/url/number/secret→password/bool→checkbox),
+  splits non-secret fields into `config` and `secret` fields into the `credentials` map (SPEC-04
+  §6), and offers an inline test-connection (edit mode only — a source id must exist). Secret
+  fields are write-only: blank on edit, and a blank secret is omitted so it stays unchanged; the
+  kind is immutable (read-only) on edit.
+
 ## Tests / runnable checks
 - **`internal/cp/auth/tenant_access_test.go`** (table test over a fake `MembershipDB`, reusing
   `authzMemStore` from `authz_test.go`): no session → 401; invalid tenant id → 404; unknown
@@ -97,10 +117,15 @@ tenant differs).
   `…SessionRejected` (`RequireSession` only, no platform-admin, no CSRF). `go test
   ./internal/connector/... ./internal/cp/sources/... ./internal/api/`: **PASS**; `mise run lint` —
   10 issues, unchanged (0 new).
+- **Task 3-4 — web (`web/`, vitest + Testing Library, TDD RED→GREEN)**:
+  `web/components/SourcesTable.test.tsx` (row rendering incl. error summary, empty state, action
+  callbacks) and `web/components/SourceForm.test.tsx` (kind picker renders exactly the selected
+  kind's fields, required markers, secret→password, config/credentials split on submit, edit
+  pre-fill with blank write-only secrets). `cd web && npx vitest run`: **PASS** (33/33);
+  `npm run build`: compiles clean, routes `/admin/sources`, `/admin/sources/new`,
+  `/admin/sources/[id]/edit` present.
 
-## Out of scope (later STORY-11.2 tasks / later stories)
-- The admin UI screens that call these routes and render forms from
-  `GET /admin/connector-kinds` (the web client / form renderer) — later tasks in this story.
+## Out of scope (later stories)
 - Mounting `jobs`/`documents`/members/settings behind `RequireTenantAccess` — STORY-11.3–11.6
   reuse the same middleware, added there.
 - An `s3` connector (and its `Fields()`) — `KindS3` has no registered connector yet (EPIC-07);

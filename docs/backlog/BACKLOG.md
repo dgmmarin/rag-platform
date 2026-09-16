@@ -287,7 +287,7 @@ Suggested sprint order: EPIC-01 → 02 → 03 → 04 → 05 (+06 in parallel) �
 **STORY-11.1 App shell, auth, tenant switcher** (5) ✅ — Traces: SPEC-11, ISSUE-0056 — also
 delivered `ragctl admin bootstrap` + `mise run seed` onboarding (ISSUE-0057) and the Tailwind
 redesign, beyond the original shell scope
-**STORY-11.2 Sources list/create/edit with per-kind forms and test-connection** (8) — Traces: FR-ADM-01
+**STORY-11.2 Sources list/create/edit with per-kind forms and test-connection** (8) ✅ — Traces: FR-ADM-01, ADR-0075, ISSUE-0059
 **STORY-11.3 Jobs list and detail with cancel** (5) — Traces: FR-ADM-02
 **STORY-11.4 Documents and chunks browser** (5) — Traces: FR-ADM-03
 **STORY-11.5 Members, API keys, settings pages** (5)
