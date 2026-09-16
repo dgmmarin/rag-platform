@@ -36,11 +36,16 @@ export type ConnectorField = {
 export type ConnectorKind = { kind: string; label: string; fields: ConnectorField[] };
 
 // Input for create/edit. `schedule_cron` is optional; `config` is per-kind.
+// `credentials` carries secret field values (SPEC-04 §6): a `secret` connector
+// field never lives in `config` — its value goes in this separate top-level map,
+// keyed by field name. The API accepts it and never returns it; on edit an
+// unchanged secret is omitted rather than sent blank.
 export type SourceInput = {
   kind: string;
   name: string;
   config: Record<string, unknown>;
   schedule_cron?: string;
+  credentials?: Record<string, string>;
 };
 
 // ensureOk turns any non-2xx into an Error carrying the envelope's
