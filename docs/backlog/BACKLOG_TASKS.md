@@ -461,7 +461,10 @@ breakdown, tasks are derived from the acceptance criteria.
 - [ ] documents and chunks browser
 
 ### STORY-11.5 — Members, API keys, settings pages
-- [ ] members, API keys, settings pages
+- [x] tenant-scoped settings/members/api-keys routes behind `RequireTenantAccess` (reads=PermQuery, member/key writes=PermManageMembers, settings PATCH=PermChangeSettings, CSRF on mutations); `MembershipHandlers`/`APIKeyHandlers` over existing services + `UserByEmail`; api-key secret returned once (FR-ACC-04); ADR-0075, ISSUE-0064
+- [x] settings page (`web/app/admin/settings`, `SettingsForm`, `web/lib/settings.ts`: structured form, dim read-only, partial PATCH, per-field errors)
+- [x] members page (`web/app/admin/members`, `MembersTable`, `web/lib/members.ts`: roster, add-by-email, role change, remove; last-owner/duplicate errors inline)
+- [x] API keys page (`web/app/admin/keys`, `ApiKeysTable` + `CreateKeyDialog`, `web/lib/apiKeys.ts`: list, mint with one-time secret reveal, revoke)
 
 ### STORY-11.6 — Query playground with citations and feedback
 - [ ] query playground with citations and feedback

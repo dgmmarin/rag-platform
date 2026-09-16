@@ -1,6 +1,6 @@
 # ISSUE-0064: Session tenant-scoped settings/members/API-keys API + admin UI pages (STORY-11.5)
 
-**Type:** Feature · **Status:** In progress · **Story:** STORY-11.5 · **Traces:** SPEC-02 §2/§5, ADR-0075, ADR-0021, ADR-0022
+**Type:** Feature · **Status:** Done · **Story:** STORY-11.5 · **Traces:** SPEC-02 §2/§5, ADR-0075, ADR-0021, ADR-0022
 
 > The *what* lives in `docs/backlog/`; the *why* in the ADRs above. Plan:
 > `docs/superpowers/plans/2026-09-16-epic11-story-11.5-members-keys-settings.md`.
@@ -22,4 +22,5 @@ handlers.
 - **Task 5:** close-out.
 
 ## Tests / runnable checks
-- (filled as tasks land)
+- **Server (Task 1):** `internal/cp/auth/{members_handlers,apikey_handlers,users}_test.go` (list/add-by-email 404/set-role/remove last-owner guards; key list carries no secret, create returns it once, revoke; UserByEmail found/not-found) + `internal/api/router_test.go` `TestTenantMembersKeysSettingsRoutesChain`/`…CSRF` (all 9 routes, correct gate each, CSRF on mutations). `go test ./internal/cp/auth/ ./internal/cp/tenants/ ./internal/api/`: PASS; `mise run lint`: 10 (baseline, 0 new).
+- **Web (Tasks 2–4, vitest + Testing Library, TDD):** `SettingsForm.test.tsx` (current values, dim read-only, partial PATCH of changed sections, per-field + banner errors), `MembersTable.test.tsx` (roster, role select, remove; add-by-email inline errors), `ApiKeysTable.test.tsx` + `CreateKeyDialog.test.tsx` (list has no secret, create reveals the plaintext once with copy, revoke). `cd web && npx vitest run`: PASS (17 files / 69 tests); `npm run build`: clean, routes `/admin/settings`, `/admin/members`, `/admin/keys` present.
