@@ -204,6 +204,18 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /admin/tenants/{tenantId}/sources/{id}/sync", tenantSources(d.RequireTenantSourcesWrite, mustCSRF(d, d.SourceSync)))
 	mux.Handle("POST /admin/tenants/{tenantId}/sources/{id}/test", tenantSources(d.RequireTenantSourcesWrite, mustCSRF(d, d.SourceTest)))
 
+	// Session admin jobs (STORY-11.3, ADR-0075, FR-ADM-02): the SAME jobs.Handlers
+	// as the Bearer /v1/jobs surface below, mounted behind the session tenant-access
+	// gate instead of an API key. The RequireTenantSources{Read,Write} gates are
+	// permission gates — read is PermQuery (any role), write is PermManageSources
+	// (owner/admin) — reused here for jobs (cancelling a sync is a source-management
+	// write); the "Sources" in the field name is historical, not a resource scope.
+	// {id} is the job id; {tenantId} is the tenant path segment. Cancel carries CSRF
+	// (SPEC-09 §3); the GETs do not.
+	mux.Handle("GET /admin/tenants/{tenantId}/jobs", tenantSources(d.RequireTenantSourcesRead, d.JobList))
+	mux.Handle("GET /admin/tenants/{tenantId}/jobs/{id}", tenantSources(d.RequireTenantSourcesRead, d.JobGet))
+	mux.Handle("POST /admin/tenants/{tenantId}/jobs/{id}/cancel", tenantSources(d.RequireTenantSourcesWrite, mustCSRF(d, d.JobCancel)))
+
 	// Documents (STORY-04.4, FR-SRC-02/FR-ADM-03, SPEC-07 §2). Tenant content
 	// reached through the resolver (ADR-0003); the tenant is derived from the API
 	// key (FR-ACC-03). Scopes follow SPEC-07 §2: ingest for upload/delete, query

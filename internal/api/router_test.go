@@ -407,6 +407,75 @@ func TestTenantSourcesCSRF(t *testing.T) {
 	}
 }
 
+// The session admin jobs routes (STORY-11.3, ADR-0075, FR-ADM-02) reuse the SAME
+// jobs.Handlers as the Bearer /v1/jobs surface, mounted behind session ->
+// tenant-access. Reads use the read gate (PermQuery, any role); cancel uses the
+// write gate (PermManageSources) and carries CSRF. {tenantId} is the tenant path
+// segment; {id} stays the jobs handlers' own job id.
+func TestTenantJobsRoutesChain(t *testing.T) {
+	cases := []struct {
+		method, path, handler, gate string
+	}{
+		{http.MethodGet, "/admin/tenants/t-1/jobs", "job-list", "tenant-sources-read"},
+		{http.MethodGet, "/admin/tenants/t-1/jobs/abc", "job-get", "tenant-sources-read"},
+		{http.MethodPost, "/admin/tenants/t-1/jobs/abc/cancel", "job-cancel", "tenant-sources-write"},
+	}
+	for _, c := range cases {
+		var ran []string
+		deps := newTestDeps(&ran)
+		// Jobs are a seam-only group in the default test deps; wire the three
+		// handlers locally so the tenant-scoped mounts can be asserted reached.
+		deps.JobList = okHandler(&ran, "job-list")
+		deps.JobGet = okHandler(&ran, "job-get")
+		deps.JobCancel = okHandler(&ran, "job-cancel")
+		h := New(deps)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(c.method, c.path, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s %s = %d, want 200; body=%s", c.method, c.path, rr.Code, rr.Body.String())
+		}
+		if idxOf(ran, "session") < 0 || idxOf(ran, c.gate) < 0 {
+			t.Fatalf("%s %s did not run session -> %s; ran=%v", c.method, c.path, c.gate, ran)
+		}
+		if idxOf(ran, "session") > idxOf(ran, c.gate) {
+			t.Fatalf("%s %s ran %s before session; ran=%v", c.method, c.path, c.gate, ran)
+		}
+		if !contains(ran, c.handler) {
+			t.Fatalf("%s %s did not reach %s; ran=%v", c.method, c.path, c.handler, ran)
+		}
+	}
+}
+
+// Cancel on the session admin jobs surface carries CSRF like every other
+// session-cookie mutation (SPEC-09 §3); the list GET does not.
+func TestTenantJobsCSRF(t *testing.T) {
+	var ran []string
+	deps := newTestDeps(&ran)
+	deps.JobList = okHandler(&ran, "job-list")
+	deps.JobCancel = okHandler(&ran, "job-cancel")
+	deps.CSRF = stubMW(&ran, "csrf", http.StatusForbidden, CodeForbidden)
+	h := New(deps)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/admin/tenants/t-1/jobs/abc/cancel", nil))
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("POST cancel without CSRF = %d, want 403", rr.Code)
+	}
+	if contains(ran, "job-cancel") {
+		t.Fatalf("handler reached despite CSRF block; ran=%v", ran)
+	}
+
+	ran = nil
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/admin/tenants/t-1/jobs", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET jobs = %d, want 200 (no CSRF on reads)", rr.Code)
+	}
+	if contains(ran, "csrf") {
+		t.Fatalf("CSRF ran on a GET route; ran=%v", ran)
+	}
+}
+
 // The retrieve route is mounted behind the `query` scope -> rate-limit chain and
 // reaches its handler (STORY-08.2, FR-RET-08). The tenant is derived from the API
 // key by the scope gate (FR-ACC-03) — never a body/param.
