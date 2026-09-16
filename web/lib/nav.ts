@@ -5,6 +5,7 @@ export const NAV_SECTIONS: NavSection[] = [
   { slug: "jobs", label: "Jobs" },
   { slug: "documents", label: "Documents" },
   { slug: "members", label: "Members" },
+  { slug: "keys", label: "API Keys" },
   { slug: "settings", label: "Settings" },
   { slug: "query", label: "Query" },
   { slug: "eval", label: "Eval" },
