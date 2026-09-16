@@ -29,6 +29,19 @@ type ingestWorker struct {
 	log      *slog.Logger
 }
 
+// ingestJobTimeout caps one ingest_document attempt. A single document may parse
+// via the Python sidecar for up to 120s (SPEC-05 §2) before it chunks and runs
+// batched embedding, which already exceeds River's 1-minute JobTimeoutDefault — so a
+// slow PDF would be cancelled with "context deadline exceeded" before the sidecar
+// even returns (ISSUE-0062). 5 minutes clears the parse ceiling plus embedding with
+// its retry/backoff headroom.
+const ingestJobTimeout = 5 * time.Minute
+
+// Timeout overrides River's 1-minute default so a slow sidecar parse is not cancelled.
+func (w *ingestWorker) Timeout(*river.Job[IngestDocumentArgs]) time.Duration {
+	return ingestJobTimeout
+}
+
 // Work dispatches the job to the ingestdoc handler. A SnoozeError (circuit open)
 // pauses the job rather than failing it (SPEC-05 §8); any other error fails the job
 // for retry, and because each document commits in its own transaction (SPEC-05 §5)

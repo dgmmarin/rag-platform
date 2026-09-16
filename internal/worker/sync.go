@@ -104,6 +104,20 @@ func (w *syncWorker) NextRetry(job *river.Job[SyncSourceArgs]) time.Time {
 	return time.Now().Add(syncBackoff[i])
 }
 
+// syncJobTimeout caps one sync_source attempt. A sync resolves a connector and
+// crawls → parses → chunks → embeds every enumerated document at a politeness rate
+// (defaultCrawlRate), so River's 1-minute JobTimeoutDefault is far too short — it
+// cancels the run mid-crawl with "context deadline exceeded" and the job retries
+// forever (ISSUE-0062). 30 minutes covers a typical crawl and stays under the
+// client's 1h RescueStuckJobsAfter net, so a genuinely wedged sync is still rescued.
+//
+// ponytail: one generous fixed cap. Upgrade path — derive the budget from the
+// source's max_pages / rate when a large crawl legitimately needs longer.
+const syncJobTimeout = 30 * time.Minute
+
+// Timeout overrides River's 1-minute default for the long-running crawl/ingest job.
+func (w *syncWorker) Timeout(*river.Job[SyncSourceArgs]) time.Duration { return syncJobTimeout }
+
 // Work resolves, enumerates and ingests one source.
 func (w *syncWorker) Work(ctx context.Context, job *river.Job[SyncSourceArgs]) error {
 	a := job.Args
