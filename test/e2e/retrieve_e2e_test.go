@@ -217,6 +217,7 @@ func putDoc(ctx context.Context, t *testing.T, store documents.TenantStore, db *
 		Chunks: []documents.ChunkInput{{
 			Position: 0, Content: s.content, TokenCount: 5,
 			Embedding: s.emb, EmbeddingModel: s.model,
+			ContentHash: sha256Bytes(s.content),
 		}},
 	})
 	if err != nil {

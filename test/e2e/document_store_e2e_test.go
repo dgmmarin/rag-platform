@@ -100,6 +100,7 @@ func TestDocumentStorePutGoldenPath(t *testing.T) {
 		Chunks: []documents.ChunkInput{{
 			Position: 0, HeadingPath: []string{"Intro"}, Content: "v1 chunk",
 			TokenCount: 3, Embedding: embed(0.1), EmbeddingModel: "text-embedding-3-small",
+			ContentHash: sha256Bytes("v1 chunk"),
 		}},
 	}
 
@@ -153,8 +154,8 @@ func TestDocumentStorePutGoldenPath(t *testing.T) {
 	v2.ContentHash = sha256Bytes("v2 content " + suffix)
 	v2.Content = "v2 content " + suffix
 	v2.Chunks = []documents.ChunkInput{
-		{Position: 0, Content: "v2 chunk a", TokenCount: 4, Embedding: embed(0.2), EmbeddingModel: "text-embedding-3-small"},
-		{Position: 1, Content: "v2 chunk b", TokenCount: 4, Embedding: embed(0.3), EmbeddingModel: "text-embedding-3-small"},
+		{Position: 0, Content: "v2 chunk a", TokenCount: 4, Embedding: embed(0.2), EmbeddingModel: "text-embedding-3-small", ContentHash: sha256Bytes("v2 chunk a")},
+		{Position: 1, Content: "v2 chunk b", TokenCount: 4, Embedding: embed(0.3), EmbeddingModel: "text-embedding-3-small", ContentHash: sha256Bytes("v2 chunk b")},
 	}
 	r3, err := store.Put(ctx, db, v2)
 	if err != nil {
