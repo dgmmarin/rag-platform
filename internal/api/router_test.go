@@ -476,6 +476,64 @@ func TestTenantJobsCSRF(t *testing.T) {
 	}
 }
 
+// The session admin documents routes (STORY-11.4, ADR-0075, FR-ADM-03) reuse the
+// SAME documents.Handlers as the Bearer /v1/documents surface, mounted behind
+// session -> tenant-access. Every route is a read, so all three use the read gate
+// (PermQuery, any role) and none carry CSRF. {tenantId} is the tenant path
+// segment; {id} stays the documents handlers' own document id.
+func TestTenantDocumentsRoutesChain(t *testing.T) {
+	cases := []struct {
+		method, path, handler, gate string
+	}{
+		{http.MethodGet, "/admin/tenants/t-1/documents", "doc-list", "tenant-sources-read"},
+		{http.MethodGet, "/admin/tenants/t-1/documents/abc", "doc-get", "tenant-sources-read"},
+		{http.MethodGet, "/admin/tenants/t-1/documents/abc/chunks", "doc-chunks", "tenant-sources-read"},
+	}
+	for _, c := range cases {
+		var ran []string
+		deps := newTestDeps(&ran)
+		// Documents are a seam-only group in the default test deps; wire the read
+		// handlers locally so the tenant-scoped mounts can be asserted reached.
+		deps.DocumentList = okHandler(&ran, "doc-list")
+		deps.DocumentGet = okHandler(&ran, "doc-get")
+		deps.DocumentChunks = okHandler(&ran, "doc-chunks")
+		h := New(deps)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(c.method, c.path, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s %s = %d, want 200; body=%s", c.method, c.path, rr.Code, rr.Body.String())
+		}
+		if idxOf(ran, "session") < 0 || idxOf(ran, c.gate) < 0 {
+			t.Fatalf("%s %s did not run session -> %s; ran=%v", c.method, c.path, c.gate, ran)
+		}
+		if idxOf(ran, "session") > idxOf(ran, c.gate) {
+			t.Fatalf("%s %s ran %s before session; ran=%v", c.method, c.path, c.gate, ran)
+		}
+		if !contains(ran, c.handler) {
+			t.Fatalf("%s %s did not reach %s; ran=%v", c.method, c.path, c.handler, ran)
+		}
+	}
+}
+
+// No CSRF is mounted on the session admin documents surface: it is read-only, and
+// CSRF guards session-cookie mutations only (SPEC-09 §3).
+func TestTenantDocumentsNoCSRF(t *testing.T) {
+	var ran []string
+	deps := newTestDeps(&ran)
+	deps.DocumentList = okHandler(&ran, "doc-list")
+	deps.CSRF = stubMW(&ran, "csrf", http.StatusForbidden, CodeForbidden)
+	h := New(deps)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/admin/tenants/t-1/documents", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET documents = %d, want 200 (no CSRF on reads)", rr.Code)
+	}
+	if contains(ran, "csrf") {
+		t.Fatalf("CSRF ran on a GET route; ran=%v", ran)
+	}
+}
+
 // The session admin settings/members/api-keys routes (STORY-11.5, ADR-0075,
 // ISSUE-0064) mount the reused SettingsHandlers + the members/api-key handlers
 // behind session -> tenant-access. Reads use the read gate (PermQuery, any

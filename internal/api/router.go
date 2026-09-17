@@ -259,6 +259,17 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /admin/tenants/{tenantId}/api-keys", tenantSources(d.RequireTenantManageMembers, mustCSRF(d, d.KeyCreate)))
 	mux.Handle("DELETE /admin/tenants/{tenantId}/api-keys/{keyId}", tenantSources(d.RequireTenantManageMembers, mustCSRF(d, d.KeyRevoke)))
 
+	// Session admin documents (STORY-11.4, ADR-0075, FR-ADM-03): the SAME
+	// documents.Handlers as the Bearer /v1/documents surface below, mounted behind
+	// the session tenant-access gate. Read-only (list, detail, chunks debug view);
+	// upload/delete stay on the Bearer surface only. Every route is a read, so the
+	// read gate (RequireTenantSourcesRead, PermQuery, any role) guards all three and
+	// none carry CSRF. {id} is the document id; {tenantId} is the tenant path
+	// segment.
+	mux.Handle("GET /admin/tenants/{tenantId}/documents", tenantSources(d.RequireTenantSourcesRead, d.DocumentList))
+	mux.Handle("GET /admin/tenants/{tenantId}/documents/{id}", tenantSources(d.RequireTenantSourcesRead, d.DocumentGet))
+	mux.Handle("GET /admin/tenants/{tenantId}/documents/{id}/chunks", tenantSources(d.RequireTenantSourcesRead, d.DocumentChunks))
+
 	// Documents (STORY-04.4, FR-SRC-02/FR-ADM-03, SPEC-07 §2). Tenant content
 	// reached through the resolver (ADR-0003); the tenant is derived from the API
 	// key (FR-ACC-03). Scopes follow SPEC-07 §2: ingest for upload/delete, query
