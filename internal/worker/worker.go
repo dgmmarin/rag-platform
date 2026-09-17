@@ -204,13 +204,19 @@ func New(deps Deps) (*Worker, error) {
 		Queues:  queues,
 		Workers: workers,
 		Logger:  log,
+		// Re-queue a job orphaned by a crashed/restarted worker after 35 min, instead
+		// of River's 1h default, so a stuck job recovers (and, for sync_source, resumes
+		// from its persisted crawl state) sooner. It MUST stay above the longest job
+		// Timeout (syncJobTimeout = 30 min): a live long job is ctx-cancelled by its own
+		// Timeout at 30 min, so it is gone well before 35 min and never wrongly rescued.
+		RescueStuckJobsAfter: 35 * time.Minute,
 		// Order (outermost first): limiter (may snooze before any work), then the trace
 		// span wrapping the job, then the mirror. So a job span (STORY-10.3) parents the
 		// mirror writes and the handler's downstream provider/sidecar spans.
 		// metricsMiddleware is INNERMOST so jobs_duration_seconds times just the
 		// handler (not the limiter snooze or mirror writes) and jobs_failed_total
 		// counts the handler's terminal error (SPEC-10 §2/§5).
-		WorkerMiddleware: []rivertype.WorkerMiddleware{limiter, traceMiddleware{}, mirror, metricsMiddleware{m: deps.Metrics}},
+		WorkerMiddleware: []rivertype.WorkerMiddleware{limiter, logMiddleware{log: log}, traceMiddleware{}, mirror, metricsMiddleware{m: deps.Metrics}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("worker: build river client: %w", err)

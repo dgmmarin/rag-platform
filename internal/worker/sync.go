@@ -209,6 +209,10 @@ func (w *syncWorker) Work(ctx context.Context, job *river.Job[SyncSourceArgs]) e
 		Log:     w.log,
 	}
 
+	w.log.Info("sync_source started",
+		"tenant_id", a.TenantID, "source_id", a.SourceID, "kind", src.Kind,
+		"full", a.Full, "attempt", job.Attempt)
+
 	// The connector enumerates into the bridge and calls sink.Complete itself.
 	stats, err := conn.Sync(ctx, run, newConnectorSink(isink))
 	if err != nil {

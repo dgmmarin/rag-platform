@@ -226,6 +226,10 @@ func (c *crawler) run(ctx context.Context, sr connector.SyncRun, sink connector.
 		if err := ctx.Err(); err != nil {
 			return c.finish(ctx, sink, err)
 		}
+		// Per-level progress so an operator can see the crawl advancing (and is not
+		// wedged): the depth, how many URLs this level will fetch, and the running total.
+		c.log.Info("webcrawl: crawling level",
+			"depth", d, "queued", len(items), "fetched_so_far", c.docsSeen())
 		var nextMu sync.Mutex
 		g, gctx := errgroup.WithContext(ctx)
 		g.SetLimit(c.cfg.Concurrency)
@@ -238,6 +242,10 @@ func (c *crawler) run(ctx context.Context, sr connector.SyncRun, sink connector.
 				links, err := c.process(gctx, it, sink)
 				if err != nil {
 					return err
+				}
+				// A heartbeat every 25 pages: proof the crawl is still fetching.
+				if n := c.docsSeen(); n%25 == 0 {
+					c.log.Info("webcrawl: progress", "pages_fetched", n)
 				}
 				// Frontier expansion is web_crawl-only: the sitemap connector clears
 				// followLinks so a fetched page's links never enter the frontier
@@ -502,6 +510,13 @@ func (c *crawler) emit(ctx context.Context, it item, u *url.URL, resp *http.Resp
 		c.log.Warn("webcrawl: sink rejected document", "external_id", extID, "err", err.Error())
 	}
 	return links
+}
+
+// docsSeen returns the running count of fetched documents (for progress logs).
+func (c *crawler) docsSeen() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stats.DocsSeen
 }
 
 // finish reconciles and returns the accumulated stats. It calls sink.Complete —
