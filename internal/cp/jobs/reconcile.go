@@ -18,9 +18,9 @@ type Reconciled struct {
 // it touches jobs and river_job, never a tenant database (ADR-0003).
 const reconcileSQL = `
 update jobs j
-   set status      = case r.state when 'completed' then 'succeeded'
-                                   when 'discarded' then 'failed'
-                                   else 'cancelled' end,
+   set status      = (case r.state when 'completed' then 'succeeded'
+                                    when 'discarded' then 'failed'
+                                    else 'cancelled' end)::job_status,
        finished_at = coalesce(j.finished_at, now()),
        error       = coalesce(j.error, 'reconciled from river state ' || r.state)
   from river_job r
