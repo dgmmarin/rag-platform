@@ -39,8 +39,16 @@ index (RaBitQ quantization + IVF) instead of HNSW.
 - **Recall tuning:** `lists=[1]` is brute-force RaBitQ (exact-ish, good recall, fine to tens of
   thousands of chunks); larger tenants should reindex with more lists and set `vchordrq.probes`.
 
+## Probes (required)
+`vchordrq` **errors on every query** when `vchordrq.probes` is unset (`need N probes, but 0
+provided`). Provisioning sets a per-database default — `ALTER DATABASE <db> SET vchordrq.probes = '10'`
+(`internal/provision` `databaseSettingsSQL`) — so every session has it with no per-query `SET` and the
+retrieval SQL stays unchanged. It applies at connection time, so an already-running serve must
+reconnect (restart) to pick it up on a tenant altered after the fact. `10` is ample for the
+`lists=[1]` index and scales with a reindex.
+
 ## Follow-up
-- Set a sensible default `vchordrq.probes` (per-DB `ALTER DATABASE … SET`, or a session `SET` in the
-  retrieval path) once real corpora inform the value.
 - The reindex job (ISSUE-0013) should rebuild `vchordrq` with a size-appropriate `lists` after bulk
-  ingest.
+  ingest, and probes can be raised per tenant (`ALTER DATABASE … SET vchordrq.probes`).
+- Optionally set `vchordrq.probes` in the retrieval session too (belt-and-suspenders) so a tenant DB
+  missing the default cannot 500 every query.

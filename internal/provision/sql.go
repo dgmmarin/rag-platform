@@ -58,6 +58,22 @@ func createDatabaseSQL(dbName, owner string) (string, error) {
 	return fmt.Sprintf("CREATE DATABASE %s OWNER %s", qdb, qowner), nil
 }
 
+// databaseSettingsSQL sets per-database defaults on a tenant DB (run on the
+// privileged connection). VectorChord's vchordrq index errors on every query when
+// vchordrq.probes is unset ("need N probes, but 0 provided", ADR-0076), so a
+// database-level default applies it to every session with no per-query SET. 10 is
+// ample for the provisioned lists=[1] index and scales as a tenant is reindexed
+// with more lists.
+func databaseSettingsSQL(dbName string) ([]string, error) {
+	qdb, err := quoteIdent(dbName)
+	if err != nil {
+		return nil, err
+	}
+	return []string{
+		fmt.Sprintf("ALTER DATABASE %s SET vchordrq.probes = '10'", qdb),
+	}, nil
+}
+
 // lockdownDatabaseSQL builds the statements that close the connection-level
 // boundary NFR-SEC-01 mandates. Postgres grants CONNECT on a new database to
 // PUBLIC by default, which would let any other tenant's least-privilege role open

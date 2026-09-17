@@ -390,6 +390,17 @@ func createRoleAndDatabase(ctx context.Context, admin *pgxpool.Pool, row databas
 			return fmt.Errorf("provision: lock down database connect privilege: %w", err)
 		}
 	}
+
+	// Per-database defaults (vchordrq.probes; ADR-0076). Idempotent.
+	settings, err := databaseSettingsSQL(row.database)
+	if err != nil {
+		return err
+	}
+	for _, stmt := range settings {
+		if _, err := admin.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("provision: set database defaults: %w", err)
+		}
+	}
 	return nil
 }
 
