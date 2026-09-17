@@ -14,6 +14,7 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/rag-platform/ragctl/internal/connector"
+	"github.com/rag-platform/ragctl/internal/cp/jobs"
 	"github.com/rag-platform/ragctl/internal/documents"
 	"github.com/rag-platform/ragctl/internal/ingest/embedcache"
 	"github.com/rag-platform/ragctl/internal/ingest/ingestdoc"
@@ -21,6 +22,11 @@ import (
 	"github.com/rag-platform/ragctl/internal/obs"
 	"github.com/rag-platform/ragctl/internal/tenant"
 )
+
+// reconcileInterval is how often the mirror reconciler runs (SPEC-08 §3): drift
+// between River and the jobs mirror is healed within this window even without a
+// worker restart.
+const reconcileInterval = 60 * time.Second
 
 // Default per-queue worker concurrency (SPEC-08 §1). Separate pools per queue mean a
 // long reindex on `maintenance` cannot starve syncs on `ingest`.
@@ -123,6 +129,7 @@ type Worker struct {
 	client *river.Client[pgx.Tx]
 	pool   *pgxpool.Pool
 	log    *slog.Logger
+	recon  jobs.Reconciler
 }
 
 // New assembles the River client: it registers a worker per SPEC-08 §1 job kind and
@@ -184,6 +191,12 @@ func New(deps Deps) (*Worker, error) {
 	river.AddWorker(workers, &todoWorker[ProvisionTenantArgs]{story: "async provisioning over STORY-02.3", log: log})
 	river.AddWorker(workers, &todoWorker[DeleteTenantArgs]{story: "async deletion over STORY-02.4", log: log})
 
+	// reconcile_jobs: heals mirror rows left behind by a crashed worker (SPEC-08
+	// §3). Runs on the maintenance queue, once at startup and every
+	// reconcileInterval thereafter (see the PeriodicJobs entry below and Start).
+	recon := jobs.Reconciler{Store: jobs.FromPool(deps.Pool), Log: log}
+	river.AddWorker(workers, &reconcileWorker{recon: recon})
+
 	c := deps.Concurrency.withDefaults()
 	all := map[string]river.QueueConfig{
 		QueueIngest:      {MaxWorkers: c.Ingest},
@@ -212,6 +225,24 @@ func New(deps Deps) (*Worker, error) {
 		// Timeout (syncJobTimeout = 30 min): a live long job is ctx-cancelled by its own
 		// Timeout at 30 min, so it is gone well before 35 min and never wrongly rescued.
 		RescueStuckJobsAfter: 35 * time.Minute,
+		// PeriodicJobs schedules reconcile_jobs every reconcileInterval so mirror
+		// drift self-heals without a restart (SPEC-08 §3). RunOnStart also fires one
+		// on client start; the UniqueOpts guard skips a new insert while one is still
+		// available/running so overlapping runs never pile up.
+		PeriodicJobs: []*river.PeriodicJob{
+			river.NewPeriodicJob(
+				river.PeriodicInterval(reconcileInterval),
+				func() (river.JobArgs, *river.InsertOpts) {
+					return ReconcileJobsArgs{}, &river.InsertOpts{
+						Queue: QueueMaintenance,
+						UniqueOpts: river.UniqueOpts{
+							ByState: []rivertype.JobState{rivertype.JobStateAvailable, rivertype.JobStateRunning},
+						},
+					}
+				},
+				&river.PeriodicJobOpts{RunOnStart: true},
+			),
+		},
 		// Order (outermost first): limiter (may snooze before any work), then the trace
 		// span wrapping the job, then the mirror. So a job span (STORY-10.3) parents the
 		// mirror writes and the handler's downstream provider/sidecar spans.
@@ -224,7 +255,7 @@ func New(deps Deps) (*Worker, error) {
 		return nil, fmt.Errorf("worker: build river client: %w", err)
 	}
 
-	return &Worker{client: client, pool: deps.Pool, log: log}, nil
+	return &Worker{client: client, pool: deps.Pool, log: log, recon: recon}, nil
 }
 
 // Migrate applies River's own schema to the control-plane database. River's tables
@@ -247,6 +278,15 @@ func (w *Worker) Migrate(ctx context.Context) error {
 func (w *Worker) Start(ctx context.Context) error {
 	if err := w.client.Start(ctx); err != nil {
 		return fmt.Errorf("worker: start: %w", err)
+	}
+	// One synchronous reconcile pass right after start so a restart heals mirror
+	// rows drifted by a prior crash immediately, without waiting for the first
+	// periodic run (SPEC-08 §3). A reconcile error is logged, never fatal: the
+	// periodic job (and the next restart) will retry.
+	if healed, err := w.recon.Reconcile(ctx); err != nil {
+		w.log.Warn("startup reconcile failed", "err", err.Error())
+	} else if len(healed) > 0 {
+		w.log.Info("startup reconcile healed drifted jobs", "count", len(healed))
 	}
 	return nil
 }
