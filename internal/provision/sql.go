@@ -9,7 +9,7 @@ import (
 // exist. They are superuser-only, so the privileged provisioning connection
 // installs them at database-create time; a tenant migration cannot (it runs as
 // the least-privilege per-tenant role) — SPEC-01 §6, ADR-0015.
-var requiredExtensions = []string{"vector", "pgcrypto", "pg_trgm"}
+var requiredExtensions = []string{"vector", "vchord", "pgcrypto", "pg_trgm"}
 
 // extensionStatements returns the idempotent CREATE EXTENSION statements to run
 // inside the new tenant database on the privileged connection.

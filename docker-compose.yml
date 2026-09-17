@@ -9,7 +9,11 @@ name: rag-platform
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    # VectorChord bundles pgvector + the vchord extension (vchordrq index has no
+    # 2000-dim HNSW cap, so 4096-dim embeddings are indexable). Needs vchord in
+    # shared_preload_libraries.
+    image: tensorchord/vchord-postgres:pg16-v1.1.1
+    command: ["postgres", "-c", "shared_preload_libraries=vchord"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-rag}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rag}

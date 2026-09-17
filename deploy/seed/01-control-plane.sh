@@ -28,7 +28,8 @@ fi
 # matches what migrations expect.
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname control_plane <<-SQL
 	CREATE EXTENSION IF NOT EXISTS vector;
+	CREATE EXTENSION IF NOT EXISTS vchord CASCADE;
 	CREATE EXTENSION IF NOT EXISTS pgcrypto;
 SQL
 
-echo "seed: control_plane ready (pgvector, pgcrypto installed)"
+echo "seed: control_plane ready (pgvector, vchord, pgcrypto installed)"

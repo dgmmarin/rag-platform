@@ -13,7 +13,7 @@ import (
 func TestExtensionStatements(t *testing.T) {
 	stmts := extensionStatements()
 	joined := strings.Join(stmts, "\n")
-	for _, ext := range []string{"vector", "pgcrypto", "pg_trgm"} {
+	for _, ext := range []string{"vector", "vchord", "pgcrypto", "pg_trgm"} {
 		want := "create extension if not exists " + ext
 		if !strings.Contains(strings.ToLower(joined), want) {
 			t.Errorf("extension statements missing %q\n%s", want, joined)

@@ -87,9 +87,18 @@ create table chunks (
 create index on chunks (document_id);
 create index on chunks (source_id);
 create index chunks_tsv_idx on chunks using gin (tsv);
--- HNSW is the default; switch to ivfflat for very large tables if build time matters.
-create index chunks_embedding_idx on chunks using hnsw (embedding vector_cosine_ops)
-    with (m = 16, ef_construction = 64);
+-- VectorChord vchordrq (RaBitQ + IVF): no 2000-dim HNSW cap, so 4096-dim vectors
+-- are indexable, and the cosine <=> query operator is unchanged. lists=[1] is a
+-- single flat list (safe to build on the empty table a tenant is provisioned with,
+-- and brute-force-fast at these corpus sizes); a reindex can raise lists for a
+-- large tenant. Query recall is tuned with SET vchordrq.probes.
+create index chunks_embedding_idx on chunks using vchordrq (embedding vector_cosine_ops)
+    with (options = $$
+residual_quantization = true
+[build.internal]
+lists = [1]
+spherical_centroids = true
+$$);
 
 -- View used by retrieval: only chunks of the current version of active documents.
 create view live_chunks as
