@@ -259,4 +259,18 @@ func TestEmbedCacheReuseOnReingest(t *testing.T) {
 	if stamp := embeddingCallStamp(t, rows2[1].embedding); stamp != "2" {
 		t.Fatalf("run2 chunk 1 embedding stamp = %q, want \"2\" (freshly embedded)", stamp)
 	}
+
+	// --- The reuse key is (content_hash, embedding_model): the same hashes
+	// under a different model must all miss, not fall back to another model's
+	// stored vector. ---
+	miss, err := cache.Lookup(ctx, db, "a-different-model", wantHashes2)
+	if err != nil {
+		t.Fatalf("Lookup with mismatched model: %v", err)
+	}
+	for _, h := range wantHashes2 {
+		key := fmt.Sprintf("%x", h)
+		if _, found := miss[key]; found {
+			t.Fatalf("Lookup with mismatched model returned hash %s, want a miss", key)
+		}
+	}
 }

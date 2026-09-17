@@ -70,15 +70,6 @@ func TestValidatePut(t *testing.T) {
 	}
 }
 
-// ChunkInput must carry ContentHash through so Put can write chunks.content_hash
-// for chunk-level drift reuse (task-3 of the chunk-level drift-detection design).
-func TestChunkInputCarriesContentHash(t *testing.T) {
-	c := ChunkInput{ContentHash: []byte{1, 2, 3}}
-	if len(c.ContentHash) != 3 {
-		t.Fatalf("ContentHash not carried")
-	}
-}
-
 // asValidation is errors.As without importing errors in the test for one call.
 func asValidation(err error, target **ValidationError) bool {
 	v, ok := err.(*ValidationError)

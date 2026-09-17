@@ -77,13 +77,3 @@ func parseVector(s string) ([]float32, error) {
 	}
 	return out, nil
 }
-
-// keyByHex maps parallel hashes and vectors into a hex-keyed map (test helper +
-// used by callers assembling a reuse map).
-func keyByHex(hashes [][]byte, vecs [][]float32) map[string][]float32 {
-	out := make(map[string][]float32, len(hashes))
-	for i := range hashes {
-		out[hex.EncodeToString(hashes[i])] = vecs[i]
-	}
-	return out
-}
