@@ -154,6 +154,7 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	// encryption, SPEC-09 §2, C-4). Never returned by any response, never logged.
 	sourcesSvc.Encrypter = cipher
 	sourcesSvc.Decrypter = cipher
+	sourcesSvc.Log = log
 	sourceHandlers := sources.NewHandlers(sourcesSvc)
 
 	// Connector-kind form schema (SPEC-11 §10, ADR-0075, STORY-11.2): GET
@@ -189,6 +190,7 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	docSvc.MaxBytes = cfg.MaxUploadBytes
 	docSvc.UploadSource = documents.UploadSourceFromPool(pool)
 	docSvc.Limits = documents.SettingsUploadLimits{Settings: settingsSvc}
+	docSvc.Log = log
 	if cfg.ObjectStoreEndpoint != "" {
 		store, oerr := objectstore.New(ctx, objectstore.Config{
 			Endpoint:  cfg.ObjectStoreEndpoint,
@@ -216,6 +218,7 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	// middleware record the cancelled terminal. See ADR-0031, ADR-0062. ---
 	jobsSvc := jobs.NewService(jobs.FromPool(pool))
 	jobsSvc.Canceller = riverCanceller{pool: pool, client: insertClient}
+	jobsSvc.Log = log
 	jobHandlers := jobs.NewHandlers(jobsSvc)
 
 	// --- Retrieve (tenant-scoped hybrid retrieval, STORY-08.2, FR-RET-08). Reads

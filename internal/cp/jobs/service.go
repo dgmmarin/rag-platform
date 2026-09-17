@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -52,9 +53,12 @@ type Page struct {
 
 // Service is the jobs domain logic. It holds the Store and an optional Canceller
 // (nil = the EPIC-09 River seam). It is stateless and safe for concurrent use.
+// Log is optional (nil-tolerant); when set, it receives structured lifecycle
+// events (event=cancel_requested) an operator can trace per source (EPIC-12).
 type Service struct {
 	Store     Store
 	Canceller Canceller
+	Log       *slog.Logger
 }
 
 // NewService builds a jobs service over the given store. Canceller is left nil
@@ -152,6 +156,7 @@ func (s *Service) Cancel(ctx context.Context, tenantID, id string) (Job, error) 
 			return Job{}, fmt.Errorf("jobs: cancel: %w", err)
 		}
 		if changed {
+			s.logCancelRequested(updated)
 			return updated.withDuration(), nil
 		}
 		// ponytail: narrow race — the job left 'queued' between the read and the
@@ -180,10 +185,33 @@ func (s *Service) cancelNonQueued(ctx context.Context, tenantID string, job Job)
 		// The mirror-row transition running->cancelled is the worker's job
 		// (SPEC-08 §3); the row is still running until the worker exits between
 		// documents. The handler returns 202 (cancellation requested).
+		s.logCancelRequested(job)
 		return job.withDuration(), nil
 	default: // succeeded, failed
 		return Job{}, ErrNotCancellable
 	}
+}
+
+// logCancelRequested emits event=cancel_requested for a job whose cancel this
+// call just accepted (queued-immediate or running-signalled). It carries ids,
+// kind, tenant/source and status only — never document text (C-3/C-4) — so an
+// operator can trace a source's whole job history in logs. No-op when Log is nil.
+func (s *Service) logCancelRequested(job Job) {
+	if s.Log == nil {
+		return
+	}
+	s.Log.Info("job cancel requested",
+		"event", "cancel_requested", "job_id", job.ID, "kind", job.Kind,
+		"tenant_id", job.TenantID, "source_id", derefOr(job.SourceID, ""),
+		"status", job.Status)
+}
+
+// derefOr returns *p, or def when p is nil.
+func derefOr(p *string, def string) string {
+	if p == nil {
+		return def
+	}
+	return *p
 }
 
 // encodeCursor serialises a Cursor to an opaque base64url token.
