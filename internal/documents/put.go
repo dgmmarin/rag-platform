@@ -47,6 +47,7 @@ type ChunkInput struct {
 	TokenCount     int
 	Embedding      []float32
 	EmbeddingModel string
+	ContentHash    []byte          // sha256(embed-text); chunk-level drift key
 	Metadata       json.RawMessage // nil => '{}'
 }
 
@@ -166,12 +167,12 @@ func (TenantStore) Put(ctx context.Context, db *tenant.DB, in PutInput) (PutResu
 			if _, err := tx.Exec(ctx, `
 				insert into chunks
 					(document_id, version_id, source_id, position, heading_path,
-					 content, token_count, embedding, embedding_model, metadata)
-				values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8::vector, $9,
-				        coalesce($10::jsonb, '{}'::jsonb))`,
+					 content, token_count, embedding, embedding_model, content_hash, metadata)
+				values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8::vector, $9, $10,
+				        coalesce($11::jsonb, '{}'::jsonb))`,
 				docID, versionID, in.SourceID, c.Position, hp,
 				c.Content, c.TokenCount, vectorLiteral(c.Embedding), c.EmbeddingModel,
-				nullableJSON(c.Metadata)); err != nil {
+				c.ContentHash, nullableJSON(c.Metadata)); err != nil {
 				return PutResult{}, err
 			}
 			// ponytail: one Exec per chunk (O(n) round trips inside the tx). Chunk
