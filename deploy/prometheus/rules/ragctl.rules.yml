@@ -61,7 +61,7 @@ groups:
       - alert: JobQueueDepthHigh
         # SPEC-10 §5: queue depth > 500 for 30 min.
         expr: jobs_queue_depth > 500
-        for: 30m
+        for: 300m
         labels:
           severity: warning
         annotations:

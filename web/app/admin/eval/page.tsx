@@ -1,6 +1,8 @@
 "use client";
 
 import { EvalRunsTable } from "@/components/EvalRunsTable";
+import { Pagination } from "@/components/Pagination";
+import { usePagination } from "@/lib/pagination";
 import { useEvalRuns } from "@/lib/eval";
 
 function LoadingSkeleton() {
@@ -20,6 +22,7 @@ function LoadingSkeleton() {
 
 export default function EvalPage() {
   const { data, isLoading, isError, error } = useEvalRuns();
+  const paged = usePagination(data?.items ?? []);
 
   return (
     <div className="flex flex-col gap-1">
@@ -33,7 +36,16 @@ export default function EvalPage() {
           Could not load eval runs: {error instanceof Error ? error.message : "unknown error"}
         </div>
       ) : (
-        <EvalRunsTable runs={data?.items ?? []} />
+        <>
+          <EvalRunsTable runs={paged.pageItems} />
+          <Pagination
+            page={paged.page}
+            pageCount={paged.pageCount}
+            total={paged.total}
+            onPrev={paged.prev}
+            onNext={paged.next}
+          />
+        </>
       )}
     </div>
   );

@@ -4,6 +4,8 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { TenantsTable } from "@/components/TenantsTable";
+import { Pagination } from "@/components/Pagination";
+import { usePagination } from "@/lib/pagination";
 import {
   createTenant,
   deleteTenant,
@@ -40,6 +42,7 @@ export default function TenantsPage() {
   const [addError, setAddError] = useState<string | null>(null);
 
   const { data, isLoading, isError, error } = useTenants();
+  const paged = usePagination(data?.items ?? []);
 
   function invalidate() {
     void qc.invalidateQueries({ queryKey: ["platform-tenants"] });
@@ -209,8 +212,9 @@ export default function TenantsPage() {
           Could not load tenants: {error instanceof Error ? error.message : "unknown error"}
         </div>
       ) : (
+        <>
         <TenantsTable
-          tenants={data?.items ?? []}
+          tenants={paged.pageItems}
           onSuspend={(t) => suspend.mutate(t)}
           onActivate={(t) => activate.mutate(t)}
           onDelete={(t) => {
@@ -220,6 +224,14 @@ export default function TenantsPage() {
           }}
           busyId={busyId}
         />
+        <Pagination
+          page={paged.page}
+          pageCount={paged.pageCount}
+          total={paged.total}
+          onPrev={paged.prev}
+          onNext={paged.next}
+        />
+        </>
       )}
     </div>
   );

@@ -6,6 +6,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { useTenant } from "@/lib/tenant";
 import { SourcesTable } from "@/components/SourcesTable";
+import { Pagination } from "@/components/Pagination";
+import { usePagination } from "@/lib/pagination";
 import { deleteSource, syncSource, testSource, useSources, type Source } from "@/lib/sources";
 
 function LoadingSkeleton() {
@@ -32,6 +34,7 @@ export default function SourcesPage() {
 
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const { data, isLoading, isError, error } = useSources();
+  const paged = usePagination(data?.items ?? []);
 
   function invalidate() {
     void qc.invalidateQueries({ queryKey: ["sources", tenantId] });
@@ -113,8 +116,9 @@ export default function SourcesPage() {
           Could not load sources: {error instanceof Error ? error.message : "unknown error"}
         </div>
       ) : (
+        <>
         <SourcesTable
-          sources={data?.items ?? []}
+          sources={paged.pageItems}
           onSync={(s) => sync.mutate(s)}
           onFullSync={(s) => {
             if (
@@ -129,6 +133,14 @@ export default function SourcesPage() {
           onDelete={(s) => del.mutate(s)}
           busyId={busyId}
         />
+        <Pagination
+          page={paged.page}
+          pageCount={paged.pageCount}
+          total={paged.total}
+          onPrev={paged.prev}
+          onNext={paged.next}
+        />
+        </>
       )}
     </div>
   );

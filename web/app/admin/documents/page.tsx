@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { DocumentsTable } from "@/components/DocumentsTable";
+import { Pagination } from "@/components/Pagination";
+import { usePagination } from "@/lib/pagination";
 import { useDocuments, type DocumentFilter, type DocumentStatus } from "@/lib/documents";
 
 // The status filter offers "all" plus each document status (schemas/tenant.sql
@@ -39,6 +41,7 @@ export default function DocumentsPage() {
     ...(q ? { q } : {}),
   };
   const { data, isLoading, isError, error } = useDocuments(filter);
+  const paged = usePagination(data?.items ?? []);
 
   return (
     <div className="flex flex-col gap-1">
@@ -86,7 +89,16 @@ export default function DocumentsPage() {
           Could not load documents: {error instanceof Error ? error.message : "unknown error"}
         </div>
       ) : (
-        <DocumentsTable documents={data?.items ?? []} />
+        <>
+          <DocumentsTable documents={paged.pageItems} />
+          <Pagination
+            page={paged.page}
+            pageCount={paged.pageCount}
+            total={paged.total}
+            onPrev={paged.prev}
+            onNext={paged.next}
+          />
+        </>
       )}
     </div>
   );

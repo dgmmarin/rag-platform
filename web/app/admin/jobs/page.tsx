@@ -5,6 +5,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { useTenant } from "@/lib/tenant";
 import { JobsTable } from "@/components/JobsTable";
+import { Pagination } from "@/components/Pagination";
+import { usePagination } from "@/lib/pagination";
 import { cancelJob, useJobs, type Job, type JobFilter, type JobStatus } from "@/lib/jobs";
 
 // The status filter offers "all" plus each job status (SPEC-08).
@@ -44,6 +46,7 @@ export default function JobsPage() {
 
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const { data, isLoading, isError, error } = useJobs(filter);
+  const paged = usePagination(data?.items ?? []);
 
   const cancel = useMutation({
     mutationFn: (j: Job) => cancelJob(tenantId as string, j.id, csrf),
@@ -103,7 +106,16 @@ export default function JobsPage() {
           Could not load jobs: {error instanceof Error ? error.message : "unknown error"}
         </div>
       ) : (
-        <JobsTable jobs={data?.items ?? []} onCancel={(j) => cancel.mutate(j)} busyId={busyId} />
+        <>
+          <JobsTable jobs={paged.pageItems} onCancel={(j) => cancel.mutate(j)} busyId={busyId} />
+          <Pagination
+            page={paged.page}
+            pageCount={paged.pageCount}
+            total={paged.total}
+            onPrev={paged.prev}
+            onNext={paged.next}
+          />
+        </>
       )}
     </div>
   );

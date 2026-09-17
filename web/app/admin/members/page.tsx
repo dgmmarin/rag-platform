@@ -5,6 +5,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { useTenant } from "@/lib/tenant";
 import { MembersTable } from "@/components/MembersTable";
+import { Pagination } from "@/components/Pagination";
+import { usePagination } from "@/lib/pagination";
 import {
   addMember,
   removeMember,
@@ -42,6 +44,7 @@ export default function MembersPage() {
   const [addError, setAddError] = useState<string | null>(null);
 
   const { data, isLoading, isError, error } = useMembers();
+  const paged = usePagination(data ?? []);
 
   function invalidate() {
     void qc.invalidateQueries({ queryKey: ["members", tenantId] });
@@ -160,12 +163,21 @@ export default function MembersPage() {
           Could not load members: {error instanceof Error ? error.message : "unknown error"}
         </div>
       ) : (
-        <MembersTable
-          members={data ?? []}
-          onSetRole={(member, newRole) => setRoleMut.mutate({ member, role: newRole })}
-          onRemove={(m) => remove.mutate(m)}
-          busyId={busyId}
-        />
+        <>
+          <MembersTable
+            members={paged.pageItems}
+            onSetRole={(member, newRole) => setRoleMut.mutate({ member, role: newRole })}
+            onRemove={(m) => remove.mutate(m)}
+            busyId={busyId}
+          />
+          <Pagination
+            page={paged.page}
+            pageCount={paged.pageCount}
+            total={paged.total}
+            onPrev={paged.prev}
+            onNext={paged.next}
+          />
+        </>
       )}
     </div>
   );

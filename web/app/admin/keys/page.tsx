@@ -5,6 +5,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { useTenant } from "@/lib/tenant";
 import { ApiKeysTable } from "@/components/ApiKeysTable";
+import { Pagination } from "@/components/Pagination";
+import { usePagination } from "@/lib/pagination";
 import { CreateKeyDialog } from "@/components/CreateKeyDialog";
 import {
   createApiKey,
@@ -38,6 +40,7 @@ export default function ApiKeysPage() {
 
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const { data, isLoading, isError, error } = useApiKeys();
+  const paged = usePagination(data ?? []);
 
   function invalidate() {
     void qc.invalidateQueries({ queryKey: ["api-keys", tenantId] });
@@ -93,7 +96,16 @@ export default function ApiKeysPage() {
           Could not load API keys: {error instanceof Error ? error.message : "unknown error"}
         </div>
       ) : (
-        <ApiKeysTable keys={data ?? []} onRevoke={(k) => revoke.mutate(k)} busyId={busyId} />
+        <>
+          <ApiKeysTable keys={paged.pageItems} onRevoke={(k) => revoke.mutate(k)} busyId={busyId} />
+          <Pagination
+            page={paged.page}
+            pageCount={paged.pageCount}
+            total={paged.total}
+            onPrev={paged.prev}
+            onNext={paged.next}
+          />
+        </>
       )}
     </div>
   );
