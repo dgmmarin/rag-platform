@@ -78,8 +78,11 @@ func chunk(id, doc, marker string, score float64) Chunk {
 
 func groundedSettings() Settings {
 	return Settings{
-		TenantName:       "Acme",
-		MinScore:         0.02,
+		TenantName: "Acme",
+		MinScore:   0.02,
+		// The grounding floor applies only on reranker scores; these tests exercise
+		// the floor, so mark the chunks as reranked (SPEC-06 §4).
+		Reranked:         true,
 		TokenBudget:      6000,
 		HistoryN:         6,
 		MaxTokens:        1024,
@@ -90,6 +93,32 @@ func groundedSettings() Settings {
 }
 
 // --- Grounding refusal (SPEC-06 §4) ---
+
+// Without a reranker the score is the rank-based fused RRF value (a single-list
+// hit tops out at ~0.016), so the absolute grounding floor must NOT apply — a low
+// score is not "irrelevant", and flooring it makes retrieval keyword-only. The LLM
+// is called and answers from the retrieved context (Settings.Reranked=false).
+func TestBelowFloorPassesWithoutReranker(t *testing.T) {
+	prov := &fakeProvider{resp: llm.Response{Text: "The answer is 42 [1]."}}
+	svc := &Service{Providers: &fakeFactory{p: prov}}
+
+	set := groundedSettings()
+	set.Reranked = false // no reranker → RRF scores → floor disabled
+
+	req := Request{
+		TenantID: "t-1",
+		Question: "How do I reset the X200?",
+		Chunks:   []Chunk{chunk("c1", "d1", "alpha", 0.01)}, // below the 0.02 floor
+		Settings: set,
+	}
+	res, err := svc.Answer(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !res.Grounded {
+		t.Fatalf("without a reranker a low RRF score must not be floored; got a refusal: %q", res.Answer)
+	}
+}
 
 func TestBelowFloorRefusesWithoutLLMCall(t *testing.T) {
 	prov := &fakeProvider{resp: llm.Response{Text: "should never be returned"}}

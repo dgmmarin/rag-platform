@@ -176,8 +176,12 @@ func (w *syncWorker) Work(ctx context.Context, job *river.Job[SyncSourceArgs]) e
 		Embedder: emb,
 		SourceID: a.SourceID,
 		Mode:     mode,
-		Chunk:    chunk.Config{TargetTokens: s.ChunkTarget, OverlapTokens: s.ChunkOverlap},
-		Model:    s.EmbeddingModel,
+		// SeenSince is the run-series start (stable across retries), so a resumed
+		// full sync does not soft-delete pages fetched in an earlier attempt but not
+		// re-emitted on resume (ISSUE-0065). River preserves CreatedAt across retries.
+		SeenSince: job.CreatedAt,
+		Chunk:     chunk.Config{TargetTokens: s.ChunkTarget, OverlapTokens: s.ChunkOverlap},
+		Model:     s.EmbeddingModel,
 		// SPEC-10 §2 labels: tenant id, the source's kind, the embedding provider.
 		Metrics:    w.metrics,
 		Tenant:     a.TenantID,

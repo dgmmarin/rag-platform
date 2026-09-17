@@ -161,6 +161,15 @@ type Config struct {
 
 	// Now is the clock; nil uses time.Now. startedAt is captured at New.
 	Now func() time.Time
+
+	// SeenSince is the boundary a FULL sync's delete pass compares last_seen_at
+	// against: documents not seen since this time are soft-deleted. It must be the
+	// start of the whole RUN SERIES, not of this attempt — otherwise a sync that
+	// retried (resuming, and so NOT re-emitting pages fetched in an earlier attempt)
+	// deletes those earlier pages (ISSUE-0065). The worker passes the River job's
+	// CreatedAt, which is stable across retries. Zero falls back to the attempt start
+	// (correct for a single-attempt run).
+	SeenSince time.Time
 }
 
 // Sink orchestrates one sync run. It is not safe for concurrent Put calls (a
@@ -169,17 +178,24 @@ type Sink struct {
 	cfg       Config
 	now       func() time.Time
 	startedAt time.Time
+	seenSince time.Time
 	stats     Stats
 }
 
-// New builds a sink and captures the run's start time (the boundary Complete
-// compares last_seen_at against).
+// New builds a sink. startedAt is this attempt's start (used for DurationMS);
+// seenSince is the delete boundary Complete compares last_seen_at against — the
+// run-series start when the worker supplies it (ISSUE-0065), else the attempt start.
 func New(cfg Config) *Sink {
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
 	}
-	return &Sink{cfg: cfg, now: now, startedAt: now()}
+	startedAt := now()
+	seenSince := cfg.SeenSince
+	if seenSince.IsZero() {
+		seenSince = startedAt
+	}
+	return &Sink{cfg: cfg, now: now, startedAt: startedAt, seenSince: seenSince}
 }
 
 // Put ingests one document through the SPEC-05 §1 flow. It returns:
@@ -264,7 +280,7 @@ func (s *Sink) Complete(ctx context.Context) error {
 	if s.cfg.Mode != Full {
 		return nil
 	}
-	deleted, err := s.cfg.Store.SoftDeleteUnseen(ctx, s.cfg.DB, s.cfg.SourceID, s.startedAt)
+	deleted, err := s.cfg.Store.SoftDeleteUnseen(ctx, s.cfg.DB, s.cfg.SourceID, s.seenSince)
 	if err != nil {
 		return err
 	}

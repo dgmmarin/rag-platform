@@ -134,7 +134,10 @@ func settingsDoc() map[string]any {
 			"provider": "anthropic", "model": "claude-sonnet-5",
 			"max_tokens": float64(1024), "models_allowed": []any{"claude-sonnet-5"},
 		},
-		"retrieval":         map[string]any{"min_score": 0.02, "final_k": float64(8)},
+		"retrieval": map[string]any{"min_score": 0.02, "final_k": float64(8)},
+		// The grounding floor (min_score) applies only when a reranker produces 0..1
+		// relevance scores; these tests exercise that floor, so the reranker is on.
+		"reranker":          map[string]any{"enabled": true},
 		"answering":         map[string]any{"token_budget": float64(6000), "history_n": float64(6)},
 		"providers_allowed": []any{"anthropic"},
 	}

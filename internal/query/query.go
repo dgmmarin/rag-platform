@@ -369,6 +369,11 @@ func parseAnswerSettings(doc map[string]any) answer.Settings {
 	if ret, ok := doc["retrieval"].(map[string]any); ok {
 		s.MinScore = toFloat(ret["min_score"])
 	}
+	// The grounding floor only applies when a reranker produces 0..1 relevance
+	// scores; otherwise the score is rank-based RRF and the floor is skipped.
+	if rr, ok := doc["reranker"].(map[string]any); ok {
+		s.Reranked, _ = rr["enabled"].(bool)
+	}
 	if ans, ok := doc["answering"].(map[string]any); ok {
 		s.TokenBudget = toInt(ans["token_budget"])
 		s.HistoryN = toInt(ans["history_n"])

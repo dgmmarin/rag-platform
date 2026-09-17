@@ -471,7 +471,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           onChange={(v) => set("minScore", v)}
           error={errFor("retrieval.min_score")}
           step="0.01"
-          description="Grounding floor: a chunk scoring below this is dropped, and if none remain the answer refuses as not grounded. With the reranker off, scores are small (about 0.01–0.03), so keep this low."
+          description="Grounding floor on the reranker's relevance score: a chunk below it is dropped, and if none remain the answer refuses. It applies only when the reranker is enabled; without a reranker the model judges the retrieved context instead."
         />
       </Section>
 

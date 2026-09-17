@@ -95,6 +95,13 @@ type Settings struct {
 
 	// MinScore is settings.retrieval.min_score, the grounding floor (SPEC-06 §4).
 	MinScore float64
+	// Reranked is true when the retrieved chunks carry reranker relevance scores
+	// (settings.reranker.enabled). The grounding floor is only meaningful on that
+	// 0..1 scale; without a reranker the score is the rank-based fused RRF value
+	// (a single-list hit tops out at ~0.016), so an absolute floor there drops every
+	// semantic-only match and makes retrieval keyword-only. minScore() applies the
+	// floor only when Reranked.
+	Reranked bool
 	// TokenBudget is settings.answering.token_budget (default 6k, SPEC-06 §5).
 	TokenBudget int
 	// HistoryN is settings.answering.history_n, trailing turns to include.
@@ -110,6 +117,14 @@ type Settings struct {
 }
 
 func (s Settings) minScore() float64 {
+	// The grounding floor is a relevance threshold, meaningful only on the reranker's
+	// 0..1 score. Without a reranker the score is the fused RRF value (rank-based,
+	// ~0.016 for a single-list hit), so an absolute floor would drop every
+	// semantic-only match; disable the floor and rely on final_k plus the model's own
+	// grounding refusal. See Settings.Reranked.
+	if !s.Reranked {
+		return 0
+	}
 	if s.MinScore <= 0 {
 		return DefaultMinScore
 	}

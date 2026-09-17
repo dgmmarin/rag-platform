@@ -312,6 +312,26 @@ func TestCompleteFullSyncSoftDeletesUnseen(t *testing.T) {
 	}
 }
 
+// ISSUE-0065: the delete pass compares last_seen_at against SeenSince (the run-
+// series start the worker passes), not this attempt's start — so a resumed full
+// sync does not soft-delete pages fetched in an earlier attempt.
+func TestCompleteFullSyncUsesSeenSinceNotAttemptStart(t *testing.T) {
+	store := &fakeStore{deleteCount: 0}
+	runStart := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC) // an earlier attempt's start
+	s := New(Config{
+		Store: store, Local: parse.Default(), Embedder: &fakeEmbedder{dim: 4},
+		SourceID: testSourceID, Mode: Full, Model: "m",
+		Now:       func() time.Time { return runStart.Add(20 * time.Minute) }, // this attempt is later
+		SeenSince: runStart,
+	})
+	if err := s.Complete(context.Background()); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if !store.deleteSince.Equal(runStart) {
+		t.Fatalf("delete boundary = %v, want the run-series start %v (ISSUE-0065)", store.deleteSince, runStart)
+	}
+}
+
 func TestCompleteIncrementalDoesNotDelete(t *testing.T) {
 	store := &fakeStore{deleteCount: 9}
 	s := New(Config{
