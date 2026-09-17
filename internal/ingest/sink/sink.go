@@ -18,6 +18,7 @@ package sink
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/documents"
 	"github.com/rag-platform/ragctl/internal/ingest/chunk"
 	"github.com/rag-platform/ragctl/internal/ingest/embed"
+	"github.com/rag-platform/ragctl/internal/ingest/embedcache"
 	"github.com/rag-platform/ragctl/internal/ingest/parse"
 	"github.com/rag-platform/ragctl/internal/obs"
 	"github.com/rag-platform/ragctl/internal/tenant"
@@ -91,16 +93,18 @@ const maxDocErrors = 100
 // the list is truncated. Stats() guarantees Errors marshals as a list ([], never
 // null) so the persisted value always matches the SPEC-05 §6 shape.
 type Stats struct {
-	DocsSeen      int        `json:"docs_seen"`
-	DocsChanged   int        `json:"docs_changed"`
-	DocsUnchanged int        `json:"docs_unchanged"`
-	DocsDeleted   int        `json:"docs_deleted"`
-	DocsFailed    int        `json:"docs_failed"`
-	ChunksWritten int        `json:"chunks_written"`
-	EmbedTokens   int        `json:"embed_tokens"`
-	BytesFetched  int64      `json:"bytes_fetched"`
-	DurationMS    int64      `json:"duration_ms"`
-	Errors        []DocError `json:"errors"`
+	DocsSeen       int        `json:"docs_seen"`
+	DocsChanged    int        `json:"docs_changed"`
+	DocsUnchanged  int        `json:"docs_unchanged"`
+	DocsDeleted    int        `json:"docs_deleted"`
+	DocsFailed     int        `json:"docs_failed"`
+	ChunksWritten  int        `json:"chunks_written"`
+	ChunksEmbedded int        `json:"chunks_embedded"`
+	ChunksReused   int        `json:"chunks_reused"`
+	EmbedTokens    int        `json:"embed_tokens"`
+	BytesFetched   int64      `json:"bytes_fetched"`
+	DurationMS     int64      `json:"duration_ms"`
+	Errors         []DocError `json:"errors"`
 }
 
 // SnoozeError signals the caller (the worker) to SNOOZE the job — pause and retry
@@ -149,6 +153,11 @@ type Config struct {
 	Mode     Mode
 	Chunk    chunk.Config // target/overlap from tenant settings; zero values use SPEC-05 §3 defaults
 	Model    string       // embedding model id stamped on every chunk (Invariant 3)
+
+	// Cache looks up existing embeddings for byte-identical chunk content
+	// (chunk-level drift reuse). Nil treats every chunk as a miss, so existing
+	// callers/tests without a cache are unaffected.
+	Cache embedcache.Cache
 
 	// Metrics records ingest_documents_total / ingest_chunks_total /
 	// embed_tokens_total (SPEC-10 §2). Optional: a nil Metrics is a no-op.
@@ -238,38 +247,81 @@ func (s *Sink) Put(ctx context.Context, doc Document) error {
 	// 4. Chunk (structure-aware; target/overlap from settings).
 	chunks := chunk.Document(norm, s.cfg.Chunk)
 
-	// 5. Embed (batched, with the breaker/retry inside the Embedder). A circuit-open
+	// Per-chunk content hash of the exact embed-text (chunk-level drift key).
+	hashes := make([][]byte, len(chunks))
+	texts := embedTexts(chunks)
+	for i, txt := range texts {
+		sum := sha256.Sum256([]byte(txt))
+		hashes[i] = sum[:]
+	}
+
+	// Reuse: ask the cache which hashes already have an embedding for this model.
+	// A nil Cache means no lookup, so every chunk is a miss.
+	reuse := map[string][]float32{}
+	if s.cfg.Cache != nil {
+		var err error
+		reuse, err = s.cfg.Cache.Lookup(ctx, s.cfg.DB, s.cfg.Model, hashes)
+		if err != nil {
+			return err // infrastructure error: fail the job for retry
+		}
+	}
+
+	// 5. Embed only the misses in one batched call (batched, with the
+	// breaker/retry inside the Embedder), preserving chunk order. A circuit-open
 	// snoozes the job; any other embed error is a recorded per-document failure —
 	// the document keeps its previous version because the commit tx is never opened
 	// (SPEC-05 §5). The breaker escalates a sustained provider outage into a snooze.
-	res, err := s.cfg.Embedder.Embed(ctx, embedTexts(chunks))
-	if err != nil {
-		if errors.Is(err, embed.ErrCircuitOpen) {
-			return &SnoozeError{Err: err}
+	var missTexts []string
+	var missIdx []int
+	for i := range chunks {
+		if _, hit := reuse[hex.EncodeToString(hashes[i])]; !hit {
+			missTexts = append(missTexts, texts[i])
+			missIdx = append(missIdx, i)
 		}
-		s.recordFailure(doc.ExternalID, err)
-		return nil
 	}
-	if len(res.Vectors) != len(chunks) {
-		return fmt.Errorf("sink: embedder returned %d vectors for %d chunks", len(res.Vectors), len(chunks))
+	vectors := make([][]float32, len(chunks))
+	for i := range chunks {
+		if v, hit := reuse[hex.EncodeToString(hashes[i])]; hit {
+			vectors[i] = v
+		}
 	}
+	var tokens int
+	if len(missTexts) > 0 {
+		res, err := s.cfg.Embedder.Embed(ctx, missTexts)
+		if err != nil {
+			if errors.Is(err, embed.ErrCircuitOpen) {
+				return &SnoozeError{Err: err}
+			}
+			s.recordFailure(doc.ExternalID, err)
+			return nil
+		}
+		if len(res.Vectors) != len(missTexts) {
+			return fmt.Errorf("sink: embedder returned %d vectors for %d chunks", len(res.Vectors), len(missTexts))
+		}
+		for j, idx := range missIdx {
+			vectors[idx] = res.Vectors[j]
+		}
+		tokens = res.Tokens
+		s.cfg.Metrics.AddEmbedTokens(s.cfg.Tenant, s.cfg.Provider, tokens)
+	}
+	s.stats.ChunksEmbedded += len(missTexts)
+	s.stats.ChunksReused += len(chunks) - len(missTexts)
 
 	// 6. Commit: insert version + chunks and flip current_version in ONE
 	// transaction (ADR-0008, SPEC-05 §5). A store error fails the job for retry;
 	// nothing partial is left behind (the transaction rolls back).
-	in := s.putInput(doc, norm, content, hash, parser, chunks, res.Vectors)
+	in := s.putInput(doc, norm, content, hash, parser, chunks, hashes, vectors)
 	if _, err := s.cfg.Store.Put(ctx, s.cfg.DB, in); err != nil {
 		return err
 	}
 
 	s.stats.DocsChanged++
 	s.stats.ChunksWritten += len(chunks)
-	s.stats.EmbedTokens += res.Tokens
+	s.stats.EmbedTokens += tokens
 	// SPEC-10 §2 ingestion throughput: mirror the stats increments exactly. Counts
 	// only — never document content (C-3).
 	s.cfg.Metrics.IncIngestDocument(s.cfg.Tenant, s.cfg.SourceKind, "changed")
 	s.cfg.Metrics.AddIngestChunks(s.cfg.Tenant, s.cfg.Provider, len(chunks))
-	s.cfg.Metrics.AddEmbedTokens(s.cfg.Tenant, s.cfg.Provider, res.Tokens)
 	return nil
 }
 
@@ -331,8 +383,8 @@ func (s *Sink) parse(ctx context.Context, doc Document) (parse.Normalised, strin
 
 // putInput assembles the store's PutInput from the parsed/chunked/embedded
 // document. Each chunk is stamped with the configured embedding model (Invariant
-// 3) and its aligned vector.
-func (s *Sink) putInput(doc Document, norm parse.Normalised, content string, hash []byte, parser string, chunks []chunk.Chunk, vectors [][]float32) documents.PutInput {
+// 3), its content hash (the chunk-level drift reuse key), and its aligned vector.
+func (s *Sink) putInput(doc Document, norm parse.Normalised, content string, hash []byte, parser string, chunks []chunk.Chunk, hashes [][]byte, vectors [][]float32) documents.PutInput {
 	in := documents.PutInput{
 		SourceID:    s.cfg.SourceID,
 		ExternalID:  doc.ExternalID,
@@ -354,6 +406,7 @@ func (s *Sink) putInput(doc Document, norm parse.Normalised, content string, has
 			HeadingPath:    c.HeadingPath,
 			Content:        c.Content,
 			TokenCount:     c.TokenCount,
+			ContentHash:    hashes[i],
 			Embedding:      vectors[i],
 			EmbeddingModel: s.cfg.Model,
 		}

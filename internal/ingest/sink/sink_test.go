@@ -3,6 +3,8 @@ package sink
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rag-platform/ragctl/internal/documents"
+	"github.com/rag-platform/ragctl/internal/ingest/chunk"
 	"github.com/rag-platform/ragctl/internal/ingest/embed"
 	"github.com/rag-platform/ragctl/internal/ingest/parse"
 	"github.com/rag-platform/ragctl/internal/ingest/sidecar"
@@ -57,16 +60,19 @@ func (f *fakeStore) SoftDeleteUnseen(_ context.Context, _ *tenant.DB, sourceID s
 }
 
 // fakeEmbedder returns a dim-length vector per text and a fixed token count, or a
-// preset error. It counts calls so a test can prove embed was skipped.
+// preset error. It counts calls, and records the size of the last request, so a
+// test can prove embed was skipped or called with only the missing chunks.
 type fakeEmbedder struct {
-	dim    int
-	tokens int
-	err    error
-	calls  int
+	dim       int
+	tokens    int
+	err       error
+	calls     int
+	lastCount int
 }
 
 func (f *fakeEmbedder) Embed(_ context.Context, texts []string) (embed.Result, error) {
 	f.calls++
+	f.lastCount = len(texts)
 	if f.err != nil {
 		return embed.Result{}, f.err
 	}
@@ -75,6 +81,20 @@ func (f *fakeEmbedder) Embed(_ context.Context, texts []string) (embed.Result, e
 		vecs[i] = make([]float32, f.dim)
 	}
 	return embed.Result{Vectors: vecs, Tokens: f.tokens}, nil
+}
+
+// fakeCache stands in for embedcache.Cache: known hashes hit, everything else
+// misses.
+type fakeCache struct{ known map[string][]float32 }
+
+func (f fakeCache) Lookup(_ context.Context, _ *tenant.DB, _ string, hashes [][]byte) (map[string][]float32, error) {
+	out := map[string][]float32{}
+	for _, h := range hashes {
+		if v, ok := f.known[hex.EncodeToString(h)]; ok {
+			out[hex.EncodeToString(h)] = v
+		}
+	}
+	return out, nil
 }
 
 // fakeSidecar stands in for the Python sidecar parse client.
@@ -108,6 +128,20 @@ func mdDoc() Document {
 		Filename:   "handbook.md",
 		MimeType:   "text/markdown",
 		Data:       []byte("# Handbook\n\nHello world, this is the body.\n"),
+	}
+}
+
+// threeSectionDoc parses into exactly 3 chunks (one per heading section), each
+// with a distinct EmbedText — used to test the chunk-level reuse cache.
+func threeSectionDoc() Document {
+	return Document{
+		ExternalID: "three.md",
+		Filename:   "three.md",
+		MimeType:   "text/markdown",
+		Data: []byte("# Handbook\n\n" +
+			"## Section One\n\nContent one.\n\n" +
+			"## Section Two\n\nContent two.\n\n" +
+			"## Section Three\n\nContent three.\n"),
 	}
 }
 
@@ -463,7 +497,8 @@ func TestStatsMarshalMatchesSpecShape(t *testing.T) {
 	}
 	want := []string{
 		"docs_seen", "docs_changed", "docs_unchanged", "docs_deleted", "docs_failed",
-		"chunks_written", "embed_tokens", "bytes_fetched", "duration_ms", "errors",
+		"chunks_written", "chunks_embedded", "chunks_reused", "embed_tokens",
+		"bytes_fetched", "duration_ms", "errors",
 	}
 	if len(m) != len(want) {
 		t.Fatalf("stats has %d keys, want %d: %s", len(m), len(want), b)
@@ -515,4 +550,98 @@ func TestPutBytesFetchedDefaultsToDataLength(t *testing.T) {
 	if got, want := s.Stats().BytesFetched, int64(len(doc.Data)); got != want {
 		t.Fatalf("BytesFetched = %d, want len(Data)=%d", got, want)
 	}
+}
+
+// TestPutReusesKnownChunkEmbeddings proves the chunk-level drift reuse path
+// (SPEC-05 §1): a changed document whose 3 chunks have 2 hashes already known to
+// the cache embeds only the missing chunk, in one batched call.
+func TestPutReusesKnownChunkEmbeddings(t *testing.T) {
+	doc := threeSectionDoc()
+	norm, err := parse.Default().Parse(doc.MimeType, doc.Data)
+	if err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	chunks := chunk.Document(norm, chunk.Config{})
+	if len(chunks) != 3 {
+		t.Fatalf("fixture chunk count = %d, want 3", len(chunks))
+	}
+	hashes := make([][]byte, len(chunks))
+	for i, c := range chunks {
+		sum := sha256.Sum256([]byte(c.EmbedText))
+		hashes[i] = sum[:]
+	}
+
+	// Seed the cache with the first two chunks' hashes; the third is a miss.
+	known := map[string][]float32{
+		hex.EncodeToString(hashes[0]): {0.1, 0.2, 0.3, 0.4},
+		hex.EncodeToString(hashes[1]): {0.5, 0.6, 0.7, 0.8},
+	}
+
+	store := &fakeStore{unchanged: false}
+	emb := &fakeEmbedder{dim: 4, tokens: 9}
+	cfg := baseConfig(store, emb, &fakeSidecar{})
+	cfg.Cache = fakeCache{known: known}
+	s := New(cfg)
+
+	if err := s.Put(context.Background(), doc); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if emb.calls != 1 {
+		t.Fatalf("embed calls = %d, want 1", emb.calls)
+	}
+	if emb.lastCount != 1 {
+		t.Fatalf("embed was asked for %d texts, want 1 (the single miss)", emb.lastCount)
+	}
+	if len(store.puts) != 1 {
+		t.Fatalf("Put store calls = %d, want 1", len(store.puts))
+	}
+	in := store.puts[0]
+	if len(in.Chunks) != 3 {
+		t.Fatalf("PutInput chunks = %d, want 3", len(in.Chunks))
+	}
+	for i, c := range in.Chunks {
+		if len(c.ContentHash) == 0 {
+			t.Fatalf("chunk %d has no ContentHash", i)
+		}
+		if !bytes.Equal(c.ContentHash, hashes[i]) {
+			t.Fatalf("chunk %d ContentHash mismatch", i)
+		}
+	}
+	// The reused chunks carry the cache's vectors verbatim; the embedded one
+	// carries whatever the fake embedder returned.
+	if !floatsEqual(in.Chunks[0].Embedding, known[hex.EncodeToString(hashes[0])]) {
+		t.Fatalf("chunk 0 embedding = %v, want reused vector", in.Chunks[0].Embedding)
+	}
+	if !floatsEqual(in.Chunks[1].Embedding, known[hex.EncodeToString(hashes[1])]) {
+		t.Fatalf("chunk 1 embedding = %v, want reused vector", in.Chunks[1].Embedding)
+	}
+	if len(in.Chunks[2].Embedding) != 4 {
+		t.Fatalf("chunk 2 embedding dim = %d, want 4", len(in.Chunks[2].Embedding))
+	}
+
+	st := s.Stats()
+	if st.ChunksReused != 2 {
+		t.Fatalf("ChunksReused = %d, want 2", st.ChunksReused)
+	}
+	if st.ChunksEmbedded != 1 {
+		t.Fatalf("ChunksEmbedded = %d, want 1", st.ChunksEmbedded)
+	}
+	if st.ChunksWritten != 3 {
+		t.Fatalf("ChunksWritten = %d, want 3", st.ChunksWritten)
+	}
+	if st.EmbedTokens != 9 {
+		t.Fatalf("EmbedTokens = %d, want 9 (only the miss call's tokens)", st.EmbedTokens)
+	}
+}
+
+func floatsEqual(a, b []float32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
