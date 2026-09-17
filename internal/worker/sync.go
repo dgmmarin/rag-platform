@@ -201,8 +201,12 @@ func (w *syncWorker) Work(ctx context.Context, job *river.Job[SyncSourceArgs]) e
 		Creds:    connector.Credentials(creds),
 		State:    state,
 		Full:     a.Full,
-		Limiter:  rate.NewLimiter(defaultCrawlRate, defaultCrawlBurst),
-		Log:      w.log,
+		// Since is the run-series start (stable across retries); the crawler scopes
+		// resume-skip to this run so a fresh full re-crawl re-fetches prior-run pages
+		// instead of skipping them all (ISSUE-0075).
+		Since:   job.CreatedAt,
+		Limiter: rate.NewLimiter(defaultCrawlRate, defaultCrawlBurst),
+		Log:     w.log,
 	}
 
 	// The connector enumerates into the bridge and calls sink.Complete itself.

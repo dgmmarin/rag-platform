@@ -105,6 +105,11 @@ type SyncRun struct {
 	Full     bool            // true = full enumeration; deletion detection allowed
 	Limiter  *rate.Limiter   // per-host politeness limiter
 	Log      *slog.Logger    // run-scoped logger (never logs document content)
+	// Since is the start of the whole run SERIES (the job's CreatedAt, stable across
+	// retries). A resumable connector uses it to tell a retry of THIS run (resume,
+	// skip already-fetched work) from a fresh run over prior state (re-fetch). Zero
+	// means "treat all persisted work as this run's" (the pre-resume-scoping default).
+	Since time.Time
 }
 
 // Connector is the common interface every source kind implements (FR-SRC-13,

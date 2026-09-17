@@ -295,6 +295,7 @@ func TestCompleteFullSyncSoftDeletesUnseen(t *testing.T) {
 		Store: store, Local: parse.Default(), Embedder: &fakeEmbedder{dim: 4},
 		SourceID: testSourceID, Mode: Full, Model: "m", Now: time.Now,
 	})
+	s.stats.DocsSeen = 5 // a non-empty crawl; the delete pass only runs when > 0
 	if err := s.Complete(context.Background()); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
@@ -324,11 +325,34 @@ func TestCompleteFullSyncUsesSeenSinceNotAttemptStart(t *testing.T) {
 		Now:       func() time.Time { return runStart.Add(20 * time.Minute) }, // this attempt is later
 		SeenSince: runStart,
 	})
+	s.stats.DocsSeen = 2 // a non-empty crawl
 	if err := s.Complete(context.Background()); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 	if !store.deleteSince.Equal(runStart) {
 		t.Fatalf("delete boundary = %v, want the run-series start %v (ISSUE-0065)", store.deleteSince, runStart)
+	}
+}
+
+// A full sync that saw ZERO documents must NOT run the delete pass — an empty
+// crawl means the source was unreachable, not empty, and deleting the whole corpus
+// then is catastrophic (a Full re-crawl that resume-skipped every page did exactly
+// this in production).
+func TestCompleteFullSyncZeroSeenSkipsDelete(t *testing.T) {
+	store := &fakeStore{deleteCount: 999}
+	s := New(Config{
+		Store: store, Local: parse.Default(), Embedder: &fakeEmbedder{dim: 4},
+		SourceID: testSourceID, Mode: Full, Model: "m", Now: time.Now,
+	})
+	// No Put happened, so DocsSeen == 0.
+	if err := s.Complete(context.Background()); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if store.deleteCalls != 0 {
+		t.Fatalf("SoftDeleteUnseen calls = %d, want 0 (zero-seen crawl must not delete)", store.deleteCalls)
+	}
+	if s.Stats().DocsDeleted != 0 {
+		t.Fatalf("DocsDeleted = %d, want 0", s.Stats().DocsDeleted)
 	}
 }
 

@@ -62,6 +62,11 @@ type crawler struct {
 	// full is SyncRun.Full: a full sync keeps the STORY-07.1 resume-skip; an
 	// incremental sync re-visits fetched pages conditionally (STORY-07.4).
 	full bool
+	// since is SyncRun.Since (the run-series start). A full sync resume-skips a
+	// fetched page only if it was fetched at/after this time (this run's earlier
+	// attempt); a page fetched in a PRIOR run is re-fetched, so a fresh full re-crawl
+	// re-lists the source instead of skipping everything and seeing zero documents.
+	since time.Time
 	// prior is the crawl_pages state loaded at run start, keyed by normalised URL —
 	// the source of a page's prior ETag/Last-Modified/content-hash for conditional GET.
 	prior map[string]Page
@@ -126,6 +131,7 @@ func (c *crawler) run(ctx context.Context, sr connector.SyncRun, sink connector.
 	}
 	c.limiter = sr.Limiter
 	c.full = sr.Full
+	c.since = sr.Since
 
 	// Resolve the PageStore capability of the run's State (SPEC-04 §2). Absent it,
 	// fall back to a non-resumable in-memory store and warn.
@@ -188,17 +194,24 @@ func (c *crawler) run(ctx context.Context, sr connector.SyncRun, sink connector.
 	//     no parse/emit). Complete is a no-op on an incremental sink, so skipping an
 	//     unchanged page can never soft-delete it (the deletion-detection reconciliation).
 	for norm, p := range loaded {
-		if p.Fetched && c.full {
+		// Resume-skip is scoped to THIS run series. A full sync skips a page only if it
+		// was already fetched at/after the run-series start (an earlier attempt of this
+		// run), so a retry resumes. A page fetched in a PRIOR run — or any pending page —
+		// is re-queued, so a fresh full re-crawl re-lists the whole source instead of
+		// skipping everything, fetching nothing, and (before the sink's zero-seen guard)
+		// wiping the corpus. Since==zero keeps the old "skip all fetched" behaviour.
+		withinSeries := p.Fetched && c.full && !p.LastFetchedAt.Before(c.since)
+		if withinSeries {
 			alreadyFetched[norm] = true
 		}
 		if c.visited[norm] {
-			continue // already queued (e.g. a seed); a fetched seed is re-visited unless FULL
+			continue // already queued (e.g. a seed)
 		}
 		c.visited[norm] = true
 		if p.Depth > c.cfg.MaxDepth {
 			continue
 		}
-		if !p.Fetched || !c.full {
+		if !withinSeries {
 			frontier[p.Depth] = append(frontier[p.Depth], item{norm: norm, raw: p.URL, depth: p.Depth})
 		}
 	}
@@ -219,7 +232,7 @@ func (c *crawler) run(ctx context.Context, sr connector.SyncRun, sink connector.
 		for _, it := range items {
 			it := it
 			if alreadyFetched[it.norm] {
-				continue // already fetched in a prior run — do not refetch (resume)
+				continue // fetched earlier in this run series (resume) — do not refetch
 			}
 			g.Go(func() error {
 				links, err := c.process(gctx, it, sink)

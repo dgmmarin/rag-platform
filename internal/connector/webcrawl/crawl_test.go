@@ -140,6 +140,52 @@ func TestCrawlTruncatedSkipsComplete(t *testing.T) {
 	}
 }
 
+// ISSUE-0075: a FRESH full re-crawl (a new run series) must re-fetch pages fetched
+// in a PRIOR run, not resume-skip them. Scoping resume to the run-series start
+// (SyncRun.Since) is what stops a re-crawl over fully-fetched state from fetching
+// nothing, seeing zero documents, and (before the sink's zero-seen guard) wiping
+// the corpus.
+func TestCrawlFullReCrawlRefetchesPriorRun(t *testing.T) {
+	var hits sync.Map
+	count := func(p string) { v, _ := hits.LoadOrStore(p, new(int32)); atomic.AddInt32(v.(*int32), 1) }
+	mux := http.NewServeMux()
+	mux.HandleFunc("/robots.txt", func(_ http.ResponseWriter, _ *http.Request) {})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { count("/"); _, _ = io.WriteString(w, "root") })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	hitCount := func(p string) int32 {
+		v, ok := hits.Load(p)
+		if !ok {
+			return 0
+		}
+		return atomic.LoadInt32(v.(*int32))
+	}
+
+	store := newMemPageStore()
+	cfg := config{StartURLs: []string{srv.URL + "/"}, MaxDepth: 1, MaxPages: 10, Concurrency: 1}.withDefaults()
+
+	// Run 1: fetch root (persisted with LastFetchedAt ~ now).
+	if _, err := newCrawler(cfg, srv.Client()).run(context.Background(), syncRun(store), newRecSink()); err != nil {
+		t.Fatalf("run1: %v", err)
+	}
+	if hitCount("/") != 1 {
+		t.Fatalf("run1 root hits = %d, want 1", hitCount("/"))
+	}
+
+	// Run 2: a NEW full run series whose start (Since) is AFTER run 1's fetch, so the
+	// persisted root is prior-run state and must be re-fetched.
+	run2 := connector.SyncRun{
+		SourceID: uuid.New(), State: store, Full: true,
+		Since: time.Now().Add(time.Hour), Log: testLogger(),
+	}
+	if _, err := newCrawler(cfg, srv.Client()).run(context.Background(), run2, newRecSink()); err != nil {
+		t.Fatalf("run2: %v", err)
+	}
+	if hitCount("/") != 2 {
+		t.Fatalf("root not refetched on a fresh full re-crawl (hits=%d); want 2 (ISSUE-0075)", hitCount("/"))
+	}
+}
+
 func TestCrawlMaxPagesCap(t *testing.T) {
 	var hits int32
 	mux := http.NewServeMux()

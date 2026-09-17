@@ -280,6 +280,14 @@ func (s *Sink) Complete(ctx context.Context) error {
 	if s.cfg.Mode != Full {
 		return nil
 	}
+	// Safety net: a full sync that saw ZERO documents almost always means the source
+	// was unreachable or the crawl fetched nothing — not that the source is genuinely
+	// empty. Soft-deleting the entire corpus in that case is catastrophic, so skip the
+	// delete pass; the next crawl that actually sees documents reconciles. (A source
+	// that truly emptied is re-listed by any run that reaches even one page.)
+	if s.stats.DocsSeen == 0 {
+		return nil
+	}
 	deleted, err := s.cfg.Store.SoftDeleteUnseen(ctx, s.cfg.DB, s.cfg.SourceID, s.seenSince)
 	if err != nil {
 		return err
