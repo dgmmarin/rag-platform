@@ -34,7 +34,7 @@ describe("SourcesTable", () => {
       }),
     ];
 
-    render(<SourcesTable sources={sources} onSync={vi.fn()} onTest={vi.fn()} onDelete={vi.fn()} />);
+    render(<SourcesTable sources={sources} onSync={vi.fn()} onFullSync={vi.fn()} onTest={vi.fn()} onDelete={vi.fn()} />);
 
     expect(screen.getByText("Docs site")).toBeInTheDocument();
     expect(screen.getByText("Wiki export")).toBeInTheDocument();
@@ -46,7 +46,7 @@ describe("SourcesTable", () => {
   });
 
   it("shows an empty state and no rows when there are no sources", () => {
-    render(<SourcesTable sources={[]} onSync={vi.fn()} onTest={vi.fn()} onDelete={vi.fn()} />);
+    render(<SourcesTable sources={[]} onSync={vi.fn()} onFullSync={vi.fn()} onTest={vi.fn()} onDelete={vi.fn()} />);
 
     expect(screen.getByText(/no sources yet/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /sync/i })).not.toBeInTheDocument();
@@ -58,18 +58,55 @@ describe("SourcesTable", () => {
     const onDelete = vi.fn();
     const source = makeSource({ id: "s1", name: "Docs site" });
 
-    render(<SourcesTable sources={[source]} onSync={onSync} onTest={onTest} onDelete={onDelete} />);
+    render(
+      <SourcesTable
+        sources={[source]}
+        onSync={onSync}
+        onFullSync={vi.fn()}
+        onTest={onTest}
+        onDelete={onDelete}
+      />,
+    );
 
     // edit is a link to the (Task 4) edit route
     const edit = screen.getByRole("link", { name: /edit/i });
     expect(edit).toHaveAttribute("href", "/admin/sources/s1/edit");
 
-    fireEvent.click(screen.getByRole("button", { name: /sync/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^sync$/i }));
     fireEvent.click(screen.getByRole("button", { name: /test/i }));
     fireEvent.click(screen.getByRole("button", { name: /delete/i }));
 
     expect(onSync).toHaveBeenCalledWith(source);
     expect(onTest).toHaveBeenCalledWith(source);
     expect(onDelete).toHaveBeenCalledWith(source);
+  });
+
+  it("offers Full re-crawl for a crawl source and wires it, but not for upload", () => {
+    const onFullSync = vi.fn();
+    const crawl = makeSource({ id: "s1", name: "Docs site", kind: "web_crawl" });
+
+    const { rerender } = render(
+      <SourcesTable
+        sources={[crawl]}
+        onSync={vi.fn()}
+        onFullSync={onFullSync}
+        onTest={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /full re-crawl/i }));
+    expect(onFullSync).toHaveBeenCalledWith(crawl);
+
+    // upload sources have nothing to re-crawl, so the action is hidden.
+    rerender(
+      <SourcesTable
+        sources={[makeSource({ id: "s2", name: "Upload", kind: "upload" })]}
+        onSync={vi.fn()}
+        onFullSync={onFullSync}
+        onTest={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /full re-crawl/i })).not.toBeInTheDocument();
   });
 });

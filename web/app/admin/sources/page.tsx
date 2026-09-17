@@ -46,6 +46,18 @@ export default function SourcesPage() {
     onError: (e: Error) => setNotice({ tone: "error", text: e.message }),
   });
 
+  // Full re-crawl (full=true) re-fetches every page, ignoring conditional-fetch
+  // caching. Use it to recover content after a truncated crawl; it is heavier, so
+  // the row action confirms first.
+  const fullSync = useMutation({
+    mutationFn: (s: Source) => syncSource(tenantId as string, s.id, csrf, true),
+    onSuccess: (_r, s) => {
+      setNotice({ tone: "ok", text: `Full re-crawl started for "${s.name}".` });
+      invalidate();
+    },
+    onError: (e: Error) => setNotice({ tone: "error", text: e.message }),
+  });
+
   const test = useMutation({
     mutationFn: (s: Source) => testSource(tenantId as string, s.id, csrf),
     onSuccess: (_r, s) => setNotice({ tone: "ok", text: `Connection test passed for "${s.name}".` }),
@@ -63,6 +75,7 @@ export default function SourcesPage() {
 
   const busyId: string | null =
     (sync.isPending ? sync.variables?.id : undefined) ??
+    (fullSync.isPending ? fullSync.variables?.id : undefined) ??
     (test.isPending ? test.variables?.id : undefined) ??
     (del.isPending ? del.variables?.id : undefined) ??
     null;
@@ -103,6 +116,15 @@ export default function SourcesPage() {
         <SourcesTable
           sources={data?.items ?? []}
           onSync={(s) => sync.mutate(s)}
+          onFullSync={(s) => {
+            if (
+              window.confirm(
+                `Full re-crawl of "${s.name}"? This re-fetches every page (heavier than a normal sync) and can restore content dropped by a truncated crawl.`,
+              )
+            ) {
+              fullSync.mutate(s);
+            }
+          }}
           onTest={(s) => test.mutate(s)}
           onDelete={(s) => del.mutate(s)}
           busyId={busyId}

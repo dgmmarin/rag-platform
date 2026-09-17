@@ -4,6 +4,7 @@ import type { Source } from "@/lib/sources";
 type SourcesTableProps = {
   sources: Source[];
   onSync: (source: Source) => void;
+  onFullSync: (source: Source) => void;
   onTest: (source: Source) => void;
   onDelete: (source: Source) => void;
   // busyId disables the row's actions while a mutation for that source runs.
@@ -58,7 +59,7 @@ function RowAction({
   );
 }
 
-export function SourcesTable({ sources, onSync, onTest, onDelete, busyId }: SourcesTableProps) {
+export function SourcesTable({ sources, onSync, onFullSync, onTest, onDelete, busyId }: SourcesTableProps) {
   if (sources.length === 0) {
     return (
       <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border px-6 py-16 text-center">
@@ -112,6 +113,9 @@ export function SourcesTable({ sources, onSync, onTest, onDelete, busyId }: Sour
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-end gap-1.5">
                     <RowAction label="Sync" onClick={() => onSync(s)} disabled={busy} />
+                    {s.kind !== "upload" ? (
+                      <RowAction label="Full re-crawl" onClick={() => onFullSync(s)} disabled={busy} />
+                    ) : null}
                     <RowAction label="Test" onClick={() => onTest(s)} disabled={busy} />
                     <Link
                       href={`/admin/sources/${s.id}/edit`}
