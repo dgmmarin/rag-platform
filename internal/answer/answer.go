@@ -16,7 +16,7 @@
 //     ("I couldn't find information about that in <tenant name>'s content."), zero
 //     citations, and NO LLM call — the provider is never even built.
 //  2. Prompt assembly (SPEC-06 §5): a system prompt (answer only from the sources,
-//     cite as [n], say when unsure, match the user's language), a context block of
+//     cite as [n], say when unsure, default to English), a context block of
 //     numbered chunks truncated to a token budget, and any provided history turns.
 //  3. Generation via the internal/llm Complete seam (STORY-08.4).
 //  4. Post-processing: parse [n] markers, map each to its chunk, build citations,
@@ -507,7 +507,7 @@ func estimateTokens(text string) int {
 }
 
 // systemPrompt is the SPEC-06 §5 system prompt: tenant name, answer only from the
-// provided sources, cite as [n], say when unsure, and match the user's language.
+// provided sources, cite as [n], say when unsure, and default to English.
 // The language match is a prompt instruction (no detection library) — the model
 // answers in the question's language.
 func systemPrompt(tenantName string) string {
@@ -515,7 +515,7 @@ func systemPrompt(tenantName string) string {
 Answer the user's question using ONLY the information in the provided sources.
 Cite every claim with a bracketed marker of the form [n] (e.g. [1] or [2]) that refers to the numbered source it came from; you may cite more than one.
 If the sources do not contain the answer, say that you are not sure rather than guessing or using outside knowledge.
-Reply in the same language as the user's question.`, tenantName)
+Reply in English by default, even when the sources are in another language; only reply in another language if the user's question is clearly written in that language.`, tenantName)
 }
 
 // buildMessages assembles the conversation: the last historyN turns verbatim
