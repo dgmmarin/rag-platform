@@ -15,6 +15,7 @@ import (
 
 	"github.com/rag-platform/ragctl/internal/connector"
 	"github.com/rag-platform/ragctl/internal/documents"
+	"github.com/rag-platform/ragctl/internal/ingest/embedcache"
 	"github.com/rag-platform/ragctl/internal/ingest/ingestdoc"
 	"github.com/rag-platform/ragctl/internal/ingest/sink"
 	"github.com/rag-platform/ragctl/internal/obs"
@@ -150,6 +151,7 @@ func New(deps Deps) (*Worker, error) {
 		Store:    deps.DocStore,
 		Local:    deps.Local,
 		Sidecar:  deps.Sidecar,
+		Cache:    embedcache.NewPgCache(),
 		Metrics:  deps.Metrics,
 		Now:      time.Now,
 	}

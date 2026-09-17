@@ -14,6 +14,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/connector"
 	"github.com/rag-platform/ragctl/internal/crypto"
 	"github.com/rag-platform/ragctl/internal/ingest/chunk"
+	"github.com/rag-platform/ragctl/internal/ingest/embedcache"
 	"github.com/rag-platform/ragctl/internal/ingest/ingestdoc"
 	"github.com/rag-platform/ragctl/internal/ingest/sink"
 	"github.com/rag-platform/ragctl/internal/obs"
@@ -174,6 +175,7 @@ func (w *syncWorker) Work(ctx context.Context, job *river.Job[SyncSourceArgs]) e
 		Local:    w.local,
 		Sidecar:  w.sidecar,
 		Embedder: emb,
+		Cache:    embedcache.NewPgCache(),
 		SourceID: a.SourceID,
 		Mode:     mode,
 		// SeenSince is the run-series start (stable across retries), so a resumed

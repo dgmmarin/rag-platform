@@ -30,6 +30,7 @@ import (
 
 	"github.com/rag-platform/ragctl/internal/ingest/chunk"
 	"github.com/rag-platform/ragctl/internal/ingest/embed"
+	"github.com/rag-platform/ragctl/internal/ingest/embedcache"
 	"github.com/rag-platform/ragctl/internal/ingest/sink"
 	"github.com/rag-platform/ragctl/internal/obs"
 	"github.com/rag-platform/ragctl/internal/tenant"
@@ -89,6 +90,9 @@ type Ingestor struct {
 	Store    sink.Store         // documents.TenantStore in production
 	Local    sink.LocalParser   // parse.Default()
 	Sidecar  sink.SidecarParser // optional; PDF/DOCX/... via the Python sidecar
+	// Cache looks up existing embeddings for byte-identical chunk content
+	// (chunk-level drift, SPEC-05 §1). Optional: nil disables reuse.
+	Cache embedcache.Cache
 	// Metrics records ingestion throughput (SPEC-10 §2). Optional: nil is a no-op.
 	Metrics *obs.Metrics
 	Now     func() time.Time
@@ -140,6 +144,7 @@ func (in *Ingestor) Run(ctx context.Context, db *tenant.DB, job Job) (sink.Stats
 		Local:    in.Local,
 		Sidecar:  in.Sidecar,
 		Embedder: emb,
+		Cache:    in.Cache,
 		SourceID: job.SourceID,
 		Mode:     sink.Incremental,
 		Chunk:    chunk.Config{TargetTokens: s.ChunkTarget, OverlapTokens: s.ChunkOverlap},
