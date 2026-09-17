@@ -45,9 +45,10 @@ follow the ports you set.
 Prometheus scrapes the `serve` process at `host.docker.internal:8091`. This
 address is set in `deploy/obs/prometheus.yml`, under the `ragctl-serve` job.
 
-If you change the `APP_PORT` value in `.env`, `serve` starts listening on a
-different port. Update the port in `deploy/obs/prometheus.yml` to match, then
-run `mise run obs-down` and `mise run obs` to reload Prometheus.
+serve's listen address is set by `RAGCTL_ADDR` in `.env`, not `APP_PORT`
+(`APP_PORT` only applies to the `app` compose profile). If you change
+`RAGCTL_ADDR`, update the `ragctl-serve` target in `deploy/obs/prometheus.yml`
+to match, then run `mise run obs-down` and `mise run obs` to reload Prometheus.
 
 ## Stop the stack
 

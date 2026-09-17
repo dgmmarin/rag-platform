@@ -74,8 +74,10 @@ services: Prometheus (scrapes `serve` and the worker's `/metrics` endpoints), Lo
 Promtail (ships logs to Loki), and Grafana (dashboards over both). `serve` and the worker run on the
 host under `mise`, not in containers, so there are no container logs to scrape. Promtail instead tails
 the host log files the detached service tasks already write, `.run/serve.log` and `.run/worker.log`,
-parsing each JSON line and promoting `service`, `event`, `kind`, `status`, `tenant_id`, `source_id` to
-labels. File-tail was chosen over container-log scraping because the log source is the host
+parsing each JSON line and promoting `service`, `event`, `kind`, `status` to labels. `tenant_id` and
+`source_id` stay in the parsed line, queryable with `| json`, but are not promoted to labels, since
+their cardinality would bloat the Loki index. File-tail was chosen over container-log scraping
+because the log source is the host
 filesystem, not a container runtime; the alternative (moving `serve`/`worker` into containers) was
 out of scope and rejected as a much larger change for an observability task. Host ports are
 overridable (`GRAFANA_PORT`, `PROMETHEUS_PORT`, `LOKI_PORT` in `.env`) so the stack does not collide

@@ -32,8 +32,9 @@ metrics endpoints and ships the existing log files into a queryable dashboard.
   `mise run obs`. Running `mise run api` instead of `mise run services` prints logs to the terminal
   only, not to `.run/*.log`, so Promtail has nothing to tail and Loki/Grafana stay empty.
 - **Smoke check** (`deploy/obs/smoke.sh`, not part of CI): after `mise run obs`, checks Prometheus
-  `/-/ready` and both scrape targets `up`, Loki `/ready`, Grafana `/api/health`, and that a known job
-  log line is queryable in Loki. Self-skips when Docker is unavailable.
+  `/-/ready` and both scrape targets `up`, Loki `/ready`, and Grafana `/api/health`. It checks
+  component health and target-up counts, not a specific log line in Loki. Self-skips when Docker is
+  unavailable.
 
 ## Tests
 - `deploy/obs/smoke.sh` exercises the running stack end to end (documented as a manual/local check,

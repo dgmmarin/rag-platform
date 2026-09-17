@@ -85,7 +85,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "{job=\"ragctl\"} | json | event != \"\""
+          "expr": "{job=\"ragctl\"} | json | event != \"\" | kind != \"reconcile_jobs\""
         }
       ]
     }

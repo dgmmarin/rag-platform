@@ -143,8 +143,9 @@ A new **opt-in** compose profile (mirrors ADR-0011's `app` profile), four servic
   returns `ctx.Canceled`, and each event carries the required field set. Assert via a captured
   `slog` handler.
 - **Stack (smoke script, not CI):** `mise run obs`, then assert Prometheus `/-/ready` and both
-  targets `up`, Loki `/ready`, Grafana `/api/health`, and that a known job log line is queryable in
-  Loki. Documented in `deploy/obs/README.md`; self-skips without Docker.
+  targets `up`, Loki `/ready`, and Grafana `/api/health`. This checks component health and target-up
+  counts, not a specific log line in Loki. Documented in `deploy/obs/README.md`; self-skips without
+  Docker.
 
 ## Rollout
 
