@@ -12,10 +12,11 @@ import (
 // control-plane jobs semantics the PoolDB enforces in SQL (tenant scoping, a
 // queued-only guarded cancel) without a database.
 type fakeStore struct {
-	seq       int
-	jobs      map[string]Job // id -> job
-	failOn    string         // method name to force an error on
-	cancelled []string       // ids passed to CancelQueued that changed
+	seq        int
+	jobs       map[string]Job // id -> job
+	failOn     string         // method name to force an error on
+	cancelled  []string       // ids passed to CancelQueued that changed
+	reconciled []Reconciled   // rows Reconcile returns
 }
 
 func newFakeStore() *fakeStore { return &fakeStore{jobs: map[string]Job{}} }
@@ -106,6 +107,13 @@ func (f *fakeStore) CancelQueued(_ context.Context, tenantID, id string) (Job, b
 	f.jobs[id] = j
 	f.cancelled = append(f.cancelled, id)
 	return j, true, nil
+}
+
+func (f *fakeStore) Reconcile(_ context.Context) ([]Reconciled, error) {
+	if f.failOn == "Reconcile" {
+		return nil, errors.New("boom")
+	}
+	return f.reconciled, nil
 }
 
 // fakeCanceller records running-job cancellation signals (the EPIC-09 River seam).

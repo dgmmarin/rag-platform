@@ -31,6 +31,9 @@ type Store interface {
 	// statement. changed is false when the job is not (or no longer) queued or
 	// does not exist; the service disambiguates with a re-read.
 	CancelQueued(ctx context.Context, tenantID, id string) (job Job, changed bool, err error)
+	// Reconcile finalises mirror rows whose linked River job is already terminal
+	// but which a worker never got to finalise, and returns the rows it healed.
+	Reconcile(ctx context.Context) ([]Reconciled, error)
 }
 
 // ListParams selects a tenant's jobs with optional filters and keyset pagination.
