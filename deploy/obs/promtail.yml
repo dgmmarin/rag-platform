@@ -1,0 +1,25 @@
+server:
+  http_listen_port: 9080
+positions:
+  filename: /tmp/positions.yaml
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+scrape_configs:
+  - job_name: ragctl-services
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: ragctl
+          __path__: /var/run-logs/*.log
+    pipeline_stages:
+      - json:
+          expressions:
+            service: service
+            event: event
+            kind: kind
+            status: status
+      - labels:
+          service:
+          event:
+          kind:
+          status:

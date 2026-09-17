@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/rag-platform/ragctl/internal/crypto"
@@ -120,7 +121,10 @@ type Service struct {
 	// Encrypter with credentials on the write path fails closed.
 	Encrypter Encrypter
 	Decrypter Decrypter
-	now       func() time.Time
+	// Log is optional (nil-tolerant); when set, it receives structured lifecycle
+	// events (event=enqueued) an operator can trace per source (EPIC-12).
+	Log *slog.Logger
+	now func() time.Time
 }
 
 // NewService builds a sources service over the given store. Validator is left nil
@@ -272,7 +276,12 @@ func (s *Service) Delete(ctx context.Context, tenantID, id string) (Job, error) 
 		return Job{}, nil
 	}
 	payload, _ := json.Marshal(map[string]any{"source_id": id})
-	return s.Store.EnqueueJob(ctx, NewJob{TenantID: tenantID, SourceID: id, Kind: "delete_source", Payload: payload})
+	job, err := s.Store.EnqueueJob(ctx, NewJob{TenantID: tenantID, SourceID: id, Kind: "delete_source", Payload: payload})
+	if err != nil {
+		return Job{}, err
+	}
+	s.logEnqueued(job)
+	return job, nil
 }
 
 // Sync enqueues a manual `sync_source` job for the source (FR-SRC-11). It returns
@@ -305,6 +314,7 @@ func (s *Service) Sync(ctx context.Context, p SyncParams) (Job, error) {
 		}
 		return Job{}, fmt.Errorf("sources: enqueue sync: %w", err)
 	}
+	s.logEnqueued(job)
 	return job, nil
 }
 
@@ -403,6 +413,27 @@ func (s *Service) openCredentials(enc []byte) (map[string]string, func(), error)
 	}
 	crypto.Zero(pt)
 	return creds, func() { clear(creds) }, nil
+}
+
+// logEnqueued emits event=enqueued for a job this call just created. It carries
+// ids, kind, tenant/source and status only — never document text (C-3/C-4) — so
+// an operator can trace a source's whole job history in logs. No-op when Log is nil.
+func (s *Service) logEnqueued(job Job) {
+	if s.Log == nil {
+		return
+	}
+	s.Log.Info("job enqueued",
+		"event", "enqueued", "job_id", job.ID, "kind", job.Kind,
+		"tenant_id", job.TenantID, "source_id", derefOr(job.SourceID, ""),
+		"status", job.Status)
+}
+
+// derefOr returns *p, or def when p is nil.
+func derefOr(p *string, def string) string {
+	if p == nil {
+		return def
+	}
+	return *p
 }
 
 // encodeCursor serialises a Cursor to an opaque base64url token.

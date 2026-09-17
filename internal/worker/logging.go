@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -23,21 +24,24 @@ type logMiddleware struct {
 // Work implements rivertype.WorkerMiddleware.
 func (m logMiddleware) Work(ctx context.Context, job *rivertype.JobRow, doInner func(context.Context) error) error {
 	tenantID, sourceID := jobIdentity(job.EncodedArgs)
-	m.log.Info("job started",
-		"kind", job.Kind, "job_id", job.ID, "attempt", job.Attempt,
-		"max_attempts", job.MaxAttempts, "tenant_id", tenantID, "source_id", sourceID)
+	base := []any{
+		"kind", job.Kind, "river_job_id", job.ID, "attempt", job.Attempt,
+		"max_attempts", job.MaxAttempts, "tenant_id", tenantID, "source_id", sourceID,
+	}
+	m.log.Info("job started", append([]any{"event", "started", "status", "running"}, base...)...)
 
 	start := time.Now()
 	err := doInner(ctx)
 	durMs := time.Since(start).Milliseconds()
+	fields := append([]any{"duration_ms", durMs}, base...)
 
-	if err != nil {
-		m.log.Warn("job finished",
-			"kind", job.Kind, "job_id", job.ID, "attempt", job.Attempt,
-			"duration_ms", durMs, "err", err.Error())
-	} else {
-		m.log.Info("job finished",
-			"kind", job.Kind, "job_id", job.ID, "attempt", job.Attempt, "duration_ms", durMs)
+	switch {
+	case err == nil:
+		m.log.Info("job finished", append([]any{"event", "finished", "status", "succeeded"}, fields...)...)
+	case errors.Is(err, context.Canceled):
+		m.log.Info("job cancelled", append([]any{"event", "cancelled", "status", "cancelled"}, fields...)...)
+	default:
+		m.log.Warn("job failed", append([]any{"event", "failed", "status", "failed", "err", err.Error()}, fields...)...)
 	}
 	return err
 }

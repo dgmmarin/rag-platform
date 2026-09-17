@@ -124,7 +124,8 @@ type ListFilter struct {
 // Canceller signals a RUNNING job to cancel cooperatively (SPEC-08 §4). It is the
 // River integration seam (ADR-0005, EPIC-09 STORY-09.1/09.4): River requests the
 // cancel and the worker middleware finalises the mirror row (SPEC-08 §3). It is
-// nil until EPIC-09 wires it, so a running-job cancel fails closed as a seam.
+// wired at internal/cli/api_server.go via riverCanceller (internal/cli/enqueue.go),
+// so a running-job cancel signals River.
 type Canceller interface {
 	Cancel(ctx context.Context, tenantID, jobID string) error
 }

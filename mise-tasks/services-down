@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#MISE description="Stop the detached serve + worker started by 'services' (via .run/ pidfiles)"
+set -euo pipefail
+
+# Signals the whole process group (setsid made each service its own group
+# leader), so the go-run wrapper AND the compiled server it spawned both stop.
+for svc in serve worker; do
+  pidfile=".run/${svc}.pid"
+  if [[ ! -f $pidfile ]]; then
+    echo "services-down: no pidfile for ${svc} (not started this way)"
+    continue
+  fi
+  pid=$(cat "$pidfile")
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "-${pid}" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+    echo "services-down: stopped ${svc} (pid ${pid})"
+  else
+    echo "services-down: ${svc} was not running (stale pid ${pid})"
+  fi
+  rm -f "$pidfile"
+done

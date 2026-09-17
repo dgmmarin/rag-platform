@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Stop the local observability stack"
+set -euo pipefail
+docker compose --profile obs down

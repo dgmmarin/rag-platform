@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,7 +32,10 @@ type Service struct {
 	// SPEC-02 §5). Nil falls back to MaxBytes (the global MAX_UPLOAD_BYTES ceiling).
 	Limits   UploadLimits
 	MaxBytes int64
-	now      func() time.Time
+	// Log is optional (nil-tolerant); when set, it receives structured lifecycle
+	// events (event=enqueued) an operator can trace per source (EPIC-12).
+	Log *slog.Logger
+	now func() time.Time
 }
 
 // NewService builds a documents service. Storage is left nil (object storage is
@@ -264,5 +268,23 @@ func (s *Service) Ingest(ctx context.Context, p IngestParams) (Job, error) {
 	if err != nil {
 		return Job{}, fmt.Errorf("documents: enqueue ingest: %w", err)
 	}
+	s.logEnqueued(job)
 	return job, nil
+}
+
+// logEnqueued emits event=enqueued for a job this call just created. It carries
+// ids, kind, tenant/source and status only — never document text (C-3/C-4) — so
+// an operator can trace a source's whole job history in logs. No-op when Log is nil.
+func (s *Service) logEnqueued(job Job) {
+	if s.Log == nil {
+		return
+	}
+	sourceID := ""
+	if job.SourceID != nil {
+		sourceID = *job.SourceID
+	}
+	s.Log.Info("job enqueued",
+		"event", "enqueued", "job_id", job.ID, "kind", job.Kind,
+		"tenant_id", job.TenantID, "source_id", sourceID,
+		"status", job.Status)
 }

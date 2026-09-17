@@ -1,9 +1,12 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -12,10 +15,11 @@ import (
 // control-plane jobs semantics the PoolDB enforces in SQL (tenant scoping, a
 // queued-only guarded cancel) without a database.
 type fakeStore struct {
-	seq       int
-	jobs      map[string]Job // id -> job
-	failOn    string         // method name to force an error on
-	cancelled []string       // ids passed to CancelQueued that changed
+	seq        int
+	jobs       map[string]Job // id -> job
+	failOn     string         // method name to force an error on
+	cancelled  []string       // ids passed to CancelQueued that changed
+	reconciled []Reconciled   // rows Reconcile returns
 }
 
 func newFakeStore() *fakeStore { return &fakeStore{jobs: map[string]Job{}} }
@@ -106,6 +110,13 @@ func (f *fakeStore) CancelQueued(_ context.Context, tenantID, id string) (Job, b
 	f.jobs[id] = j
 	f.cancelled = append(f.cancelled, id)
 	return j, true, nil
+}
+
+func (f *fakeStore) Reconcile(_ context.Context) ([]Reconciled, error) {
+	if f.failOn == "Reconcile" {
+		return nil, errors.New("boom")
+	}
+	return f.reconciled, nil
 }
 
 // fakeCanceller records running-job cancellation signals (the EPIC-09 River seam).
@@ -265,6 +276,21 @@ func TestCancelRunningWithCancellerSignals(t *testing.T) {
 	// The mirror row transition is the worker's job (SPEC-08 §3): still running.
 	if got.Status != StatusRunning {
 		t.Fatalf("status = %q, want running (worker finalises)", got.Status)
+	}
+}
+
+func TestCancelLogsCancelRequested(t *testing.T) {
+	fs := newFakeStore()
+	j := fs.add(Job{TenantID: "t1", Kind: "sync_source", Status: StatusRunning})
+	var buf bytes.Buffer
+	svc := NewService(fs)
+	svc.Canceller = &fakeCanceller{}
+	svc.Log = slog.New(slog.NewJSONHandler(&buf, nil))
+	if _, err := svc.Cancel(context.Background(), "t1", j.ID); err != nil {
+		t.Fatalf("Cancel running: %v", err)
+	}
+	if !strings.Contains(buf.String(), `"event":"cancel_requested"`) {
+		t.Fatalf("Cancel must log cancel_requested:\n%s", buf.String())
 	}
 }
 

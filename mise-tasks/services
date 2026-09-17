@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+#MISE description="Start serve + worker detached, then wait for the API to be healthy"
+set -euo pipefail
+
+# Bring both host services up in the background (infra must already be up:
+# `mise run up`). Stop them with `mise run services-down`.
+mise run serve-bg
+mise run worker-bg
+
+# Wait for the API to answer /healthz. The port is read from serve's own startup
+# log ("serving" ... addr), so the check follows whatever port .env selected. The
+# budget is generous because `go run`'s first compile can take tens of seconds
+# before serve binds at all.
+ok=no
+port=""
+for _ in $(seq 1 90); do
+  if [[ -z $port ]]; then
+    # `|| true`: an empty log early on makes grep exit 1, which would trip
+    # `set -e`/pipefail and abort the wait before serve has bound.
+    addr=$(grep -oE '"addr":"[^"]+"' .run/serve.log 2>/dev/null | tail -1 | sed -E 's/.*"addr":"//; s/"$//' || true)
+    [[ -n $addr ]] && port=${addr##*:}
+  fi
+  if [[ -n $port ]] && curl -sf -m 2 "http://localhost:${port}/healthz" >/dev/null 2>&1; then
+    ok=yes
+    break
+  fi
+  sleep 1
+done
+
+if [[ $ok != yes ]]; then
+  echo "services: API not healthy after 90s; check .run/serve.log" >&2
+  exit 1
+fi
+
+echo "services: up — API healthy on http://localhost:${port} (worker log: .run/worker.log)"
