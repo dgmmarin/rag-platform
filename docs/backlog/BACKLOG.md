@@ -292,7 +292,7 @@ redesign, beyond the original shell scope
 **STORY-11.4 Documents and chunks browser** (5) ✅ — Traces: FR-ADM-03, ADR-0075, ISSUE-0066
 **STORY-11.5 Members, API keys, settings pages** (5) ✅ — Traces: SPEC-02 §2/§5, ADR-0075, ISSUE-0064
 **STORY-11.6 Query playground with citations and feedback** (3) ✅ — Traces: FR-RET-06, FR-RET-09, ADR-0075, ISSUE-0067
-**STORY-11.7 Platform admin: tenants list, enrol, suspend, delete** (3)
+**STORY-11.7 Platform admin: tenants list, enrol, suspend, delete** (3) ✅ — Traces: FR-TEN-01, FR-TEN-04, FR-TEN-05, ADR-0075, ISSUE-0068
 
 ---
 

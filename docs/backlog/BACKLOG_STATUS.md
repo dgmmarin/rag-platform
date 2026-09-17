@@ -1611,7 +1611,7 @@ only the KMS-wrapped blob is ever written (0600), never key material. Hermetic c
 decrypt-any-version/fail-closed; Reencrypt idempotency); real-binary e2e rotates a v1 tenant password and a v1
 source credential to v2 and proves both decrypt to their originals, with a second rotation a no-op.
 
-## EPIC-11 · Admin UI (reference) — 🚧 31/34 pts
+## EPIC-11 · Admin UI (reference) — ✅ 34/34 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
@@ -1621,7 +1621,7 @@ source credential to v2 and proves both decrypt to their originals, with a secon
 | STORY-11.4 | Documents and chunks browser | 5 | ✅ Done | FR-ADM-03, ADR-0075, ISSUE-0066 |
 | STORY-11.5 | Members, API keys, settings pages | 5 | ✅ Done | ADR-0075, ISSUE-0064 |
 | STORY-11.6 | Query playground with citations and feedback | 3 | ✅ Done | FR-RET-06, FR-RET-09, ADR-0075, ISSUE-0067 |
-| STORY-11.7 | Platform admin: tenants list, enrol, suspend, delete | 3 | 🔲 Todo | — |
+| STORY-11.7 | Platform admin: tenants list, enrol, suspend, delete | 3 | ✅ Done | FR-TEN-01, FR-TEN-04, FR-TEN-05, ADR-0075, ISSUE-0068 |
 
 > **STORY-11.1 is done.** A Next.js admin UI service fronts `ragctl` through a same-origin
 > BFF proxy (`web/app/bff/[...path]/route.ts`, no CORS, SPEC-11 §3); `GET /v1/auth/me`

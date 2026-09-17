@@ -7,11 +7,13 @@ import { TenantProvider } from "@/lib/tenant";
 import { TenantSwitcher } from "@/components/TenantSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { RequireAuth } from "@/components/RequireAuth";
-import { NAV_SECTIONS } from "@/lib/nav";
+import { NAV_SECTIONS, PLATFORM_NAV_SECTIONS } from "@/lib/nav";
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { me, logout } = useAuth();
   const pathname = usePathname();
+  // Platform-admin sections join the nav only for a platform admin.
+  const sections = me?.is_platform_admin ? [...NAV_SECTIONS, ...PLATFORM_NAV_SECTIONS] : NAV_SECTIONS;
 
   return (
     <div className="flex min-h-screen flex-col bg-bg text-fg">
@@ -43,7 +45,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       <div className="flex flex-1">
         <aside className="w-56 shrink-0 border-r border-border px-3 py-6">
           <nav aria-label="Sections" className="flex flex-col gap-0.5">
-            {NAV_SECTIONS.map((s) => {
+            {sections.map((s) => {
               const href = `/admin/${s.slug}`;
               const active = pathname === href || pathname.startsWith(`${href}/`);
               return (

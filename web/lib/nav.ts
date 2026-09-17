@@ -10,3 +10,7 @@ export const NAV_SECTIONS: NavSection[] = [
   { slug: "query", label: "Query" },
   { slug: "eval", label: "Eval" },
 ];
+
+// Platform-admin-only sections (STORY-11.7). Shown only when me.is_platform_admin;
+// the server enforces the real gate (RequirePlatformAdmin) regardless.
+export const PLATFORM_NAV_SECTIONS: NavSection[] = [{ slug: "tenants", label: "Tenants" }];
