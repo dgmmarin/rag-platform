@@ -1,6 +1,6 @@
 # Chunk-level drift detection — reuse embeddings for unchanged chunks
 
-**Date:** 2026-09-17 · **Status:** Design approved, pending implementation · **Traces:** SPEC-05 §1/§5, FR-SRC-01, ADR-0008 · **Relates:** ADR-0076 (VectorChord)
+**Date:** 2026-09-17 · **Status:** Implemented (ADR-0077) · **Traces:** SPEC-05 §1/§5, FR-SRC-01, ADR-0008 · **Relates:** ADR-0076 (VectorChord)
 
 ## Problem
 
