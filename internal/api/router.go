@@ -270,6 +270,17 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /admin/tenants/{tenantId}/documents/{id}", tenantSources(d.RequireTenantSourcesRead, d.DocumentGet))
 	mux.Handle("GET /admin/tenants/{tenantId}/documents/{id}/chunks", tenantSources(d.RequireTenantSourcesRead, d.DocumentChunks))
 
+	// Session admin query playground (STORY-11.6, ADR-0075, FR-RET-06/09): the SAME
+	// query.Handlers.Query and querylog.Handlers.Feedback as the Bearer /v1/query and
+	// /v1/feedback surfaces, mounted behind the session tenant-access gate. Both map
+	// to the query permission (PermQuery, any role) — the same access the Bearer
+	// routes require via `query` scope — so both use RequireTenantSourcesRead. Both
+	// are session-cookie POSTs, so both carry CSRF (SPEC-09 §3). The query handler
+	// serves JSON or SSE off the request's own `stream` flag; the BFF streams the
+	// response body through unchanged.
+	mux.Handle("POST /admin/tenants/{tenantId}/query", tenantSources(d.RequireTenantSourcesRead, mustCSRF(d, d.Query)))
+	mux.Handle("POST /admin/tenants/{tenantId}/feedback", tenantSources(d.RequireTenantSourcesRead, mustCSRF(d, d.Feedback)))
+
 	// Documents (STORY-04.4, FR-SRC-02/FR-ADM-03, SPEC-07 §2). Tenant content
 	// reached through the resolver (ADR-0003); the tenant is derived from the API
 	// key (FR-ACC-03). Scopes follow SPEC-07 §2: ingest for upload/delete, query

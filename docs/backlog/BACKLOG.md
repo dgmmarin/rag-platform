@@ -291,7 +291,7 @@ redesign, beyond the original shell scope
 **STORY-11.3 Jobs list and detail with cancel** (5) ✅ — Traces: FR-ADM-02, ADR-0075, ADR-0031, ISSUE-0060
 **STORY-11.4 Documents and chunks browser** (5) ✅ — Traces: FR-ADM-03, ADR-0075, ISSUE-0066
 **STORY-11.5 Members, API keys, settings pages** (5) ✅ — Traces: SPEC-02 §2/§5, ADR-0075, ISSUE-0064
-**STORY-11.6 Query playground with citations and feedback** (3)
+**STORY-11.6 Query playground with citations and feedback** (3) ✅ — Traces: FR-RET-06, FR-RET-09, ADR-0075, ISSUE-0067
 **STORY-11.7 Platform admin: tenants list, enrol, suspend, delete** (3)
 
 ---

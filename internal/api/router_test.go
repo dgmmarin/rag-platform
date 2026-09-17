@@ -534,6 +534,64 @@ func TestTenantDocumentsNoCSRF(t *testing.T) {
 	}
 }
 
+// The session admin query playground routes (STORY-11.6, ADR-0075, FR-RET-06/09)
+// reuse the SAME query/feedback handlers as the Bearer /v1/query and /v1/feedback
+// surfaces, mounted behind session -> tenant-access. Both map to PermQuery (any
+// role), so both use the read gate; both are POSTs and carry CSRF. {tenantId} is
+// the tenant path segment.
+func TestTenantQueryRoutesChain(t *testing.T) {
+	cases := []struct {
+		method, path, handler, gate string
+	}{
+		{http.MethodPost, "/admin/tenants/t-1/query", "query", "tenant-sources-read"},
+		{http.MethodPost, "/admin/tenants/t-1/feedback", "feedback", "tenant-sources-read"},
+	}
+	for _, c := range cases {
+		var ran []string
+		deps := newTestDeps(&ran)
+		// Query/feedback are a seam-only group in the default test deps; wire the
+		// handlers locally so the tenant-scoped mounts can be asserted reached.
+		deps.Query = okHandler(&ran, "query")
+		deps.Feedback = okHandler(&ran, "feedback")
+		h := New(deps)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(c.method, c.path, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s %s = %d, want 200; body=%s", c.method, c.path, rr.Code, rr.Body.String())
+		}
+		if idxOf(ran, "session") < 0 || idxOf(ran, c.gate) < 0 {
+			t.Fatalf("%s %s did not run session -> %s; ran=%v", c.method, c.path, c.gate, ran)
+		}
+		if idxOf(ran, "session") > idxOf(ran, c.gate) {
+			t.Fatalf("%s %s ran %s before session; ran=%v", c.method, c.path, c.gate, ran)
+		}
+		if !contains(ran, c.handler) {
+			t.Fatalf("%s %s did not reach %s; ran=%v", c.method, c.path, c.handler, ran)
+		}
+	}
+}
+
+// Both session query routes are POSTs and carry CSRF like every other session-cookie
+// mutation (SPEC-09 §3): a blocked CSRF check stops the handler being reached.
+func TestTenantQueryCSRF(t *testing.T) {
+	for _, path := range []string{"/admin/tenants/t-1/query", "/admin/tenants/t-1/feedback"} {
+		var ran []string
+		deps := newTestDeps(&ran)
+		deps.Query = okHandler(&ran, "query")
+		deps.Feedback = okHandler(&ran, "feedback")
+		deps.CSRF = stubMW(&ran, "csrf", http.StatusForbidden, CodeForbidden)
+		h := New(deps)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, path, nil))
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("POST %s without CSRF = %d, want 403", path, rr.Code)
+		}
+		if contains(ran, "query") || contains(ran, "feedback") {
+			t.Fatalf("handler reached despite CSRF block on %s; ran=%v", path, ran)
+		}
+	}
+}
+
 // The session admin settings/members/api-keys routes (STORY-11.5, ADR-0075,
 // ISSUE-0064) mount the reused SettingsHandlers + the members/api-key handlers
 // behind session -> tenant-access. Reads use the read gate (PermQuery, any
