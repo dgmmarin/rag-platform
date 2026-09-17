@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+#MISE description="Start the job worker (ragctl work) detached; log + pid in .run/"
+set -euo pipefail
+
+# Detached sibling of `worker`: go run ./cmd/ragctl work, backgrounded in its own
+# session so it survives this shell and `services-down` can stop it via the
+# pidfile. Like `api`/`serve-bg`, the host process does not auto-load .env, so
+# load it here (the worker needs the DB, object-store and provider config).
+mkdir -p .run
+pidfile=.run/worker.pid
+
+if [[ -f $pidfile ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+  echo "worker-bg: already running (pid $(cat "$pidfile")); run 'mise run services-down' first" >&2
+  exit 0
+fi
+if [[ ! -f .env ]]; then
+  echo "worker-bg: .env not found — run 'cp .env.example .env' first" >&2
+  exit 1
+fi
+
+set -a
+# shellcheck disable=SC1091
+source .env
+set +a
+
+: > .run/worker.log
+setsid go run ./cmd/ragctl work >> .run/worker.log 2>&1 < /dev/null &
+echo $! > "$pidfile"
+echo "worker-bg: started (pid $(cat "$pidfile")); logs: .run/worker.log"

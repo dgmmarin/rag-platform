@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#MISE description="Start the API server (ragctl serve) detached; log + pid in .run/"
+set -euo pipefail
+
+# Detached sibling of `api`: same host process (go run ./cmd/ragctl serve, which
+# loads its config from .env), but backgrounded in its own session so it survives
+# this shell and can be stopped by `services-down` via the pidfile. Use `api` for
+# a foreground run you watch; use this to start-and-forget.
+mkdir -p .run
+pidfile=.run/serve.pid
+
+if [[ -f $pidfile ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+  echo "serve-bg: already running (pid $(cat "$pidfile")); run 'mise run services-down' first" >&2
+  exit 0
+fi
+if [[ ! -f .env ]]; then
+  echo "serve-bg: .env not found — run 'cp .env.example .env' first" >&2
+  exit 1
+fi
+
+set -a
+# shellcheck disable=SC1091
+source .env
+set +a
+
+# setsid: a new session so the whole go-run + compiled-server group can be
+# signalled by its leader pid; </dev/null + log redirect detaches every fd so
+# the caller's terminal is free.
+: > .run/serve.log
+setsid go run ./cmd/ragctl serve >> .run/serve.log 2>&1 < /dev/null &
+echo $! > "$pidfile"
+echo "serve-bg: started (pid $(cat "$pidfile")); logs: .run/serve.log"
