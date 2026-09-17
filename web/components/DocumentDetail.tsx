@@ -41,19 +41,22 @@ function Chunks({ chunks }: { chunks: Chunk[] }) {
         <p className="mt-4 text-sm text-fg-muted">This document has no chunks.</p>
       ) : (
         <ul className="mt-4 flex flex-col gap-4">
-          {chunks.map((c) => (
+          {chunks.map((c) => {
+            const path = c.heading_path ?? [];
+            return (
             <li key={c.id} className="rounded-md border border-border px-3 py-3">
               <div className="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
                 <span className="font-mono">#{c.position}</span>
-                {c.heading_path.length > 0 ? (
-                  <span className="truncate">{c.heading_path.join(" › ")}</span>
+                {path.length > 0 ? (
+                  <span className="truncate">{path.join(" › ")}</span>
                 ) : null}
                 <span className="ml-auto font-mono">{c.token_count} tok</span>
                 <span className="font-mono">{c.embedding_model}</span>
               </div>
               <p className="mt-2 whitespace-pre-wrap text-sm text-fg">{c.content}</p>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </div>

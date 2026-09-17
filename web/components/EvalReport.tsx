@@ -72,7 +72,7 @@ function ResultsTable({ results }: { results: ResultView[] }) {
               <td className="px-4 py-3 text-center">
                 <Tri value={r.judged_correct} />
               </td>
-              <td className="px-4 py-3 text-xs text-fg-muted">{r.retrieved_doc_ids.length}</td>
+              <td className="px-4 py-3 text-xs text-fg-muted">{(r.retrieved_doc_ids ?? []).length}</td>
               <td className="px-4 py-3 text-xs text-fg-muted">{r.latency_ms}ms</td>
             </tr>
           ))}

@@ -36,6 +36,14 @@ describe("AnswerPanel", () => {
     expect(screen.getByText(/citations \(1\)/i)).toBeInTheDocument();
   });
 
+  it("does not crash when the API returns null citations (nil Go slice)", () => {
+    // The Go answer API marshals an empty citation set as JSON null; the panel
+    // must treat that like an empty list, not read .length off null.
+    const result = { ...makeResult(), citations: null as unknown as [] };
+    render(<AnswerPanel result={result} onFeedback={vi.fn()} />);
+    expect(screen.getByText(/no citations/i)).toBeInTheDocument();
+  });
+
   it("shows a not-grounded badge and no-citations message when ungrounded", () => {
     render(
       <AnswerPanel

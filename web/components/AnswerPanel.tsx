@@ -9,7 +9,8 @@ type AnswerPanelProps = {
 };
 
 function CitationRow({ c }: { c: Citation }) {
-  const heading = c.heading_path.length > 0 ? c.heading_path.join(" › ") : null;
+  const path = c.heading_path ?? [];
+  const heading = path.length > 0 ? path.join(" › ") : null;
   return (
     <li className="rounded-md border border-border px-3 py-3">
       <div className="flex items-baseline gap-2">
@@ -24,6 +25,9 @@ function CitationRow({ c }: { c: Citation }) {
 }
 
 export function AnswerPanel({ result, onFeedback, rating, busy }: AnswerPanelProps) {
+  // Defensive: the API marshals an empty citation set as null; the client
+  // normalises it, but guard here too so any source (e.g. SSE) is crash-safe.
+  const citations = result.citations ?? [];
   return (
     <div className="mt-6 flex flex-col gap-6">
       <div className="rounded-2xl border border-border px-4 py-4">
@@ -72,13 +76,13 @@ export function AnswerPanel({ result, onFeedback, rating, busy }: AnswerPanelPro
 
       <div className="rounded-2xl border border-border px-4 py-4">
         <h2 className="text-sm font-semibold tracking-tight text-fg">
-          Citations{result.citations.length > 0 ? ` (${result.citations.length})` : ""}
+          Citations{citations.length > 0 ? ` (${citations.length})` : ""}
         </h2>
-        {result.citations.length === 0 ? (
+        {citations.length === 0 ? (
           <p className="mt-4 text-sm text-fg-muted">No citations for this answer.</p>
         ) : (
           <ul className="mt-4 flex flex-col gap-3">
-            {result.citations.map((c) => (
+            {citations.map((c) => (
               <CitationRow key={c.n} c={c} />
             ))}
           </ul>

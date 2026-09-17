@@ -61,7 +61,10 @@ export async function runQuery(
       csrfToken,
     }),
   );
-  return (await res.json()) as QueryResult;
+  // The API marshals an empty citation set as JSON null (a nil Go slice), so
+  // normalise it to [] to honour the QueryResult.citations: Citation[] contract.
+  const data = (await res.json()) as QueryResult;
+  return { ...data, citations: data.citations ?? [] };
 }
 
 // sendFeedback records a thumbs rating (1 up, -1 down) on an answered query.
