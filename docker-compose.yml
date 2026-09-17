@@ -85,6 +85,57 @@ services:
       parser:
         condition: service_healthy
 
+  # Local observability stack (Task 5). Opt-in via the `obs` profile so a
+  # plain `docker compose up` is unaffected. Scrapes serve/worker metrics on
+  # the host and tails .run/ job-event logs. Local-dev only.
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    profiles: ["obs"]
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./deploy/obs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  loki:
+    image: grafana/loki:3.1.1
+    profiles: ["obs"]
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./deploy/obs/loki.yml:/etc/loki/loki.yml:ro
+      - lokidata:/loki
+    ports:
+      - "3100:3100"
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    profiles: ["obs"]
+    command: ["-config.file=/etc/promtail/promtail.yml"]
+    volumes:
+      - ./deploy/obs/promtail.yml:/etc/promtail/promtail.yml:ro
+      - ./.run:/var/run-logs:ro
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    profiles: ["obs"]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./deploy/obs/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/obs/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+
 volumes:
   pgdata:
   miniodata:
+  lokidata:
