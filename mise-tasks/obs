@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Start the local observability stack (Prometheus, Loki, Promtail, Grafana)"
+set -euo pipefail
+docker compose --profile obs up -d --wait
+echo "obs: up — Grafana http://localhost:3000  Prometheus http://localhost:9090"
+echo "obs: logs come from .run/*.log — start services with 'mise run services' for them to populate"
