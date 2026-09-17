@@ -23,9 +23,9 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-08 | Retrieval and answering | 39 | 39 | ✅ Complete |
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 21 | ✅ Complete |
 | EPIC-10 | Security, observability, operations | 26 | 26 | ✅ Complete |
-| EPIC-11 | Admin UI (reference) | 34 | 23 | 🚧 In progress |
+| EPIC-11 | Admin UI (reference) | 34 | 34 | ✅ Complete |
 | EPIC-12 | Evaluation harness and quality | 13 | 13 | ✅ Complete |
-| **Total** | | **337** | **259** | **77%** |
+| **Total** | | **337** | **337** | **100%** |
 
 ---
 
