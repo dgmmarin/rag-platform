@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 #MISE description="Start the local observability stack (Prometheus, Loki, Promtail, Grafana)"
 set -euo pipefail
+# Ports follow the overridable vars (see .env.example); source .env so the
+# printed URLs match what compose bound.
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
 docker compose --profile obs up -d --wait
-echo "obs: up — Grafana http://localhost:3000  Prometheus http://localhost:9090"
+echo "obs: up — Grafana http://localhost:${GRAFANA_PORT:-3000}  Prometheus http://localhost:${PROMETHEUS_PORT:-9090}"
 echo "obs: logs come from .run/*.log — start services with 'mise run services' for them to populate"

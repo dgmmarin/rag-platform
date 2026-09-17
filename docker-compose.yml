@@ -95,7 +95,8 @@ services:
     volumes:
       - ./deploy/obs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
-      - "9090:9090"
+      # Overridable to dodge collisions with other local stacks (see .env.example).
+      - "${PROMETHEUS_PORT:-9090}:9090"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -107,7 +108,7 @@ services:
       - ./deploy/obs/loki.yml:/etc/loki/loki.yml:ro
       - lokidata:/loki
     ports:
-      - "3100:3100"
+      - "${LOKI_PORT:-3100}:3100"
 
   promtail:
     image: grafana/promtail:3.1.1
@@ -130,7 +131,8 @@ services:
       - ./deploy/obs/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./deploy/obs/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
-      - "3000:3000"
+      # GRAFANA_PORT in .env if 3000 is taken by another local stack.
+      - "${GRAFANA_PORT:-3000}:3000"
     depends_on:
       - prometheus
       - loki

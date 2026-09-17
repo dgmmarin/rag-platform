@@ -26,13 +26,19 @@ logs, so Loki and Grafana stay empty. Use `mise run services` (or
 
 ## URLs
 
-| Service    | URL                            |
-|------------|--------------------------------|
-| Grafana    | http://localhost:3000          |
-| Prometheus | http://localhost:9090          |
-| Loki       | http://localhost:3100          |
+| Service    | URL (default port)             | Override in `.env` |
+|------------|--------------------------------|--------------------|
+| Grafana    | http://localhost:3000          | `GRAFANA_PORT`     |
+| Prometheus | http://localhost:9090          | `PROMETHEUS_PORT`  |
+| Loki       | http://localhost:3100          | `LOKI_PORT`        |
 
 Grafana logs in as admin with no password.
+
+Each host port is overridable so it does not collide with another local stack.
+If a start fails with "address already in use", set the matching `*_PORT` in
+`.env` to a free port (for example `GRAFANA_PORT=13000`) and run `mise run obs`
+again. `mise run obs` and the smoke check read these vars, so their printed URLs
+follow the ports you set.
 
 ## Changing the serve scrape target
 
