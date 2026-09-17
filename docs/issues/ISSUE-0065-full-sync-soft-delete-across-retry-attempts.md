@@ -1,6 +1,15 @@
 # ISSUE-0065: A full sync spanning multiple retry attempts soft-deletes documents ingested by earlier attempts
 
-**Type:** Bug · **Status:** Todo · **Story:** EPIC-05 (ingestion) / EPIC-09 (jobs) · **Traces:** SPEC-05 §1/§5, ADR-0008, ADR-0038, ISSUE-0062
+**Type:** Bug · **Status:** Fixed · **Story:** EPIC-05 (ingestion) / EPIC-09 (jobs) · **Traces:** SPEC-05 §1/§5, ADR-0008, ADR-0038, ISSUE-0062
+
+## Resolution
+Fixed by making the FULL-sync delete pass compare `last_seen_at` against the **run-series start**
+instead of the current attempt's start. `internal/ingest/sink` `Config.SeenSince` (new) is the delete
+boundary; `internal/worker/sync.go` passes the River job's `CreatedAt`, which River preserves across
+retries, so a resumed sync (which does not re-emit pages fetched in an earlier attempt) no longer
+deletes them. A single-attempt run leaves `SeenSince` zero and falls back to the attempt start
+(unchanged). Also complements ISSUE-0072 (a truncated attempt now skips the delete pass entirely).
+Test: `internal/ingest/sink` `TestCompleteFullSyncUsesSeenSinceNotAttemptStart`.
 
 ## Symptom
 A full `sync_source` of a large source (988 crawled pages, `manual.tourpaq.com`) ran to
