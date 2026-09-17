@@ -27,6 +27,12 @@ function FieldErr({ error }: { error?: string }) {
   return <p className="text-xs text-danger-text">{error}</p>;
 }
 
+// Help renders the muted one-line description under a field's control.
+function Help({ text }: { text?: string }) {
+  if (!text) return null;
+  return <p className="text-xs text-fg-subtle">{text}</p>;
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-4 border-t border-border pt-5">
@@ -43,6 +49,7 @@ function TextRow(props: {
   onChange: (v: string) => void;
   error?: string;
   readOnly?: boolean;
+  description?: string;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -57,6 +64,7 @@ function TextRow(props: {
         onChange={(e) => props.onChange(e.target.value)}
         readOnly={props.readOnly}
       />
+      <Help text={props.description} />
       <FieldErr error={props.error} />
     </div>
   );
@@ -70,6 +78,7 @@ function NumberRow(props: {
   error?: string;
   step?: string;
   readOnly?: boolean;
+  description?: string;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -85,6 +94,7 @@ function NumberRow(props: {
         onChange={(e) => props.onChange(Number(e.target.value))}
         readOnly={props.readOnly}
       />
+      <Help text={props.description} />
       <FieldErr error={props.error} />
     </div>
   );
@@ -96,6 +106,7 @@ function CheckRow(props: {
   checked: boolean;
   onChange: (v: boolean) => void;
   error?: string;
+  description?: string;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -111,6 +122,7 @@ function CheckRow(props: {
           {props.label}
         </label>
       </div>
+      <Help text={props.description} />
       <FieldErr error={props.error} />
     </div>
   );
@@ -126,6 +138,7 @@ function SelectRow(props: {
   options: string[];
   onChange: (v: string) => void;
   error?: string;
+  description?: string;
 }) {
   const options = props.options.includes(props.value)
     ? props.options
@@ -147,6 +160,7 @@ function SelectRow(props: {
           </option>
         ))}
       </select>
+      <Help text={props.description} />
       <FieldErr error={props.error} />
     </div>
   );
@@ -163,6 +177,7 @@ function DatalistRow(props: {
   suggestions: string[];
   onChange: (v: string) => void;
   error?: string;
+  description?: string;
 }) {
   const listId = `${props.id}-options`;
   return (
@@ -183,6 +198,7 @@ function DatalistRow(props: {
           <option key={s} value={s} />
         ))}
       </datalist>
+      <Help text={props.description} />
       <FieldErr error={props.error} />
     </div>
   );
@@ -354,6 +370,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           value={draft.embeddingProvider}
           onChange={(v) => set("embeddingProvider", v)}
           error={errFor("embedding.provider")}
+          description="The service that turns document and query text into vectors for search (for example openai, voyage)."
         />
         <TextRow
           id="embedding-model"
@@ -361,6 +378,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           value={draft.embeddingModel}
           onChange={(v) => set("embeddingModel", v)}
           error={errFor("embedding.model")}
+          description="The embedding model name. It must match the vectors already stored; a change needs a full reindex."
         />
         <NumberRow
           id="embedding-dim"
@@ -369,6 +387,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           onChange={() => {}}
           error={errFor("embedding.dim")}
           readOnly
+          description="The vector size for this tenant. It is fixed when the tenant is created and cannot change."
         />
       </Section>
 
@@ -380,6 +399,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           options={settings.providers_allowed}
           onChange={(v) => set("llmProvider", v)}
           error={errFor("llm.provider")}
+          description="The service that writes the answer (for example anthropic, openai). It must be in the allowed providers below and have a key on the platform."
         />
         <DatalistRow
           id="llm-model"
@@ -388,6 +408,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           suggestions={settings.llm.models_allowed.filter((m) => !m.includes("*"))}
           onChange={(v) => set("llmModel", v)}
           error={errFor("llm.model")}
+          description="The model that writes the answer. Pick one the provider offers and the allowed models permit."
         />
       </Section>
 
@@ -398,6 +419,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           checked={draft.rerankerEnabled}
           onChange={(v) => set("rerankerEnabled", v)}
           error={errFor("reranker.enabled")}
+          description="Re-score the retrieved chunks with a reranker model for better ordering before the answer. Off by default."
         />
         <TextRow
           id="reranker-provider"
@@ -405,6 +427,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           value={draft.rerankerProvider}
           onChange={(v) => set("rerankerProvider", v)}
           error={errFor("reranker.provider")}
+          description="The reranker service to use when the reranker is on (for example cohere)."
         />
         <NumberRow
           id="reranker-top-n"
@@ -412,6 +435,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           value={draft.rerankerTopN}
           onChange={(v) => set("rerankerTopN", v)}
           error={errFor("reranker.top_n")}
+          description="How many top chunks the reranker keeps after re-scoring."
         />
       </Section>
 
@@ -422,6 +446,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           value={draft.kVector}
           onChange={(v) => set("kVector", v)}
           error={errFor("retrieval.k_vector")}
+          description="How many chunks the vector (meaning-based) search returns before the two searches are merged."
         />
         <NumberRow
           id="retrieval-k-text"
@@ -429,6 +454,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           value={draft.kText}
           onChange={(v) => set("kText", v)}
           error={errFor("retrieval.k_text")}
+          description="How many chunks the keyword (text) search returns before the two searches are merged."
         />
         <NumberRow
           id="retrieval-final-k"
@@ -436,6 +462,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           value={draft.finalK}
           onChange={(v) => set("finalK", v)}
           error={errFor("retrieval.final_k")}
+          description="How many merged chunks are passed to the answer step as context."
         />
         <NumberRow
           id="retrieval-min-score"
@@ -444,6 +471,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           onChange={(v) => set("minScore", v)}
           error={errFor("retrieval.min_score")}
           step="0.01"
+          description="Grounding floor: a chunk scoring below this is dropped, and if none remain the answer refuses as not grounded. With the reranker off, scores are small (about 0.01–0.03), so keep this low."
         />
       </Section>
 
@@ -454,6 +482,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           value={draft.targetTokens}
           onChange={(v) => set("targetTokens", v)}
           error={errFor("chunking.target_tokens")}
+          description="The target size of each chunk, in tokens. It takes effect on the next reindex or sync."
         />
         <NumberRow
           id="chunking-overlap-tokens"
@@ -461,6 +490,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           value={draft.overlapTokens}
           onChange={(v) => set("overlapTokens", v)}
           error={errFor("chunking.overlap_tokens")}
+          description="How many tokens each chunk shares with the next, to keep context across the split."
         />
       </Section>
 
@@ -471,6 +501,7 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           checked={draft.rewriteEnabled}
           onChange={(v) => set("rewriteEnabled", v)}
           error={errFor("rewrite.enabled")}
+          description="Rewrite a follow-up question into a standalone one, using the chat history, before search. Off by default."
         />
       </Section>
 
@@ -490,7 +521,10 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
             }}
             placeholder="One provider per line"
           />
-          <p className="text-xs text-fg-subtle">One provider per line.</p>
+          <p className="text-xs text-fg-subtle">
+            The providers this tenant may use for embedding, LLM and reranking. One per line. A
+            provider not listed here is refused, even if a key exists on the platform.
+          </p>
           <FieldErr error={errFor("providers_allowed")} />
         </div>
       </Section>
