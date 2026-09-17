@@ -42,3 +42,6 @@ Bearer `/v1/query`+`/v1/feedback` surface and this session surface. No new ADR: 
 - **web (`web/`, vitest + Testing Library)**: `web/components/AnswerPanel.test.tsx` (answer + grounded
   badge + model + citations, ungrounded/no-citations, thumbs-up/down wiring, disabled-once-rated).
   `cd web && npx vitest run`: **PASS**; `npm run build`: clean, route `/admin/query` present.
+- **live E2E (`web/e2e/admin-screens.spec.ts`, Playwright)**: the playground asks a question and
+  asserts the POST round-trip completes (a grounded/not-grounded answer panel or the error banner
+  appears). Self-skips without `E2E_BASE_URL`.

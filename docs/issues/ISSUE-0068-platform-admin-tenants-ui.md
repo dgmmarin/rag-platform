@@ -35,5 +35,8 @@ the entire backend is shipped; 11.7 is the TypeScript client + pages + a conditi
   state, status-gated actions, deleting row hides actions, suspend/delete wiring, busy disable).
   `cd web && npx vitest run`: **PASS** (87, +6 new); `npm run build`: clean, route `/admin/tenants`
   present; `npm run lint`: clean.
+- **live E2E (`web/e2e/admin-screens.spec.ts`, Playwright)**: the platform admin opens Tenants and
+  the seeded tenants ("Demo Tenant" / "Acme Inc") appear in the table with the enrol form. Self-skips
+  without `E2E_BASE_URL`.
 - Backend unchanged — `/admin/tenants` routes and their `router_test.go` coverage were delivered by
   ISSUE-0005.

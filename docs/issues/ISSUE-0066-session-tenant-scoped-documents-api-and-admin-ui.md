@@ -45,3 +45,6 @@ the Bearer `/v1/documents` surface and this session surface. No new ADR: this ap
   (summary + version metadata, version block omitted when absent, chunk list, no-chunks message).
   `cd web && npx vitest run`: **PASS** (77/77, +8 new); `npm run build`: clean, routes
   `/admin/documents` + `/admin/documents/[id]` present.
+- **live E2E (`web/e2e/admin-screens.spec.ts`, Playwright)**: the Documents screen loads over the
+  real round-trip (browser → BFF → ragctl → tenant DB) and renders its table or empty state, never
+  the error banner. Self-skips without `E2E_BASE_URL` (`mise run web-e2e`).

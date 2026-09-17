@@ -44,3 +44,6 @@ a `ListRuns` read (the store previously had only `GetRun` by id).
   dashes, row link, empty state) + `EvalReport.test.tsx` (summary tiles, per-case rows, deleted-case
   id fallback, no-summary / no-results notes). `cd web && npx vitest run`: **PASS** (96, +9);
   `npm run build`: clean, routes `/admin/eval` + `/admin/eval/[id]` present; `npm run lint`: clean.
+- **live E2E (`web/e2e/admin-screens.spec.ts`, Playwright)**: the Eval runs screen loads over the
+  real round-trip — proving the new `ListRuns` SQL executes — and renders its table or empty state,
+  never the error banner. Self-skips without `E2E_BASE_URL`.
