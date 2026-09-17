@@ -1,6 +1,13 @@
 # ISSUE-0073: Web crawl ingests `.md` duplicate variants, doubling the corpus
 
-**Type:** Bug · **Status:** Open · **Priority:** Medium · **Traces:** FR-SRC-01, SPEC-04 §2
+**Type:** Bug · **Status:** Mitigated · **Priority:** Medium · **Traces:** FR-SRC-01, SPEC-04 §2
+
+## Resolution
+Mitigated by configuration, no code change: the crawler already supports a `deny` URL list
+(`internal/connector/webcrawl/crawl.go` `denied`). `deny: [".md"]` was applied to the acme source, so
+the next crawl no longer follows the Markdown export variants — halving the crawl and removing the
+duplicate documents. The longer-term code enhancements below (suffix/regex deny; canonical-variant
+de-dup) remain optional and are deferred; they are not required to solve the reported case.
 
 ## Summary
 Crawling a GitBook-style site (manual.tourpaq.com) ingests **every page twice**: once as the HTML

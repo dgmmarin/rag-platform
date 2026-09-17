@@ -491,11 +491,19 @@ func (c *crawler) emit(ctx context.Context, it item, u *url.URL, resp *http.Resp
 	return links
 }
 
-// finish calls sink.Complete and returns the accumulated stats. A context error
-// from the crawl is returned to the caller (the worker) after Complete runs.
+// finish reconciles and returns the accumulated stats. It calls sink.Complete —
+// which on a FULL sync soft-deletes documents not seen this run — ONLY when the
+// crawl finished cleanly (cause == nil). A crawl truncated by a context timeout or
+// cancel has NOT re-listed the whole source, so running the delete pass would
+// soft-delete every page the crawl never reached (ISSUE-0072); instead skip
+// Complete and return the error, so the job fails and retries rather than
+// destroying the corpus. Pages fetched before the truncation were already committed
+// by their sink.Put and stay active.
 func (c *crawler) finish(ctx context.Context, sink connector.Sink, cause error) (connector.Stats, error) {
-	if err := sink.Complete(ctx); err != nil && cause == nil {
-		cause = err
+	if cause == nil {
+		if err := sink.Complete(ctx); err != nil {
+			cause = err
+		}
 	}
 	c.mu.Lock()
 	out := c.stats

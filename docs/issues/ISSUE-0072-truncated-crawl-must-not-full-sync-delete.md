@@ -1,6 +1,16 @@
 # ISSUE-0072: A timed-out or truncated crawl must not full-sync soft-delete
 
-**Type:** Bug · **Status:** Open · **Priority:** High · **Traces:** FR-SRC-01, SPEC-04 §2, ADR-0031
+**Type:** Bug · **Status:** Fixed · **Priority:** High · **Traces:** FR-SRC-01, SPEC-04 §2, ADR-0031
+
+## Resolution
+Fixed in `internal/connector/webcrawl/crawl.go` `finish`: it now calls `sink.Complete` (the FULL-sync
+delete pass) **only when the crawl finished cleanly** (`cause == nil`). A crawl truncated by a context
+timeout/cancel returns the error and skips the delete pass, so the job fails and retries instead of
+soft-deleting the pages it never reached. Pages fetched before truncation were already committed by
+their `sink.Put` and stay active. Covers both the web_crawl and sitemap connectors (shared `crawl.go`).
+Tests: `TestCrawlTruncatedSkipsComplete` (truncated → `Complete` not called, returns `context.Canceled`)
+and `TestCrawlCleanCrawlCompletesOnce` (clean crawl still reconciles once). `go test ./internal/...`:
+PASS. Note: the resume-across-retries deletion (ISSUE-0065) is a separate, still-open path.
 
 ## Summary
 When a `sync_source` crawl is cut short — it hits the 30-minute `syncJobTimeout`

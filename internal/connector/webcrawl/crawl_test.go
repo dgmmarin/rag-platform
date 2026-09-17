@@ -3,6 +3,7 @@ package webcrawl
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -93,6 +94,49 @@ func TestCrawlBFSDepthLimit(t *testing.T) {
 	}
 	if ids[srv.URL+"/deep"] {
 		t.Fatalf("depth-2 page /deep fetched despite max_depth=1")
+	}
+}
+
+// A clean FULL crawl runs the full-sync reconcile (sink.Complete) exactly once.
+func TestCrawlCleanCrawlCompletesOnce(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", page(`<a href="/a">a</a>`))
+	mux.HandleFunc("/a", page(`ok`))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := config{StartURLs: []string{srv.URL + "/"}, MaxDepth: 2, MaxPages: 100, Concurrency: 2}.withDefaults()
+	sink := newRecSink()
+	cr := newCrawler(cfg, srv.Client())
+	if _, err := cr.run(context.Background(), syncRun(newMemPageStore()), sink); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if sink.completes != 1 {
+		t.Fatalf("Complete ran %d times on a clean crawl; want 1", sink.completes)
+	}
+}
+
+// ISSUE-0072: a FULL crawl truncated by a context timeout/cancel must NOT run the
+// full-sync delete pass, or it soft-deletes every page it never reached. finish
+// skips sink.Complete and returns the context error so the job fails and retries.
+func TestCrawlTruncatedSkipsComplete(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", page(`<a href="/a">a</a>`))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := config{StartURLs: []string{srv.URL + "/"}, MaxDepth: 2, MaxPages: 100, Concurrency: 2}.withDefaults()
+	sink := newRecSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // truncate before the crawl reaches the frontier
+
+	cr := newCrawler(cfg, srv.Client())
+	_, err := cr.run(ctx, syncRun(newMemPageStore()), sink)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("run err = %v, want context.Canceled", err)
+	}
+	if sink.completes != 0 {
+		t.Fatalf("Complete ran %d times on a truncated crawl; want 0 (ISSUE-0072)", sink.completes)
 	}
 }
 
