@@ -1,6 +1,6 @@
 # Local observability stack + job-action visibility + cancel/mirror integrity
 
-**Date:** 2026-09-17 · **Status:** Design approved, pending implementation · **Traces:** SPEC-08 §3/§4, SPEC-10 §2/§5, ADR-0005, ADR-0067 · **Relates:** ADR-0011 (compose app profile), ISSUE-0077 (detached service tasks)
+**Date:** 2026-09-17 · **Status:** Implemented (ADR-0078) · **Traces:** SPEC-08 §3/§4, SPEC-10 §2/§5, ADR-0005, ADR-0067 · **Relates:** ADR-0011 (compose app profile), ISSUE-0077 (detached service tasks)
 
 ## Problem
 
