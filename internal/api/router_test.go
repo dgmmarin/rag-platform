@@ -592,6 +592,40 @@ func TestTenantQueryCSRF(t *testing.T) {
 	}
 }
 
+// The session admin eval report routes (STORY-12.4, ADR-0075, FR-ADM-04) mount the
+// read-only eval report handlers behind session -> tenant-access. Both are reads,
+// so both use the read gate and neither carries CSRF. {tenantId} is the tenant path
+// segment; {id} is the eval run id.
+func TestTenantEvalRoutesChain(t *testing.T) {
+	cases := []struct {
+		method, path, handler, gate string
+	}{
+		{http.MethodGet, "/admin/tenants/t-1/eval/runs", "eval-runs", "tenant-sources-read"},
+		{http.MethodGet, "/admin/tenants/t-1/eval/runs/abc", "eval-report", "tenant-sources-read"},
+	}
+	for _, c := range cases {
+		var ran []string
+		deps := newTestDeps(&ran)
+		deps.EvalRunList = okHandler(&ran, "eval-runs")
+		deps.EvalReport = okHandler(&ran, "eval-report")
+		h := New(deps)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(c.method, c.path, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s %s = %d, want 200; body=%s", c.method, c.path, rr.Code, rr.Body.String())
+		}
+		if idxOf(ran, "session") < 0 || idxOf(ran, c.gate) < 0 {
+			t.Fatalf("%s %s did not run session -> %s; ran=%v", c.method, c.path, c.gate, ran)
+		}
+		if idxOf(ran, "session") > idxOf(ran, c.gate) {
+			t.Fatalf("%s %s ran %s before session; ran=%v", c.method, c.path, c.gate, ran)
+		}
+		if !contains(ran, c.handler) {
+			t.Fatalf("%s %s did not reach %s; ran=%v", c.method, c.path, c.handler, ran)
+		}
+	}
+}
+
 // The session admin settings/members/api-keys routes (STORY-11.5, ADR-0075,
 // ISSUE-0064) mount the reused SettingsHandlers + the members/api-key handlers
 // behind session -> tenant-access. Reads use the read gate (PermQuery, any

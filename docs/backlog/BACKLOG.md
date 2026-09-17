@@ -302,7 +302,7 @@ redesign, beyond the original shell scope
 **STORY-12.1 Eval cases CRUD and import (CSV)** (3) ✅ — Traces: FR-ADM-04, ADR-0069
 **STORY-12.2 `ragctl eval run` with recall@k, grounded rate, latency** (5) ✅ — Traces: SPEC-06 §8, ADR-0070
 **STORY-12.3 LLM-as-judge correctness scoring (optional flag)** (3) ✅ — Traces: FR-ADM-04, SPEC-06 §8, ADR-0071
-**STORY-12.4 Eval report in admin UI and CI gate for settings changes** (2) 🚧 Partial — Traces: FR-ADM-04, SPEC-06 §8, ADR-0072 — CI gate + machine-readable report data shipped (ISSUE-0055); admin-UI **render** deferred to EPIC-11 (data contract complete)
+**STORY-12.4 Eval report in admin UI and CI gate for settings changes** (2) ✅ — Traces: FR-ADM-04, SPEC-06 §8, ADR-0072 — CI gate + machine-readable report data (ISSUE-0055); admin-UI **render** delivered under EPIC-11 (runs list + per-run drill-down, ISSUE-0069)
 
 ---
 

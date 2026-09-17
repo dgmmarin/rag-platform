@@ -24,7 +24,7 @@ breakdown lives in [`BACKLOG_TASKS.md`](BACKLOG_TASKS.md). Full narrative in
 | EPIC-09 | Jobs, scheduling and maintenance | 21 | 21 | ✅ Complete |
 | EPIC-10 | Security, observability, operations | 26 | 26 | ✅ Complete |
 | EPIC-11 | Admin UI (reference) | 34 | 23 | 🚧 In progress |
-| EPIC-12 | Evaluation harness and quality | 13 | 12 | 🚧 In progress |
+| EPIC-12 | Evaluation harness and quality | 13 | 13 | ✅ Complete |
 | **Total** | | **337** | **259** | **77%** |
 
 ---
@@ -1635,25 +1635,27 @@ source credential to v2 and proves both decrypt to their originals, with a secon
 > switch (persists across a reload) -> logout; CI adds `web` (build+unit) and `web-e2e`
 > (live-stack Playwright) jobs. Ops note: `docs/runbooks/admin-ui.md`.
 >
-> **Carried in from STORY-12.4:** the eval report **render** (a runs list + per-run
-> drill-down over the `ragctl eval report` / `eval run --json` data contract shipped in
-> STORY-12.4, ISSUE-0055, ADR-0072) is a natural EPIC-11 admin-UI addition. The data layer
-> is complete and tested; only the view remains.
+> **Carried in from STORY-12.4 (delivered):** the eval report **render** — a runs list
+> (`/admin/eval`) + per-run drill-down (`/admin/eval/[id]`) over the `ragctl eval report`
+> data contract (ISSUE-0055, ADR-0072) — shipped under EPIC-11 as ISSUE-0069. It adds two
+> read-only session routes (`GET /admin/tenants/{id}/eval/runs`, `.../eval/runs/{id}`) that
+> reuse the eval service behind `RequireTenantSourcesRead`, plus a new `ListRuns` read.
 
-## EPIC-12 · Evaluation harness and quality — 🚧 12/13 pts
+## EPIC-12 · Evaluation harness and quality — ✅ 13/13 pts
 
 | Key | Story | Pts | Status | Traces |
 |---|---|--:|---|---|
 | STORY-12.1 | Eval cases CRUD and import (CSV) | 3 | ✅ Done | FR-ADM-04 |
 | STORY-12.2 | `ragctl eval run` with recall@k, grounded rate, latency | 5 | ✅ Done | SPEC-06 §8 |
 | STORY-12.3 | LLM-as-judge correctness scoring (optional flag) | 3 | ✅ Done | FR-ADM-04, SPEC-06 §8 |
-| STORY-12.4 | Eval report in admin UI and CI gate for settings changes | 2 | 🚧 Partial (1/2) | FR-ADM-04, SPEC-06 §8 |
+| STORY-12.4 | Eval report in admin UI and CI gate for settings changes | 2 | ✅ Done | FR-ADM-04, SPEC-06 §8, ISSUE-0055, ISSUE-0069 |
 
-> **STORY-12.4 is partial.** The CI gate for settings changes (`mise run eval-gate`,
+> **STORY-12.4 is done.** The CI gate for settings changes (`mise run eval-gate`,
 > `eval run --gate`) and the machine-readable report data (`eval run --json`, `ragctl eval
-> report`) shipped (ISSUE-0055, ADR-0072) — 1 of 2 pts credited. The remaining ~1 pt, the
-> eval report **render in the admin UI**, is deferred to EPIC-11 (the admin UI does not
-> exist yet); the data contract it renders is complete and tested. See the EPIC-11 note.
+> report`) shipped as ISSUE-0055 (ADR-0072). The eval report **render in the admin UI** —
+> a runs list + per-run drill-down — shipped as ISSUE-0069 under EPIC-11: two read-only
+> session routes over the eval service (`RequireTenantSourcesRead`) and the `/admin/eval`
+> pages. See the EPIC-11 note.
 
 ---
 

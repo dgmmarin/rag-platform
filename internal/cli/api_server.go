@@ -21,6 +21,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/cp/usage"
 	"github.com/rag-platform/ragctl/internal/crypto"
 	"github.com/rag-platform/ragctl/internal/documents"
+	"github.com/rag-platform/ragctl/internal/eval"
 	"github.com/rag-platform/ragctl/internal/llm"
 	// Register the upload connector (kind "upload") into the default registry so
 	// the sources API's config-validation / test-connection seams resolve it and
@@ -295,6 +296,13 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 	}
 	queryHandlers := query.NewHandlers(querySvc)
 
+	// --- Eval report (read-only, STORY-12.4, FR-ADM-04). eval_runs/eval_results are
+	// tenant content reached through the resolver (ADR-0003); the same service the
+	// `ragctl eval report` CLI uses, here behind the session tenant-access gate. ---
+	evalSvc := eval.NewService(resolver, eval.NewTenantStore())
+	evalSvc.Runs = eval.NewRunStore()
+	evalHandlers := eval.NewHandlers(evalSvc)
+
 	// --- Rate limiting (per key + per tenant, credential-keyed). ---
 	limiter := ratelimit.New(nil)
 
@@ -413,6 +421,9 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 		Query:     http.HandlerFunc(queryHandlers.Query),
 		Feedback:  http.HandlerFunc(queryLogHandlers.Feedback),
 		QueryList: http.HandlerFunc(queryLogHandlers.List),
+
+		EvalRunList: http.HandlerFunc(evalHandlers.RunList),
+		EvalReport:  http.HandlerFunc(evalHandlers.Report),
 	}
 
 	return &apiServer{

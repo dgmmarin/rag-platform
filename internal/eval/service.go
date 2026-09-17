@@ -187,6 +187,23 @@ func (s *Service) Report(ctx context.Context, tid tenant.ID, runID string) (Repo
 	return Report{Run: run, Results: results}, nil
 }
 
+// ListRuns reads the tenant's stored eval runs newest-first (STORY-12.4), for the
+// admin report's runs list. It reaches the tenant DB through the resolver (ADR-0003).
+func (s *Service) ListRuns(ctx context.Context, tid tenant.ID, limit int) ([]RunView, error) {
+	db, err := s.open(ctx, tid)
+	if err != nil {
+		return nil, err
+	}
+	runs, err := s.reportReader().ListRuns(ctx, db, limit)
+	if err != nil {
+		return nil, err
+	}
+	if runs == nil {
+		runs = []RunView{}
+	}
+	return runs, nil
+}
+
 // reportReader returns the configured report reader, defaulting to RunStore (the
 // same store that writes runs) so callers need not wire a second dependency.
 func (s *Service) reportReader() ReportReader {

@@ -133,6 +133,13 @@ type Deps struct {
 	// the not-implemented seam.
 	Feedback  http.Handler // POST /v1/feedback (query scope)
 	QueryList http.Handler // GET /v1/queries (admin scope)
+
+	// Eval report handlers (STORY-12.4, FR-ADM-04). eval_runs/eval_results are
+	// tenant content reached via the resolver (ADR-0003); read-only. Session-only
+	// (mounted under /admin/tenants/{tenantId}/eval), no Bearer surface. A nil
+	// handler is the not-implemented seam.
+	EvalRunList http.Handler // GET .../eval/runs
+	EvalReport  http.Handler // GET .../eval/runs/{id}
 }
 
 // New assembles the public HTTP handler: the global middleware chain in the
@@ -280,6 +287,15 @@ func New(d Deps) http.Handler {
 	// response body through unchanged.
 	mux.Handle("POST /admin/tenants/{tenantId}/query", tenantSources(d.RequireTenantSourcesRead, mustCSRF(d, d.Query)))
 	mux.Handle("POST /admin/tenants/{tenantId}/feedback", tenantSources(d.RequireTenantSourcesRead, mustCSRF(d, d.Feedback)))
+
+	// Session admin eval report (STORY-12.4, ADR-0075, ADR-0072, FR-ADM-04): the
+	// read-only render surface over the `ragctl eval report` data contract. Runs and
+	// their per-case results are tenant content (eval_runs/eval_results); both routes
+	// are reads, so both use RequireTenantSourcesRead and carry no CSRF. The mutating
+	// eval surface (cases CRUD, run) stays on the CLI (STORY-12.1/12.2). {id} is the
+	// run id; {tenantId} is the tenant path segment.
+	mux.Handle("GET /admin/tenants/{tenantId}/eval/runs", tenantSources(d.RequireTenantSourcesRead, d.EvalRunList))
+	mux.Handle("GET /admin/tenants/{tenantId}/eval/runs/{id}", tenantSources(d.RequireTenantSourcesRead, d.EvalReport))
 
 	// Documents (STORY-04.4, FR-SRC-02/FR-ADM-03, SPEC-07 §2). Tenant content
 	// reached through the resolver (ADR-0003); the tenant is derived from the API

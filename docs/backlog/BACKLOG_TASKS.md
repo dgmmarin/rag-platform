@@ -485,7 +485,7 @@ breakdown, tasks are derived from the acceptance criteria.
 ### STORY-12.3 — LLM-as-judge correctness scoring (optional flag)
 - [x] LLM-as-judge correctness scoring (optional flag) (`--judge`/`--judge-model` on `eval run`; Judge port + llmJudge; ADR-0071, ISSUE-0054)
 
-### STORY-12.4 — Eval report in admin UI and CI gate for settings changes (PARTIAL)
+### STORY-12.4 — Eval report in admin UI and CI gate for settings changes (DONE)
 - [x] CI gate for settings changes (`mise run eval-gate`, `eval run --gate`; committed thresholds `.ci/eval-gate.json`; ADR-0072, ISSUE-0055)
 - [x] machine-readable report data (`eval run --json`, `ragctl eval report <slug> <run-id>`) — the EPIC-11 admin-report contract
-- [ ] eval report **render in admin UI** — DEFERRED to EPIC-11 (no admin UI exists yet); data layer complete + tested, see ISSUE-0055 / ADR-0072
+- [x] eval report **render in admin UI** — runs list (`/admin/eval`) + per-run drill-down (`/admin/eval/[id]`) over two read-only session routes (`RequireTenantSourcesRead`); ISSUE-0069
