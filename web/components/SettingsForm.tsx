@@ -116,6 +116,78 @@ function CheckRow(props: {
   );
 }
 
+// SelectRow is a labelled dropdown over a fixed option set (e.g. the tenant's
+// providers_allowed). The current value is always included so a value outside the
+// allowed list still shows rather than rendering blank.
+function SelectRow(props: {
+  id: string;
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (v: string) => void;
+  error?: string;
+}) {
+  const options = props.options.includes(props.value)
+    ? props.options
+    : [props.value, ...props.options];
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={props.id} className="text-sm font-medium text-fg">
+        {props.label}
+      </label>
+      <select
+        id={props.id}
+        className={inputClass}
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+      >
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+      <FieldErr error={props.error} />
+    </div>
+  );
+}
+
+// DatalistRow is a text input with dropdown suggestions. Used for the LLM model,
+// where models_allowed may hold wildcard patterns (e.g. "gpt-*"): concrete entries
+// become pickable suggestions, and the free-text input still accepts a specific
+// model for a wildcard-allowed provider.
+function DatalistRow(props: {
+  id: string;
+  label: string;
+  value: string;
+  suggestions: string[];
+  onChange: (v: string) => void;
+  error?: string;
+}) {
+  const listId = `${props.id}-options`;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={props.id} className="text-sm font-medium text-fg">
+        {props.label}
+      </label>
+      <input
+        id={props.id}
+        type="text"
+        list={listId}
+        className={inputClass}
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+      />
+      <datalist id={listId}>
+        {props.suggestions.map((s) => (
+          <option key={s} value={s} />
+        ))}
+      </datalist>
+      <FieldErr error={props.error} />
+    </div>
+  );
+}
+
 // arraysEqual compares two string arrays element-wise. Used to decide whether the
 // allowed-providers list changed and so belongs in the patch.
 function arraysEqual(a: string[], b: string[]): boolean {
@@ -301,17 +373,19 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
       </Section>
 
       <Section title="LLM">
-        <TextRow
+        <SelectRow
           id="llm-provider"
           label="LLM provider"
           value={draft.llmProvider}
+          options={settings.providers_allowed}
           onChange={(v) => set("llmProvider", v)}
           error={errFor("llm.provider")}
         />
-        <TextRow
+        <DatalistRow
           id="llm-model"
           label="LLM model"
           value={draft.llmModel}
+          suggestions={settings.llm.models_allowed.filter((m) => !m.includes("*"))}
           onChange={(v) => set("llmModel", v)}
           error={errFor("llm.model")}
         />

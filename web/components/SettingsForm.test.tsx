@@ -162,3 +162,42 @@ describe("SettingsForm (errors)", () => {
     expect(screen.getByText(/immutable after provisioning/i)).toBeInTheDocument();
   });
 });
+
+describe("SettingsForm (LLM model selection)", () => {
+  it("offers the LLM provider as a select over providers_allowed", () => {
+    renderForm(<SettingsForm />);
+    const provider = screen.getByLabelText("LLM provider") as HTMLSelectElement;
+    expect(provider.tagName).toBe("SELECT");
+    const opts = Array.from(provider.options).map((o) => o.value);
+    expect(opts).toEqual(expect.arrayContaining(["anthropic", "voyage", "cohere"]));
+    expect(provider.value).toBe("anthropic");
+  });
+
+  it("offers models_allowed as datalist suggestions for the model and patches the choice", async () => {
+    useSettingsMock.mockReturnValue({
+      data: settings({
+        llm: { provider: "anthropic", model: "claude-sonnet-5", max_tokens: 1024, models_allowed: ["claude-opus-5", "claude-sonnet-5", "gpt-*"] },
+      }),
+      isLoading: false,
+      isError: false,
+      error: null,
+    });
+    updateSettings.mockResolvedValue(undefined);
+    renderForm(<SettingsForm />);
+
+    const model = screen.getByLabelText("LLM model") as HTMLInputElement;
+    // Wildcard entries are not offered as concrete suggestions.
+    const listId = model.getAttribute("list")!;
+    const optionValues = Array.from(document.getElementById(listId)!.querySelectorAll("option")).map(
+      (o) => (o as HTMLOptionElement).value,
+    );
+    expect(optionValues).toEqual(["claude-opus-5", "claude-sonnet-5"]);
+
+    fireEvent.change(model, { target: { value: "claude-opus-5" } });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(updateSettings).toHaveBeenCalled());
+    const patch = updateSettings.mock.calls[0][2];
+    expect(patch.llm).toEqual({ model: "claude-opus-5" });
+  });
+});
