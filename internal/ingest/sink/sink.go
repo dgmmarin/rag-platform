@@ -306,6 +306,7 @@ func (s *Sink) Put(ctx context.Context, doc Document) error {
 	}
 	s.stats.ChunksEmbedded += len(missTexts)
 	s.stats.ChunksReused += len(chunks) - len(missTexts)
+	s.cfg.Metrics.AddEmbedChunksReused(s.cfg.Tenant, s.cfg.Provider, len(chunks)-len(missTexts))
 
 	// 6. Commit: insert version + chunks and flip current_version in ONE
 	// transaction (ADR-0008, SPEC-05 §5). A store error fails the job for retry;

@@ -32,9 +32,10 @@ type Metrics struct {
 	queryGrounded     *prometheus.CounterVec   // query_grounded_total {tenant,grounded}
 
 	// Ingestion plane.
-	ingestDocuments *prometheus.CounterVec // ingest_documents_total {tenant,source_kind,result}
-	ingestChunks    *prometheus.CounterVec // ingest_chunks_total {tenant,provider}
-	embedTokens     *prometheus.CounterVec // embed_tokens_total {tenant,provider}
+	ingestDocuments   *prometheus.CounterVec // ingest_documents_total {tenant,source_kind,result}
+	ingestChunks      *prometheus.CounterVec // ingest_chunks_total {tenant,provider}
+	embedTokens       *prometheus.CounterVec // embed_tokens_total {tenant,provider}
+	embedChunksReused *prometheus.CounterVec // embed_chunks_reused_total {tenant,provider}
 
 	// Provider plane (LLM / embedding / rerank clients).
 	providerDuration *prometheus.HistogramVec // provider_request_duration_seconds {provider,op,status}
@@ -82,6 +83,10 @@ func NewMetrics() *Metrics {
 			Name: "embed_tokens_total",
 			Help: "Embedding tokens consumed during ingestion, per provider.",
 		}, []string{"tenant", "provider"}),
+		embedChunksReused: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "embed_chunks_reused_total",
+			Help: "Chunks whose embedding was reused from an unchanged chunk, per provider.",
+		}, []string{"tenant", "provider"}),
 		providerDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "provider_request_duration_seconds",
 			Help:    "Duration of external provider requests in seconds, by provider/op/status.",
@@ -113,6 +118,7 @@ func NewMetrics() *Metrics {
 		m.ingestDocuments,
 		m.ingestChunks,
 		m.embedTokens,
+		m.embedChunksReused,
 		m.providerDuration,
 		m.providerErrors,
 		m.jobsQueueDepth,
@@ -175,6 +181,16 @@ func (m *Metrics) AddEmbedTokens(tenant, provider string, n int) {
 		return
 	}
 	m.embedTokens.WithLabelValues(tenant, provider).Add(float64(n))
+}
+
+// AddEmbedChunksReused adds n chunks whose embedding was reused from an
+// unchanged chunk instead of re-embedded (chunk-level drift, SPEC-05 §1),
+// under the tenant/provider (SPEC-10 §2).
+func (m *Metrics) AddEmbedChunksReused(tenant, provider string, n int) {
+	if m == nil || n == 0 {
+		return
+	}
+	m.embedChunksReused.WithLabelValues(tenant, provider).Add(float64(n))
 }
 
 // ObserveProvider records one external provider request: its duration under
