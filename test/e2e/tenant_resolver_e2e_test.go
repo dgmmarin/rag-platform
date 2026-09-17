@@ -20,8 +20,22 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/rag-platform/ragctl/internal/crypto"
+	"github.com/rag-platform/ragctl/internal/migrate"
 	"github.com/rag-platform/ragctl/internal/tenant"
 )
+
+// currentTenantSchemaVersion is the schema version the running binary expects
+// (the highest embedded tenant migration). The resolver fails closed against any
+// tenant behind it, so lifecycle tests must stamp THIS version — not a literal —
+// or they break every time a tenant migration is added (as 00002 did).
+func currentTenantSchemaVersion(t *testing.T) int {
+	t.Helper()
+	v, err := migrate.ExpectedTenantVersion()
+	if err != nil {
+		t.Fatalf("expected tenant version: %v", err)
+	}
+	return int(v)
+}
 
 // testDEK is a fixed 32-byte DEK; the resolver only needs a Decrypter, so no KMS
 // wiring is required for the e2e. It never leaves the test process.
@@ -128,7 +142,7 @@ func TestResolverGoldenPath(t *testing.T) {
 	// --- Active tenant: read-write handle that actually reads and writes. ---
 	activeID := tenant.ID(uuid.New())
 	dbName, role, password := setupTenantDatabase(t, "active")
-	insertTenantRows(t, activeID, "active-"+dbName, string(tenant.StatusActive), dbName, role, password, 1)
+	insertTenantRows(t, activeID, "active-"+dbName, string(tenant.StatusActive), dbName, role, password, currentTenantSchemaVersion(t))
 	// Give the tenant a table to write to (as its own role, so ownership is real).
 	execPsqlAs(t, role, password, dbName, "CREATE TABLE notes (body text)")
 
@@ -174,7 +188,7 @@ func TestResolverGoldenPath(t *testing.T) {
 	// --- Suspended tenant: read-only handle (reads ok, writes refused). ---
 	suspID := tenant.ID(uuid.New())
 	sName, sRole, sPass := setupTenantDatabase(t, "susp")
-	insertTenantRows(t, suspID, "susp-"+sName, string(tenant.StatusSuspended), sName, sRole, sPass, 1)
+	insertTenantRows(t, suspID, "susp-"+sName, string(tenant.StatusSuspended), sName, sRole, sPass, currentTenantSchemaVersion(t))
 	execPsqlAs(t, sRole, sPass, sName, "CREATE TABLE notes (body text); INSERT INTO notes VALUES ('x')")
 
 	sdb, err := res.Open(ctx, suspID)
@@ -194,7 +208,7 @@ func TestResolverGoldenPath(t *testing.T) {
 	// --- Deleted tenant: not found. ---
 	delID := tenant.ID(uuid.New())
 	dName, dRole, dPass := setupTenantDatabase(t, "del")
-	insertTenantRows(t, delID, "del-"+dName, string(tenant.StatusDeleted), dName, dRole, dPass, 1)
+	insertTenantRows(t, delID, "del-"+dName, string(tenant.StatusDeleted), dName, dRole, dPass, currentTenantSchemaVersion(t))
 	if _, err := res.Open(ctx, delID); !errors.Is(err, tenant.ErrTenantNotFound) {
 		t.Fatalf("Open deleted: want ErrTenantNotFound, got %v", err)
 	}
@@ -215,11 +229,16 @@ func TestResolverReflectsStatusChangeAfterCacheExpiry(t *testing.T) {
 
 	id := tenant.ID(uuid.New())
 	dbName, role, password := setupTenantDatabase(t, "flip")
-	insertTenantRows(t, id, "flip-"+dbName, string(tenant.StatusActive), dbName, role, password, 1)
+	insertTenantRows(t, id, "flip-"+dbName, string(tenant.StatusActive), dbName, role, password, currentTenantSchemaVersion(t))
 
 	db, err := res.Open(ctx, id)
-	if err != nil || db.ReadOnly() {
-		t.Fatalf("Open active: err=%v readOnly=%v", err, db.ReadOnly())
+	// Check the error before touching db: on a failed Open, db is nil, and
+	// evaluating db.ReadOnly() in the Fatalf args would panic instead of failing.
+	if err != nil {
+		t.Fatalf("Open active: %v", err)
+	}
+	if db.ReadOnly() {
+		t.Fatal("Open active: got a read-only handle, want read-write")
 	}
 
 	// Suspend in the control plane, then wait past the (short) cache TTL.
@@ -268,7 +287,7 @@ func TestResolverNotifyInvalidatesCache(t *testing.T) {
 	ctx := context.Background()
 	id := tenant.ID(uuid.New())
 	dbName, role, password := setupTenantDatabase(t, "notify")
-	insertTenantRows(t, id, "notify-"+dbName, string(tenant.StatusActive), dbName, role, password, 1)
+	insertTenantRows(t, id, "notify-"+dbName, string(tenant.StatusActive), dbName, role, password, currentTenantSchemaVersion(t))
 
 	// Prime the cache with the active status.
 	if db, err := res.Open(ctx, id); err != nil || db.ReadOnly() {
