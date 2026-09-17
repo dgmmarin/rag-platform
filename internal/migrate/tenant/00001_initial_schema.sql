@@ -79,6 +79,7 @@ create table chunks (
     token_count     int  not null,
     embedding       vector(EMBEDDING_DIM),              -- dim replaced at provisioning
     embedding_model text not null,
+    content_hash    bytea not null,                     -- sha256(embed-text); chunk-level drift reuse
     tsv             tsvector generated always as (to_tsvector('simple', coalesce(content, ''))) stored,
     metadata        jsonb not null default '{}',
     created_at      timestamptz not null default now(),
@@ -99,6 +100,7 @@ residual_quantization = true
 lists = [1]
 spherical_centroids = true
 $$);
+create index on chunks (content_hash, embedding_model);
 
 -- View used by retrieval: only chunks of the current version of active documents.
 create view live_chunks as
