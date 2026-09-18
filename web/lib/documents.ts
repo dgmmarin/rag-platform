@@ -92,6 +92,26 @@ export async function listDocuments(
   return (await res.json()) as DocumentListPage;
 }
 
+// listAllDocuments follows next_cursor to load EVERY matching document, so the
+// admin table (which paginates client-side, usePagination) shows the true total
+// instead of just the server's first page. Requests the server max (200) per round
+// trip. ponytail: capped at 100 pages (20k docs); a larger corpus should move the
+// table to true server-side cursor paging rather than lifting this cap.
+export async function listAllDocuments(
+  tenantId: string,
+  filter: DocumentFilter = {},
+): Promise<DocumentListPage> {
+  const items: Document[] = [];
+  let cursor: string | undefined;
+  for (let i = 0; i < 100; i++) {
+    const page = await listDocuments(tenantId, filter, { limit: 200, cursor });
+    items.push(...page.items);
+    if (!page.next_cursor) break;
+    cursor = page.next_cursor;
+  }
+  return { items };
+}
+
 export async function getDocument(tenantId: string, id: string): Promise<DocumentDetail> {
   const res = await ensureOk(await apiFetch(`${base(tenantId)}/${id}`));
   return (await res.json()) as DocumentDetail;
@@ -116,7 +136,7 @@ export function useDocuments(filter: DocumentFilter = {}): UseQueryResult<Docume
   const tenantId = useTenant().current?.id;
   return useQuery({
     queryKey: ["documents", tenantId, filter],
-    queryFn: () => listDocuments(tenantId as string, filter),
+    queryFn: () => listAllDocuments(tenantId as string, filter),
     enabled: !!tenantId,
   });
 }
