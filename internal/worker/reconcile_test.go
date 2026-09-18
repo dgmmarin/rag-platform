@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/riverqueue/river/rivertype"
+
 	"github.com/rag-platform/ragctl/internal/cp/jobs"
 )
 
@@ -30,5 +32,27 @@ func TestReconcileWorkerRunsReconciler(t *testing.T) {
 	}
 	if store.calls != 1 {
 		t.Fatalf("Store.Reconcile called %d times, want 1", store.calls)
+	}
+}
+
+// TestReconcileInsertOptsHasRequiredUniqueStates guards the ISSUE-0081 fix: River's
+// PeriodicJobEnqueuer rejects a custom unique ByState missing any required
+// non-terminal state (pending, scheduled, available, running) and then never
+// enqueues reconcile_jobs. This asserts the wired opts include all four, so the
+// periodic reconcile keeps running.
+func TestReconcileInsertOptsHasRequiredUniqueStates(t *testing.T) {
+	got := map[rivertype.JobState]bool{}
+	for _, s := range reconcileInsertOpts().UniqueOpts.ByState {
+		got[s] = true
+	}
+	for _, want := range []rivertype.JobState{
+		rivertype.JobStatePending,
+		rivertype.JobStateScheduled,
+		rivertype.JobStateAvailable,
+		rivertype.JobStateRunning,
+	} {
+		if !got[want] {
+			t.Fatalf("reconcile unique ByState missing required state %q; River will refuse to enqueue", want)
+		}
 	}
 }

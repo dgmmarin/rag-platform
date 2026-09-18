@@ -233,12 +233,7 @@ func New(deps Deps) (*Worker, error) {
 			river.NewPeriodicJob(
 				river.PeriodicInterval(reconcileInterval),
 				func() (river.JobArgs, *river.InsertOpts) {
-					return ReconcileJobsArgs{}, &river.InsertOpts{
-						Queue: QueueMaintenance,
-						UniqueOpts: river.UniqueOpts{
-							ByState: []rivertype.JobState{rivertype.JobStateAvailable, rivertype.JobStateRunning},
-						},
-					}
+					return ReconcileJobsArgs{}, reconcileInsertOpts()
 				},
 				&river.PeriodicJobOpts{RunOnStart: true},
 			),
