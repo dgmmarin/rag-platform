@@ -13,6 +13,7 @@ export type Settings = {
   llm: { provider: string; model: string; max_tokens: number; models_allowed: string[] };
   reranker: { enabled: boolean; provider: string; model: string; top_n: number };
   rewrite: { enabled: boolean };
+  expansion: { mode: string; model?: string };
   chunking: { target_tokens: number; overlap_tokens: number };
   retrieval: { k_vector: number; k_text: number; final_k: number; min_score: number };
   answering: { token_budget: number; history_n: number };
@@ -29,6 +30,7 @@ export type SettingsPatch = {
   llm?: Partial<Settings["llm"]>;
   reranker?: Partial<Settings["reranker"]>;
   rewrite?: Partial<Settings["rewrite"]>;
+  expansion?: Partial<Settings["expansion"]>;
   chunking?: Partial<Settings["chunking"]>;
   retrieval?: Partial<Settings["retrieval"]>;
   answering?: Partial<Settings["answering"]>;

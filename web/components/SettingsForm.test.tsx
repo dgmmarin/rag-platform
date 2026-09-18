@@ -24,6 +24,7 @@ function settings(over: Partial<Settings> = {}): Settings {
     llm: { provider: "anthropic", model: "claude-sonnet-5", max_tokens: 1024, models_allowed: ["claude-opus-5"] },
     reranker: { enabled: false, provider: "cohere", model: "rerank-v3.5", top_n: 20 },
     rewrite: { enabled: false },
+    expansion: { mode: "off" },
     chunking: { target_tokens: 512, overlap_tokens: 64 },
     retrieval: { k_vector: 40, k_text: 40, final_k: 8, min_score: 0.02 },
     answering: { token_budget: 6000, history_n: 6 },
@@ -79,6 +80,7 @@ describe("SettingsForm (render)", () => {
     expect(screen.getByLabelText("Reranker top N")).toHaveValue(20);
     expect(screen.getByLabelText("Minimum score")).toHaveAttribute("step", "0.01");
     expect(screen.getByLabelText("Query rewrite enabled")).not.toBeChecked();
+    expect(screen.getByLabelText("Expansion mode")).toHaveValue("off");
     // providers_allowed renders as one entry per line.
     expect(screen.getByLabelText("Allowed providers")).toHaveValue("anthropic\nvoyage\ncohere");
   });
@@ -106,6 +108,17 @@ describe("SettingsForm (submit)", () => {
     // the changed sections carry no embedding key at all -> dim never sent.
     const body = updateSettings.mock.calls[0][2];
     expect(body.embedding).toBeUndefined();
+  });
+
+  it("PATCHes the expansion mode when changed to hyde", async () => {
+    updateSettings.mockResolvedValue(settings());
+    renderForm(<SettingsForm />);
+
+    fireEvent.change(screen.getByLabelText("Expansion mode"), { target: { value: "hyde" } });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+    expect(updateSettings).toHaveBeenCalledWith("t1", "tok", { expansion: { mode: "hyde" } });
   });
 
   it("sends an empty patch untouched (no spurious sections)", async () => {

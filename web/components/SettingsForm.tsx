@@ -248,6 +248,10 @@ function buildPatch(orig: Settings, draft: Draft, providers: string[]): Settings
   if (draft.rewriteEnabled !== orig.rewrite.enabled) rw.enabled = draft.rewriteEnabled;
   if (Object.keys(rw).length) patch.rewrite = rw;
 
+  const ex: SettingsPatch["expansion"] = {};
+  if (draft.expansionMode !== orig.expansion.mode) ex.mode = draft.expansionMode;
+  if (Object.keys(ex).length) patch.expansion = ex;
+
   if (!arraysEqual(providers, orig.providers_allowed)) patch.providers_allowed = providers;
 
   return patch;
@@ -270,6 +274,7 @@ type Draft = {
   targetTokens: number;
   overlapTokens: number;
   rewriteEnabled: boolean;
+  expansionMode: string;
 };
 
 function draftFrom(s: Settings): Draft {
@@ -288,6 +293,7 @@ function draftFrom(s: Settings): Draft {
     targetTokens: s.chunking.target_tokens,
     overlapTokens: s.chunking.overlap_tokens,
     rewriteEnabled: s.rewrite.enabled,
+    expansionMode: s.expansion.mode,
   };
 }
 
@@ -502,6 +508,18 @@ function SettingsFormInner({ settings }: { settings: Settings }) {
           onChange={(v) => set("rewriteEnabled", v)}
           error={errFor("rewrite.enabled")}
           description="Rewrite a follow-up question into a standalone one, using the chat history, before search. Off by default."
+        />
+      </Section>
+
+      <Section title="Query expansion">
+        <SelectRow
+          id="expansion-mode"
+          label="Expansion mode"
+          value={draft.expansionMode}
+          options={["off", "hyde"]}
+          onChange={(v) => set("expansionMode", v)}
+          error={errFor("expansion.mode")}
+          description="Broaden the search when the question and the documents use different words. off: search the question as typed. hyde: an LLM drafts a short hypothetical answer and the search matches on that (better for wording mismatches), at the cost of one extra LLM call per query."
         />
       </Section>
 
