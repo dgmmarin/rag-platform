@@ -1,6 +1,6 @@
 # ISSUE-0046: Tenant migration mismatch metric and alert
 
-**Type:** Feature · **Status:** Todo · **Story:** STORY-10.2 follow-up · **Traces:** SPEC-10 §5, SPEC-10 §2, ISSUE-0045
+**Type:** Feature · **Status:** Done · **Story:** STORY-10.2 follow-up · **Traces:** SPEC-10 §5, SPEC-10 §2, ISSUE-0045
 
 > Note: the *what* lives in the delivery backlog (`docs/backlog/`), the *why* in ADRs.
 
@@ -37,3 +37,30 @@ in STORY-10.2 (`deploy/prometheus/rules/ragctl.rules.yml`).
 
 ## Not in scope
 - Anything beyond the migration-mismatch metric + its single alert.
+
+## Resolution
+- **Metric:** `tenant_schema_mismatch` (unlabelled `prometheus.Gauge`, `internal/obs/metrics.go`)
+  with a nil-safe `SetTenantSchemaMismatch(n)` setter. Unlabelled by design — a fleet count, so
+  no per-tenant cardinality (SPEC-10 §2 guard).
+- **Scan:** `worker.SampleTenantSchemaMismatch` (`internal/worker/schemamismatch.go`) counts active
+  tenants whose `coalesce(schema_version, 0)` is below `migrate.ExpectedTenantVersion()`, over
+  `tenants` join `tenant_databases` on the control-plane pool (C-3, no tenant DB opened). It mirrors
+  the `jobs_queue_depth` sampler exactly.
+- **Where it runs:** the worker (`ragctl work`), on a 60 s ticker
+  (`sampleSchemaMismatchLoop`, `internal/cli/worker.go`), alongside the queue-depth sampler — one
+  emitter, so no double series. A version-derivation error disables the loop but never fails the
+  worker (observability only).
+- **Alert:** `TenantSchemaMismatch` (`tenant_schema_mismatch > 0`, `for: 15m`) in a new
+  `ragctl.tenancy` group of `deploy/prometheus/rules/ragctl.rules.yml`, linking
+  `docs/runbooks/failed-migration.md#fleet-schema-mismatch-alert` (new section added there).
+- **Decision on an ADR:** none. This reuses the established periodic control-plane gauge-sampler
+  pattern (ADR-0067, `SampleQueueDepths`), so no new architectural decision was made.
+- **Docs:** SPEC-10 §2 (new metric row) and §5 (alert marked delivered) updated.
+
+## Tests
+- `internal/obs` unit: `TestCatalogueEmitsTenantSchemaMismatch` (gauge exposed, unlabelled),
+  `TestNilMetricsMethodsAreSafe` extended, `TestAlertRulesParseAndReferenceRealMetrics` (metric added
+  to the known set) and `TestAlertRunbookLinksResolve` (the new alert's runbook anchor resolves).
+- e2e `TestTenantSchemaMismatchSampler` (`-tags e2e`): over real control-plane Postgres, the scan
+  adds exactly 1 for an active behind-version tenant and does not count an at-version active tenant
+  or a behind but suspended tenant (delta assertion, robust to pre-existing rows).

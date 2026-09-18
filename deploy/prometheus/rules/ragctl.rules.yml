@@ -69,6 +69,19 @@ groups:
           description: "Queue {{ $labels.queue }} has more than 500 jobs waiting to be worked for 30 minutes (currently {{ $value }}). Workers may be under-provisioned or stuck."
           runbook_url: "https://github.com/rag-platform/ragctl/blob/main/docs/runbooks/observability.md#queue-depth"
 
+  - name: ragctl.tenancy
+    rules:
+      - alert: TenantSchemaMismatch
+        # SPEC-10 §5: tenant migration mismatch count > 0.
+        expr: tenant_schema_mismatch > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} tenant(s) behind the expected schema version"
+          description: "{{ $value }} active tenant(s) have a schema_version behind the running binary's expected tenant migration version. Requests to those tenants fail closed (ErrSchemaOutdated) until `ragctl migrate tenants` is run."
+          runbook_url: "https://github.com/rag-platform/ragctl/blob/main/docs/runbooks/failed-migration.md#fleet-schema-mismatch-alert"
+
   - name: ragctl.providers
     rules:
       - alert: ProviderErrorRateHigh

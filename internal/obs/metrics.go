@@ -45,6 +45,9 @@ type Metrics struct {
 	jobsQueueDepth *prometheus.GaugeVec     // jobs_queue_depth {queue}
 	jobsDuration   *prometheus.HistogramVec // jobs_duration_seconds {kind}
 	jobsFailed     *prometheus.CounterVec   // jobs_failed_total {kind}
+
+	// Tenancy plane.
+	tenantSchemaMismatch prometheus.Gauge // tenant_schema_mismatch (fleet count)
 }
 
 // NewMetrics builds a Metrics with its own registry and registers the catalogue.
@@ -109,6 +112,10 @@ func NewMetrics() *Metrics {
 			Name: "jobs_failed_total",
 			Help: "Jobs that ended in a terminal failure, per kind.",
 		}, []string{"kind"}),
+		tenantSchemaMismatch: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "tenant_schema_mismatch",
+			Help: "Active tenants whose schema_version is behind the binary's expected tenant migration version.",
+		}),
 	}
 	reg.MustRegister(
 		m.requestDuration,
@@ -124,6 +131,7 @@ func NewMetrics() *Metrics {
 		m.jobsQueueDepth,
 		m.jobsDuration,
 		m.jobsFailed,
+		m.tenantSchemaMismatch,
 	)
 	return m
 }
@@ -236,6 +244,17 @@ func (m *Metrics) SetQueueDepth(queue string, depth int) {
 		return
 	}
 	m.jobsQueueDepth.WithLabelValues(queue).Set(float64(depth))
+}
+
+// SetTenantSchemaMismatch records how many active tenants are behind the expected
+// tenant migration version (SPEC-10 §2/§5: the migration-mismatch alert). A periodic
+// fleet scan refreshes it; it is a fleet count, so it carries no per-tenant label
+// (the §2 cardinality guard).
+func (m *Metrics) SetTenantSchemaMismatch(n int) {
+	if m == nil {
+		return
+	}
+	m.tenantSchemaMismatch.Set(float64(n))
 }
 
 // RateLimitedCounter returns the api_rate_limited_total counter so the rate-limit

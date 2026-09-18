@@ -42,6 +42,7 @@ operation only — counts and durations, never content or secrets (C-3/C-4).
 | `jobs_queue_depth` (gauge) | queue |
 | `jobs_duration_seconds` (hist), `jobs_failed_total` | kind |
 | `tenant_pools_open` (gauge) | — |
+| `tenant_schema_mismatch` (gauge) | — |
 Cardinality guard: tenant label is the slug; if tenants exceed 500, switch to per-tenant metrics in the control plane only.
 
 ## 3. Tracing
@@ -66,10 +67,18 @@ annotated on the relevant panels (STORY-10.1). The alert *rules* are STORY-10.2.
 alerting rules in `deploy/prometheus/rules/ragctl.rules.yml`, referencing the §2
 catalogue and reusing the dashboard thresholds, each with a `severity` label and a
 `runbook_url` (docs/runbooks/, STORY-10.8). A hermetic `internal/obs` test validates
-the rules parse and reference only registered metrics. The sixth — tenant migration
-mismatch — is **deferred** and tracked in ISSUE-0046: the §2 catalogue defines no
-migration-mismatch metric, so the alert has nothing to reference; it lands once a
-`tenant_schema_mismatch` gauge (a periodic fleet schema-version scan) is added to §2.
+the rules parse and reference only registered metrics.
+
+**Delivered (ISSUE-0046):** the sixth condition — tenant migration mismatch — now ships
+as the `TenantSchemaMismatch` alert (`tenant_schema_mismatch > 0`). The worker
+(`ragctl work`) refreshes the `tenant_schema_mismatch` gauge every 60 s from a
+control-plane registry scan (`worker.SampleTenantSchemaMismatch`): the count of active
+tenants whose `schema_version` is behind the binary's expected tenant migration version
+(`migrate.ExpectedTenantVersion`), reading `tenants`/`tenant_databases` only (C-3, no
+tenant DB opened), mirroring the `jobs_queue_depth` sampler. The gauge is unlabelled (a
+fleet count, respecting the cardinality guard) and the alert links
+`docs/runbooks/failed-migration.md`.
+
 No Alertmanager routing or running Prometheus/Alertmanager deployment is committed
 (out of scope).
 

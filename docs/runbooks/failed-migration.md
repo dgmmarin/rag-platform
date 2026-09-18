@@ -34,6 +34,18 @@ applies only the remainder.
 5. **Verify** every tenant is at the expected version and resolves (a query/admin call
    succeeds for a previously-failing tenant).
 
+## Fleet schema-mismatch alert
+
+The `TenantSchemaMismatch` alert (SPEC-10 §5) fires when `tenant_schema_mismatch > 0`: one or
+more active tenants have a `schema_version` behind the running binary's expected tenant migration
+version. The worker refreshes this gauge every 60 s from the control-plane registry (no tenant DB
+read). Requests to a behind tenant fail closed with `ErrSchemaOutdated` (SPEC-01 §7) until it is
+migrated.
+
+To clear it: run the **Procedure** above (`ragctl migrate tenants`), then confirm the gauge
+returns to 0 on the next scrape. A non-zero gauge after a full migrate run means a tenant failed
+to apply — check the command's per-tenant output and the failed-migration steps above.
+
 ## Notes
 
 - A migration that fails because of bad tenant *data* needs the data fixed (or the migration
