@@ -111,7 +111,7 @@ func buildAPIServer(ctx context.Context, log *slog.Logger, metrics *obs.Metrics,
 			return nil, fmt.Errorf("serve: oidc: %w", oerr)
 		}
 		oidcSvc.Auth = authSvc
-		oidcHandlers := &auth.OIDCHandlers{Service: oidcSvc, Secure: secure}
+		oidcHandlers := &auth.OIDCHandlers{Service: oidcSvc, Secure: secure, SuccessURL: cfg.OIDCPostLoginURL}
 		oidcStart = http.HandlerFunc(oidcHandlers.Start)
 		oidcCallback = http.HandlerFunc(oidcHandlers.Callback)
 	}

@@ -76,6 +76,9 @@ type Config struct {
 	// OIDCJITProvisioning creates the user on first login when true; when false,
 	// only pre-existing users may sign in via OIDC.
 	OIDCJITProvisioning bool
+	// OIDCPostLoginURL is where the OIDC callback redirects the browser after a
+	// session is minted (ISSUE-0058). A relative SPA path, default /admin.
+	OIDCPostLoginURL string
 
 	// Rate limiting (STORY-03.9, NFR-SEC-07, SPEC-07 §1). The limiter is per API
 	// key and per tenant, using the tenant's settings.limits.qps. These knobs tune
@@ -234,6 +237,10 @@ func Load(filePath string) (Config, error) {
 	cfg.OIDCClientSecret = mustGet(get, "OIDC_CLIENT_SECRET")
 	cfg.OIDCRedirectURL = mustGet(get, "OIDC_REDIRECT_URL")
 	cfg.OIDCJITProvisioning = mustGet(get, "OIDC_JIT_PROVISIONING") == "true"
+	cfg.OIDCPostLoginURL = "/admin"
+	if raw := mustGet(get, "OIDC_POST_LOGIN_URL"); raw != "" {
+		cfg.OIDCPostLoginURL = raw
+	}
 
 	// Rate limiting (STORY-03.9, SPEC-07 §1). Defaults keep limiting enabled.
 	cfg.RateLimitDefaultQPS = 10
