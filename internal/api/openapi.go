@@ -532,8 +532,15 @@ func requestBodyFor(r route) *RequestBody {
 // exactly (internal/retrieve, internal/answer, internal/querylog), and the contract
 // test drives real responses so they cannot silently drift.
 func integrationSchemas() map[string]any {
+	// obj builds an object schema. required is omitted entirely when empty: a JSON
+	// `"required": null` (a nil slice marshals to null) makes some renderers (Redoc)
+	// throw "u is not iterable".
 	obj := func(required []string, props map[string]any) map[string]any {
-		return map[string]any{"type": "object", "required": required, "properties": props}
+		s := map[string]any{"type": "object", "properties": props}
+		if len(required) > 0 {
+			s["required"] = required
+		}
+		return s
 	}
 	str := map[string]any{"type": "string"}
 	strArr := map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
