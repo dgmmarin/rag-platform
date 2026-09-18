@@ -634,6 +634,12 @@ paths:
         - retrieval
       security:
         - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackRequest'
       responses:
         "200":
           description: feedback recorded
@@ -893,9 +899,19 @@ paths:
         - retrieval
       security:
         - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
       responses:
         "200":
           description: grounded answer (JSON), or an SSE event stream when stream=true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
         "400":
           description: missing question or malformed body
           content:
@@ -934,9 +950,19 @@ paths:
         - retrieval
       security:
         - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetrieveRequest'
       responses:
         "200":
           description: ranked chunks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetrieveResponse'
         "400":
           description: missing query or malformed body
           content:
@@ -1327,6 +1353,65 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
 components:
   schemas:
+    Chunk:
+      properties:
+        content:
+          type: string
+        document_id:
+          type: string
+        heading_path:
+          items:
+            type: string
+          type: array
+        id:
+          type: string
+        metadata:
+          additionalProperties: true
+          type: object
+        score:
+          description: Fused RRF score, or the reranker relevance score when reranking is enabled.
+          type: number
+        source_id:
+          type: string
+        title:
+          type: string
+        uri:
+          type: string
+      required:
+        - id
+        - document_id
+        - source_id
+        - content
+        - uri
+        - title
+        - heading_path
+        - score
+      type: object
+    Citation:
+      properties:
+        document_id:
+          type: string
+        heading_path:
+          items:
+            type: string
+          type: array
+        "n":
+          description: The [n] marker used in the answer text.
+          type: integer
+        snippet:
+          type: string
+        title:
+          type: string
+        uri:
+          type: string
+      required:
+        - "n"
+        - document_id
+        - title
+        - uri
+        - heading_path
+        - snippet
+      type: object
     ErrorEnvelope:
       additionalProperties: false
       properties:
@@ -1354,6 +1439,140 @@ components:
           type: object
       required:
         - error
+      type: object
+    FeedbackRequest:
+      properties:
+        comment:
+          description: Optional free-text comment.
+          type: string
+        query_id:
+          description: The id returned by POST /v1/query.
+          type: string
+        rating:
+          description: 1 = thumbs up, -1 = thumbs down.
+          enum:
+            - 1
+            - -1
+          type: integer
+      required:
+        - query_id
+        - rating
+      type: object
+    Filters:
+      description: Optional retrieval filters (FR-RET-02). Any absent field is a no-op.
+      properties:
+        date_from:
+          format: date-time
+          type: string
+        date_to:
+          format: date-time
+          type: string
+        metadata:
+          additionalProperties: true
+          type: object
+        source_ids:
+          items:
+            type: string
+          type: array
+        uri_prefix:
+          type: string
+      required: []
+      type: object
+    HistoryTurn:
+      properties:
+        content:
+          type: string
+        role:
+          enum:
+            - user
+            - assistant
+          type: string
+      required:
+        - role
+        - content
+      type: object
+    QueryRequest:
+      properties:
+        filters:
+          $ref: '#/components/schemas/Filters'
+        history:
+          description: Prior turns for a follow-up (used for the optional rewrite step).
+          items:
+            $ref: '#/components/schemas/HistoryTurn'
+          type: array
+        question:
+          description: The natural-language question.
+          type: string
+        stream:
+          description: When true the response is a text/event-stream (retrieval -> delta -> done) instead of JSON.
+          type: boolean
+        top_k:
+          type: integer
+      required:
+        - question
+      type: object
+    QueryResponse:
+      properties:
+        answer:
+          description: The grounded answer with [n] citation markers, or the fixed refusal when grounded is false.
+          type: string
+        citations:
+          items:
+            $ref: '#/components/schemas/Citation'
+          type: array
+        grounded:
+          type: boolean
+        id:
+          type: string
+        model:
+          type: string
+        usage:
+          $ref: '#/components/schemas/Usage'
+      required:
+        - id
+        - answer
+        - grounded
+        - citations
+        - usage
+        - model
+      type: object
+    RetrieveRequest:
+      properties:
+        filters:
+          $ref: '#/components/schemas/Filters'
+        query:
+          description: The search query text.
+          type: string
+        top_k:
+          description: Max chunks to return; defaults to the tenant's retrieval.final_k.
+          type: integer
+      required:
+        - query
+      type: object
+    RetrieveResponse:
+      properties:
+        chunks:
+          items:
+            $ref: '#/components/schemas/Chunk'
+          type: array
+      required:
+        - chunks
+      type: object
+    Usage:
+      properties:
+        generation_ms:
+          type: integer
+        in_tokens:
+          type: integer
+        out_tokens:
+          type: integer
+        retrieval_ms:
+          type: integer
+      required:
+        - retrieval_ms
+        - generation_ms
+        - in_tokens
+        - out_tokens
       type: object
   securitySchemes:
     bearerAuth:

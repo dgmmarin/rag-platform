@@ -74,7 +74,15 @@ type Operation struct {
 	Tags        []string              `json:"tags,omitempty" yaml:"tags,omitempty"`
 	Security    []map[string][]string `json:"security,omitempty" yaml:"security,omitempty"`
 	Parameters  []Parameter           `json:"parameters,omitempty" yaml:"parameters,omitempty"`
+	RequestBody *RequestBody          `json:"requestBody,omitempty" yaml:"requestBody,omitempty"`
 	Responses   map[string]Response   `json:"responses" yaml:"responses"`
+}
+
+// RequestBody is an OpenAPI request-body object.
+type RequestBody struct {
+	Description string               `json:"description,omitempty" yaml:"description,omitempty"`
+	Required    bool                 `json:"required,omitempty" yaml:"required,omitempty"`
+	Content     map[string]MediaType `json:"content" yaml:"content"`
 }
 
 // Parameter is a path/query parameter.
@@ -146,6 +154,13 @@ type route struct {
 	// success is the 2xx response description; okStatus its code (defaults 200).
 	success  string
 	okStatus string
+	// reqSchema/okSchema name component schemas for a typed JSON request body and 2xx
+	// JSON response (integration endpoints). Empty leaves the body prose-only.
+	reqSchema string
+	okSchema  string
+	// reqBodyType is the request media type when reqSchema is a non-JSON body
+	// (e.g. multipart/form-data for uploads); empty defaults to application/json.
+	reqBodyType string
 	// extra are documented error responses beyond those the auth chain implies
 	// (e.g. 404 on an {id} route, 409 on a conflicting sync/duplicate name).
 	extra []errResp
@@ -311,6 +326,7 @@ func liveRoutes() []route {
 		// When the tenant enables reranking (settings.reranker.enabled, STORY-08.3) the
 		// results are reordered and `score` is the reranker relevance score (SPEC-06 §3).
 		{method: "POST", path: "/v1/retrieve", tag: "retrieval", summary: "Hybrid retrieval: embed the query and return ranked chunks with scores and citation metadata (no generation). score is the fused RRF score, or the reranker score when the tenant enables reranking. Body: {query, top_k?, filters?}.", operationID: "retrieve", auth: authScopeQuery,
+			reqSchema: "RetrieveRequest", okSchema: "RetrieveResponse",
 			success: "ranked chunks",
 			extra:   []errResp{{"400", "missing query or malformed body"}, {"503", "tenant is not available"}}},
 
@@ -320,6 +336,7 @@ func liveRoutes() []route {
 		// success body) or, when stream=true, a text/event-stream of retrieval
 		// (citations first) → delta (text) → done (usage) events.
 		{method: "POST", path: "/v1/query", tag: "retrieval", summary: "Answer a question grounded in the tenant's content, with [n] citations (SPEC-06 §6). Body: {question, filters?, history?, top_k?, stream?}. stream=false returns JSON {id, answer, grounded, citations[], usage, model}; stream=true returns a text/event-stream of retrieval (citations first), delta (text), done (usage) events. Below the grounding floor: grounded=false with a fixed refusal and no generation. If generation is unavailable the query degrades to retrieval-only rather than failing (NFR-REL-04).", operationID: "query", auth: authScopeQuery,
+			reqSchema: "QueryRequest", okSchema: "QueryResponse",
 			success: "grounded answer (JSON), or an SSE event stream when stream=true",
 			extra:   []errResp{{"400", "missing question or malformed body"}, {"503", "tenant is not available"}}},
 
@@ -327,8 +344,9 @@ func liveRoutes() []route {
 		// derived from the API key (FR-ACC-03). Feedback is `query` scope; the admin
 		// query-log listing is `admin` scope (SPEC-07 §2/§2g).
 		{method: "POST", path: "/v1/feedback", tag: "retrieval", summary: "Rate a prior answer (thumbs up/down with optional comment). Body: {query_id, rating, comment?} where rating is 1 (up) or -1 (down); the query_id is the id returned by POST /v1/query. Idempotent per query (last write wins).", operationID: "feedback", auth: authScopeQuery,
-			success: "feedback recorded",
-			extra:   []errResp{{"400", "invalid rating, query_id or malformed body"}, {"404", "no such query"}, {"503", "tenant is not available"}}},
+			reqSchema: "FeedbackRequest",
+			success:   "feedback recorded",
+			extra:     []errResp{{"400", "invalid rating, query_id or malformed body"}, {"404", "no such query"}, {"503", "tenant is not available"}}},
 		{method: "GET", path: "/v1/queries", tag: "retrieval", summary: "List the tenant's query log (each query's retrieved chunk ids + scores, grounded flag, model, timings, token counts) with any joined user feedback (FR-RET-09/10). Newest first.", operationID: "queryList", auth: authScopeAdmin,
 			params: []Parameter{
 				{Name: "limit", In: "query", Description: "Page size (default 50, max 200).", Schema: map[string]any{"type": "integer"}},
@@ -381,9 +399,7 @@ func Document() *OpenAPI {
 		},
 		Paths: map[string]PathItem{},
 		Components: Components{
-			Schemas: map[string]any{
-				"ErrorEnvelope": errorEnvelopeSchema(),
-			},
+			Schemas: integrationSchemas(),
 			SecuritySchemes: map[string]SecurityScheme{
 				"bearerAuth": {
 					Type:         "http",
@@ -408,6 +424,7 @@ func Document() *OpenAPI {
 			Tags:        []string{r.tag},
 			Security:    securityFor(r.auth),
 			Parameters:  r.params,
+			RequestBody: requestBodyFor(r),
 			Responses:   responsesFor(r),
 		}
 		item := doc.Paths[r.path]
@@ -485,6 +502,119 @@ func errorEnvelopeSchema() map[string]any {
 
 func strSchema() map[string]any { return map[string]any{"type": "string"} }
 
+// refSchema is a JSON Schema $ref to a component schema by name.
+func refSchema(name string) map[string]any {
+	return map[string]any{"$ref": "#/components/schemas/" + name}
+}
+
+// requestBodyFor builds the typed request body for a route, or nil when the route
+// declares no request schema (its body, if any, stays described in the summary).
+func requestBodyFor(r route) *RequestBody {
+	if r.reqSchema == "" {
+		return nil
+	}
+	media := r.reqBodyType
+	if media == "" {
+		media = "application/json"
+	}
+	return &RequestBody{
+		Required: true,
+		Content:  map[string]MediaType{media: {Schema: refSchema(r.reqSchema)}},
+	}
+}
+
+// integrationSchemas is the component-schema set: the SPEC-07 §1 error envelope plus
+// typed request/response bodies for the core integration endpoints (retrieve, query,
+// feedback) and the objects they share (Filters, Chunk, Citation, Usage). These are
+// what an external integrator generates a client from; they mirror the Go DTOs
+// exactly (internal/retrieve, internal/answer, internal/querylog), and the contract
+// test drives real responses so they cannot silently drift.
+func integrationSchemas() map[string]any {
+	obj := func(required []string, props map[string]any) map[string]any {
+		return map[string]any{"type": "object", "required": required, "properties": props}
+	}
+	str := map[string]any{"type": "string"}
+	strArr := map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
+	integer := map[string]any{"type": "integer"}
+	boolean := map[string]any{"type": "boolean"}
+	objectFree := map[string]any{"type": "object", "additionalProperties": true}
+
+	filters := obj(nil, map[string]any{
+		"source_ids": strArr,
+		"uri_prefix": str,
+		"date_from":  map[string]any{"type": "string", "format": "date-time"},
+		"date_to":    map[string]any{"type": "string", "format": "date-time"},
+		"metadata":   objectFree,
+	})
+	filters["description"] = "Optional retrieval filters (FR-RET-02). Any absent field is a no-op."
+
+	return map[string]any{
+		"ErrorEnvelope": errorEnvelopeSchema(),
+
+		"Filters": filters,
+
+		"RetrieveRequest": obj([]string{"query"}, map[string]any{
+			"query":   map[string]any{"type": "string", "description": "The search query text."},
+			"top_k":   map[string]any{"type": "integer", "description": "Max chunks to return; defaults to the tenant's retrieval.final_k."},
+			"filters": refSchema("Filters"),
+		}),
+		"Chunk": obj([]string{"id", "document_id", "source_id", "content", "uri", "title", "heading_path", "score"}, map[string]any{
+			"id":           str,
+			"document_id":  str,
+			"source_id":    str,
+			"content":      str,
+			"uri":          str,
+			"title":        str,
+			"heading_path": strArr,
+			"metadata":     objectFree,
+			"score":        map[string]any{"type": "number", "description": "Fused RRF score, or the reranker relevance score when reranking is enabled."},
+		}),
+		"RetrieveResponse": obj([]string{"chunks"}, map[string]any{
+			"chunks": map[string]any{"type": "array", "items": refSchema("Chunk")},
+		}),
+
+		"HistoryTurn": obj([]string{"role", "content"}, map[string]any{
+			"role":    map[string]any{"type": "string", "enum": []string{"user", "assistant"}},
+			"content": str,
+		}),
+		"QueryRequest": obj([]string{"question"}, map[string]any{
+			"question": map[string]any{"type": "string", "description": "The natural-language question."},
+			"filters":  refSchema("Filters"),
+			"history":  map[string]any{"type": "array", "items": refSchema("HistoryTurn"), "description": "Prior turns for a follow-up (used for the optional rewrite step)."},
+			"top_k":    integer,
+			"stream":   map[string]any{"type": "boolean", "description": "When true the response is a text/event-stream (retrieval -> delta -> done) instead of JSON."},
+		}),
+		"Citation": obj([]string{"n", "document_id", "title", "uri", "heading_path", "snippet"}, map[string]any{
+			"n":            map[string]any{"type": "integer", "description": "The [n] marker used in the answer text."},
+			"document_id":  str,
+			"title":        str,
+			"uri":          str,
+			"heading_path": strArr,
+			"snippet":      str,
+		}),
+		"Usage": obj([]string{"retrieval_ms", "generation_ms", "in_tokens", "out_tokens"}, map[string]any{
+			"retrieval_ms":  integer,
+			"generation_ms": integer,
+			"in_tokens":     integer,
+			"out_tokens":    integer,
+		}),
+		"QueryResponse": obj([]string{"id", "answer", "grounded", "citations", "usage", "model"}, map[string]any{
+			"id":        str,
+			"answer":    map[string]any{"type": "string", "description": "The grounded answer with [n] citation markers, or the fixed refusal when grounded is false."},
+			"grounded":  boolean,
+			"citations": map[string]any{"type": "array", "items": refSchema("Citation")},
+			"usage":     refSchema("Usage"),
+			"model":     str,
+		}),
+
+		"FeedbackRequest": obj([]string{"query_id", "rating"}, map[string]any{
+			"query_id": map[string]any{"type": "string", "description": "The id returned by POST /v1/query."},
+			"rating":   map[string]any{"type": "integer", "enum": []int{1, -1}, "description": "1 = thumbs up, -1 = thumbs down."},
+			"comment":  map[string]any{"type": "string", "description": "Optional free-text comment."},
+		}),
+	}
+}
+
 // securityFor maps a route's auth to its OpenAPI security requirement. An open
 // route returns nil (no requirement); there is no global security object.
 func securityFor(a auth) []map[string][]string {
@@ -506,8 +636,12 @@ func responsesFor(r route) map[string]Response {
 	if ok == "" {
 		ok = "200"
 	}
+	okResp := Response{Description: r.success}
+	if r.okSchema != "" {
+		okResp.Content = map[string]MediaType{"application/json": {Schema: refSchema(r.okSchema)}}
+	}
 	resp := map[string]Response{
-		ok: {Description: r.success},
+		ok: okResp,
 	}
 	errRef := map[string]MediaType{
 		"application/json": {Schema: map[string]any{"$ref": "#/components/schemas/ErrorEnvelope"}},
