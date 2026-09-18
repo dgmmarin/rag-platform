@@ -139,7 +139,7 @@ func (s *Scheduler) syncSweep(ctx context.Context, tx pgx.Tx) error {
 		}
 		payload, _ := json.Marshal(map[string]any{"full": fullSync(d.count), "scheduled": true})
 		src := d.id
-		if _, err := enqueueMirrored(ctx, s.client, tx,
+		if _, err := enqueueMirrored(ctx, s.client, tx, s.log,
 			SyncSourceArgs{TenantID: d.tenantID, SourceID: d.id, Full: fullSync(d.count)},
 			"sync_source", d.tenantID, &src, payload); err != nil {
 			return err
@@ -180,7 +180,7 @@ func (s *Scheduler) gcSweep(ctx context.Context, tx pgx.Tx) error {
 		return err
 	}
 	for _, id := range tenantIDs {
-		if _, err := enqueueMirrored(ctx, s.client, tx,
+		if _, err := enqueueMirrored(ctx, s.client, tx, s.log,
 			GCTenantArgs{TenantID: id}, "gc_tenant", id, nil, nil); err != nil {
 			return err
 		}
@@ -191,8 +191,10 @@ func (s *Scheduler) gcSweep(ctx context.Context, tx pgx.Tx) error {
 // enqueueMirrored inserts a River job and its control-plane jobs mirror row in tx,
 // linked by river_job_id (the STORY-09.2 producer pattern). skipped is true when River
 // collapsed it onto an already-active unique job — no mirror row is written then, since
-// the active job already has one. sourceID is nil for tenant-scoped kinds.
-func enqueueMirrored(ctx context.Context, client *river.Client[pgx.Tx], tx pgx.Tx, args river.JobArgs, kind, tenantID string, sourceID *string, payload json.RawMessage) (skipped bool, err error) {
+// the active job already has one. sourceID is nil for tenant-scoped kinds. On a written
+// mirror row it emits event=enqueued (ISSUE-0080), so a scheduled sync's trace opens with
+// the same event API-enqueued jobs get, not at started; skipped duplicates write nothing.
+func enqueueMirrored(ctx context.Context, client *river.Client[pgx.Tx], tx pgx.Tx, log *slog.Logger, args river.JobArgs, kind, tenantID string, sourceID *string, payload json.RawMessage) (skipped bool, err error) {
 	res, err := client.InsertTx(ctx, tx, args, nil)
 	if err != nil {
 		return false, err
@@ -203,11 +205,24 @@ func enqueueMirrored(ctx context.Context, client *river.Client[pgx.Tx], tx pgx.T
 	if len(payload) == 0 {
 		payload = json.RawMessage(`{}`)
 	}
-	_, err = tx.Exec(ctx, `
+	var jobID string
+	if err := tx.QueryRow(ctx, `
 		insert into jobs (tenant_id, source_id, kind, status, payload, river_job_id)
-		values ($1::uuid, $2::uuid, $3::job_kind, 'queued', $4, $5)`,
-		tenantID, sourceID, kind, []byte(payload), res.Job.ID)
-	return false, err
+		values ($1::uuid, $2::uuid, $3::job_kind, 'queued', $4, $5)
+		returning id::text`,
+		tenantID, sourceID, kind, []byte(payload), res.Job.ID).Scan(&jobID); err != nil {
+		return false, err
+	}
+	if log != nil {
+		var src string
+		if sourceID != nil {
+			src = *sourceID
+		}
+		log.Info("job enqueued",
+			"event", "enqueued", "job_id", jobID, "river_job_id", res.Job.ID,
+			"kind", kind, "tenant_id", tenantID, "source_id", src, "status", "queued")
+	}
+	return false, nil
 }
 
 // fullSync reports whether the run at this 0-based count is a full sync (SPEC-08 §2:

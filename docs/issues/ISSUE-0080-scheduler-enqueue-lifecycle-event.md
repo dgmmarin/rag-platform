@@ -1,6 +1,6 @@
 # ISSUE-0080: Scheduler-enqueued jobs skip the `enqueued` lifecycle event
 
-**Type:** Chore · **Status:** Open · **Priority:** Low · **Traces:** ADR-0078, ISSUE-0078
+**Type:** Chore · **Status:** Done · **Priority:** Low · **Traces:** ADR-0078, ISSUE-0078
 
 ## Summary
 ADR-0078 and ISSUE-0078 added one structured log event per job transition (`enqueued`,
@@ -22,6 +22,20 @@ set the other lifecycle events use (`event`, `job_id`, `river_job_id`, `kind`, `
 `source_id`, `status`), right after the mirror row insert succeeds. Skip logging when River collapses
 the enqueue onto an already-active job (`res.UniqueSkippedAsDuplicate`), since no mirror row is
 written in that case.
+
+## Resolution
+`enqueueMirrored` (`internal/worker/scheduler.go`) now takes the scheduler's `*slog.Logger` and, after
+the mirror row insert succeeds, logs `event=enqueued` with the same field set the service enqueue paths
+use (`event`, `job_id`, `river_job_id`, `kind`, `tenant_id`, `source_id`, `status`). The insert returns
+the mirror row id so `job_id` is real. A `res.UniqueSkippedAsDuplicate` enqueue still returns early
+before the insert, so a collapsed duplicate writes no row and no event, as specified. Both call sites
+(`syncSweep`, `gcSweep`) pass `s.log`; a scheduled sync's trace now opens at `enqueued`, matching
+API-enqueued jobs. `gc_tenant` gets the same event, with an empty `source_id`.
+
+## Tests
+- e2e `TestSchedulerEnqueuesDueCronSync` (`-tags e2e`): now captures the scheduler's log stream and
+  asserts a `sync_source` `enqueued` event carrying the due source's id, alongside the existing
+  single-enqueue / next_run_at / counter checks.
 
 ## Related
 ADR-0078 (lifecycle event design), ISSUE-0078 (the lifecycle events this extends).

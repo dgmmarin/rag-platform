@@ -316,7 +316,8 @@ func TestSchedulerEnqueuesDueCronSync(t *testing.T) {
 
 	// Two replicas of the scheduler, short interval; the advisory lock (and River
 	// uniqueness) must keep them from double-enqueueing.
-	log := obs.Logger("sched-e2e", obs.ParseLevel("warn"), io.Discard)
+	logs := &captureWriter{}
+	log := obs.Logger("sched-e2e", obs.ParseLevel("info"), logs)
 	sctx, scancel := context.WithCancel(ctx)
 	done := make(chan struct{}, 2)
 	for i := 0; i < 2; i++ {
@@ -353,6 +354,21 @@ func TestSchedulerEnqueuesDueCronSync(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("sync_source jobs for source = %d, want exactly 1 (leader election / uniqueness)", count)
+	}
+	// ISSUE-0080: the scheduled sync's trace opens with an `enqueued` lifecycle event
+	// (not `started`), carrying the source id — so an operator can trace the job from
+	// its start. (gc_tenant also enqueues here; its event has an empty source_id.)
+	var enqueued bool
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, `"event":"enqueued"`) &&
+			strings.Contains(line, `"kind":"sync_source"`) &&
+			strings.Contains(line, `"source_id":"`+fx.sourceID+`"`) {
+			enqueued = true
+			break
+		}
+	}
+	if !enqueued {
+		t.Fatalf("no sync_source \"enqueued\" event for source %q:\n%s", fx.sourceID, logs.String())
 	}
 	var future bool
 	var runCount int
