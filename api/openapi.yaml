@@ -277,6 +277,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /docs:
+    get:
+      summary: Browsable API reference (Redoc) rendering the OpenAPI spec.
+      operationId: docs
+      tags:
+        - operational
+      responses:
+        "200":
+          description: the API reference HTML page
   /healthz:
     get:
       summary: Liveness probe.
@@ -839,6 +848,15 @@ paths:
       responses:
         "200":
           description: the OpenAPI 3.1 document
+  /v1/openapi.yaml:
+    get:
+      summary: This OpenAPI document as YAML.
+      operationId: openapiYAML
+      tags:
+        - operational
+      responses:
+        "200":
+          description: the OpenAPI 3.1 document (YAML)
   /v1/queries:
     get:
       summary: List the tenant's query log (each query's retrieved chunk ids + scores, grounded flag, model, timings, token counts) with any joined user feedback (FR-RET-09/10). Newest first.

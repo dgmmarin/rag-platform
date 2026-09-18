@@ -182,6 +182,8 @@ func liveRoutes() []route {
 		{method: "GET", path: "/metrics", tag: "operational", summary: "Prometheus metrics.", operationID: "metrics", auth: authNone, success: "metrics exposition"},
 
 		{method: "GET", path: "/v1/openapi.json", tag: "operational", summary: "This OpenAPI document as JSON.", operationID: "openapiJSON", auth: authNone, success: "the OpenAPI 3.1 document"},
+		{method: "GET", path: "/v1/openapi.yaml", tag: "operational", summary: "This OpenAPI document as YAML.", operationID: "openapiYAML", auth: authNone, success: "the OpenAPI 3.1 document (YAML)"},
+		{method: "GET", path: "/docs", tag: "operational", summary: "Browsable API reference (Redoc) rendering the OpenAPI spec.", operationID: "docs", auth: authNone, success: "the API reference HTML page"},
 
 		{method: "POST", path: "/v1/auth/signup", tag: "auth", summary: "Create a control-plane user.", operationID: "authSignup", auth: authNone, success: "user created"},
 		{method: "POST", path: "/v1/auth/login", tag: "auth", summary: "Start a session (email + password).", operationID: "authLogin", auth: authNone, success: "session established"},
@@ -710,6 +712,50 @@ func OpenAPIHandler() http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	})
+}
+
+// OpenAPIYAMLHandler serves the same document as YAML at /v1/openapi.yaml — the form
+// most OpenAPI tooling and integrators prefer to import. Open, like the JSON.
+func OpenAPIYAMLHandler() http.Handler {
+	body, err := MarshalOpenAPIYAML()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err != nil {
+			WriteError(w, r, http.StatusInternalServerError, CodeInternal, "openapi document unavailable")
+			return
+		}
+		w.Header().Set("Content-Type", "application/yaml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	})
+}
+
+// redocPage is the browsable API-reference page. It renders the served spec with
+// Redoc, whose standalone bundle loads from a CDN (cdnjs/jsdelivr). ponytail: a CDN
+// script keeps the API binary free of an embedded JS bundle; upgrade path is to vendor
+// redoc.standalone.js and serve it locally if an air-gapped deployment needs it.
+const redocPage = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <title>RAG platform API reference</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <style>body { margin: 0; }</style>
+  </head>
+  <body>
+    <redoc spec-url="/v1/openapi.json"></redoc>
+    <script src="https://cdn.jsdelivr.net/npm/redoc@2/bundles/redoc.standalone.js"></script>
+  </body>
+</html>`
+
+// DocsHandler serves the human-browsable API reference at /docs. It is open (no auth):
+// it is a shareable documentation page over the public spec, holding no data itself.
+func DocsHandler() http.Handler {
+	body := []byte(redocPage)
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body)
 	})
