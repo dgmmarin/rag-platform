@@ -114,9 +114,15 @@ type RerankerFactory interface {
 // and an optional top_k. An unset top_k falls back to the tenant's
 // settings.retrieval.final_k; any value is clamped to defaultMaxTopK.
 type Request struct {
-	Query   string
-	Filters Filters
-	TopK    int
+	Query string
+	// EmbedText, when non-empty, is embedded for the VECTOR side instead of Query
+	// (query expansion / HyDE, ADR-0079): the caller supplies a hypothetical answer
+	// whose wording is closer to the target documents than the raw question. The
+	// full-text (BM25) side and the reranker still use Query — the user's real terms
+	// and intent. Empty keeps the original behaviour (embed Query).
+	EmbedText string
+	Filters   Filters
+	TopK      int
 }
 
 // Service orchestrates one retrieval: resolve tenant → load settings → embed the
@@ -169,7 +175,13 @@ func (s *Service) Search(ctx context.Context, tid tenant.ID, req Request) ([]Res
 	if err != nil {
 		return nil, fmt.Errorf("%w: build embedder: %v", ErrEmbedding, err)
 	}
-	out, err := emb.Embed(ctx, []string{req.Query})
+	// Embed EmbedText (a HyDE hypothetical answer) when supplied, else the query
+	// itself; the full-text side and reranker keep req.Query (ADR-0079).
+	embedInput := req.Query
+	if strings.TrimSpace(req.EmbedText) != "" {
+		embedInput = req.EmbedText
+	}
+	out, err := emb.Embed(ctx, []string{embedInput})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEmbedding, err)
 	}

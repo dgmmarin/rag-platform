@@ -336,6 +336,33 @@ func testTenantID() tenant.ID { return tenant.ID(uuid.New()) }
 
 // --- tests -------------------------------------------------------------------
 
+// TestSearchEmbedsEmbedTextKeepsQueryForText proves HyDE wiring (ADR-0079): when
+// Request.EmbedText is set, the embedder receives EmbedText (the hypothetical answer)
+// while the hybrid retriever's full-text QueryText stays the user's Query.
+func TestSearchEmbedsEmbedTextKeepsQueryForText(t *testing.T) {
+	emb := &fakeEmbedder{vec: []float32{1, 0, 0, 0, 0, 0, 0, 0}}
+	var got Params
+	svc := &Service{
+		Resolver: &fakeResolver{},
+		Settings: fakeSettings{doc: newTestSettingsDoc()},
+		Embedder: &fakeFactory{emb: emb},
+		Retriever: func(_ context.Context, _ *tenant.DB, p Params) ([]Result, error) {
+			got = p
+			return []Result{{ChunkID: "c1"}}, nil
+		},
+	}
+	req := Request{Query: "sell offer 0 allotment", EmbedText: "create a Waiting list (WL) booking when sold out"}
+	if _, err := svc.Search(context.Background(), testTenantID(), req); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(emb.gotTexts) != 1 || emb.gotTexts[0] != req.EmbedText {
+		t.Fatalf("embedder got %v, want [%q] (the EmbedText)", emb.gotTexts, req.EmbedText)
+	}
+	if got.QueryText != req.Query {
+		t.Fatalf("QueryText = %q, want the original query %q", got.QueryText, req.Query)
+	}
+}
+
 // TestSearchEmbedsQueryAndPassesFiltersAndTopK proves the golden path: the query
 // string is embedded via the settings-built embedder, and the resulting vector,
 // query text, top_k and filters are passed through to the hybrid retriever.

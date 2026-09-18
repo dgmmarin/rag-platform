@@ -48,6 +48,15 @@
         "model": {"type": "string", "minLength": 1}
       }
     },
+    "expansion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["off", "hyde"]},
+        "model": {"type": "string", "minLength": 1}
+      }
+    },
     "chunking": {
       "type": "object",
       "additionalProperties": false,

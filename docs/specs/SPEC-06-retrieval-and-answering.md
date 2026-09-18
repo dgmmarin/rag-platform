@@ -234,6 +234,27 @@ before retrieval":
   question; the ANSWER stage (§5, STORY-08.5) still receives the **original** question
   plus history verbatim, so the model answers the user's actual turn in context.
 
+### 5.3a Query expansion — HyDE (ISSUE-0084, ADR-0079)
+`internal/query` inserts an optional **query-expansion** step after the rewrite and
+before retrieval, gated by `settings.expansion.mode` (per tenant, default `off`). It
+closes vocabulary gaps between a question and the passage that answers it (e.g. "sell
+an offer with 0 allotment" vs a "Waiting list (WL)" page), which no reranker can fix
+because the right chunk never enters the candidate pool.
+
+- **Mode `hyde` (Hypothetical Document Embeddings):** one cheap `Provider.Complete`
+  drafts a short hypothetical answer to the standalone question, and retrieval embeds
+  THAT for the **vector** side (`internal/retrieve.Request.EmbedText`). The **full-text
+  (BM25)** side and the **reranker** keep the user's real question, so exact keywords
+  and intent are preserved.
+- **Reuse + fail-open:** it reuses the shared `internal/llm` factory (§5.1); an optional
+  `settings.expansion.model` overrides the model, allowlist-gated. `off`, no factory, or
+  any failure (provider build, `Complete` error incl. `ErrCircuitOpen`, empty output)
+  embeds the question unchanged — a strict passthrough that never fails the query
+  (NFR-REL-04). The question is passed as **data**, never instructions (SPEC-09 §2); the
+  hypothetical is only an embedding input, never shown to the user or the answer model.
+- **Future modes** (synonym glossary, multi-query) can be added behind the same
+  `expansion.mode` seam; HyDE ships first as the highest value per unit of complexity.
+
 ### 5.4 Query log and feedback (STORY-08.8, ADR-0058)
 The `QueryLogger` seam left on `Answer`/`RecordStreamed` (§5.2) is filled by
 `internal/querylog.Logger`, which persists every answered query — grounded and

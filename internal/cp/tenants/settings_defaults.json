@@ -3,6 +3,7 @@
   "llm": {"provider": "anthropic", "model": "claude-sonnet-5", "max_tokens": 1024, "models_allowed": ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "gpt-*"]},
   "reranker": {"enabled": false, "provider": "cohere", "model": "rerank-v3.5", "top_n": 20},
   "rewrite": {"enabled": false},
+  "expansion": {"mode": "off"},
   "chunking": {"target_tokens": 512, "overlap_tokens": 64},
   "retrieval": {"k_vector": 40, "k_text": 40, "final_k": 8, "min_score": 0.02},
   "answering": {"token_budget": 6000, "history_n": 6},

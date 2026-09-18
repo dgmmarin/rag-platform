@@ -261,11 +261,17 @@ func (s *Service) build(ctx context.Context, tid tenant.ID, req Request) (answer
 	// passthrough when disabled / single-turn — no LLM call; see rewrite.go).
 	retrievalQuestion := s.standaloneQuestion(ctx, tid, st, parseRewriteSettings(raw), req.History, req.Question)
 
+	// Optionally expand the standalone question into a HyDE hypothetical answer for the
+	// VECTOR side (strict passthrough when off / no factory / failure — see expand.go).
+	// BM25 and the reranker still use retrievalQuestion (ADR-0079).
+	embedText := s.hydeEmbedText(ctx, tid, st, parseExpansionSettings(raw), retrievalQuestion)
+
 	start := time.Now()
 	results, err := s.Retrieve.Search(ctx, tid, retrieve.Request{
-		Query:   retrievalQuestion,
-		Filters: req.Filters,
-		TopK:    req.TopK,
+		Query:     retrievalQuestion,
+		EmbedText: embedText,
+		Filters:   req.Filters,
+		TopK:      req.TopK,
 	})
 	if err != nil {
 		return answer.Request{}, err
