@@ -27,6 +27,7 @@ var knownMetrics = []string{
 	"jobs_duration_seconds",
 	"jobs_failed_total",
 	"tenant_pools_open",
+	"tenant_schema_mismatch",
 }
 
 // ruleFile mirrors the Prometheus alerting-rules schema we commit (SPEC-10 §5).

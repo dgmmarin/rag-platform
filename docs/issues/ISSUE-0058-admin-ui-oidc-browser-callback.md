@@ -1,6 +1,6 @@
 # ISSUE-0058: Admin UI OIDC browser callback (EPIC-11 follow-up)
 
-**Type:** Feature · **Status:** Todo · **Story:** EPIC-11 follow-up · **Traces:** ADR-0020, ADR-0073, SPEC-11 §2
+**Type:** Feature · **Status:** Done · **Story:** EPIC-11 follow-up · **Traces:** ADR-0020, ADR-0073, SPEC-11 §2
 
 > Note: the *what* lives in the delivery backlog (`docs/backlog/`), the *why* in ADRs (ADR-0020, ADR-0073).
 
@@ -37,3 +37,26 @@ Next.js SPA, so the button was removed from the login UI in the STORY-11.1 final
   `/v1/auth/oidc/start`; the provider `redirect_uri` targets the Next origin.") — that document
   already assumes the end-to-end browser flow this issue delivers; STORY-11.1 shipped the shell
   without it.
+
+## Resolution
+- **Callback terminates with a redirect, not JSON** (`internal/cp/auth/oidc_handlers.go`): on success
+  it sets `rag_session` and `303`-redirects to `SuccessURL` (default `/admin`); every failure path
+  (missing/invalid state cookie, state/nonce mismatch, unverified email, unprovisioned user, generic
+  error) `303`-redirects to `/admin/login?error=<code>`. `Start` failures redirect the same way. No
+  session-handling fork (ADR-0020): the SPA reads `csrf_token` from `GET /v1/auth/me` on hydration,
+  which it already does on mount, so nothing extra is needed.
+- **Configurable target:** `OIDC_POST_LOGIN_URL` (`internal/config`, default `/admin`) → `SuccessURL`,
+  wired in `internal/cli/api_server.go`. Both targets are relative SPA paths, so they are
+  origin-agnostic across environments. The failure target (`/admin/login`) is the fixed login route.
+- **UI re-enabled** (`web/app/admin/login/page.tsx`): a "Sign in with OIDC" control is a real
+  full-page `<a href="/bff/v1/auth/oidc/start">` (not `next/link` — the browser must drive the BFF
+  route handler and follow the provider redirect). The login page reads `?error=<code>` via
+  `useSearchParams` (wrapped in a `Suspense` boundary, a Next.js build requirement) and shows a
+  per-code message.
+
+## Tests
+- Go unit (`internal/cp/auth/oidc_handlers_test.go`): success `303` to the default and to an
+  overridden `SuccessURL` with the session cookie and no JSON body; each failure `303` to
+  `/admin/login?error=<code>` with no session cookie.
+- Web (`web/app/admin/login/page.test.tsx`): the OIDC link targets `/bff/v1/auth/oidc/start`; a
+  known and an unknown `?error=` render the right message. `next build` prerenders `/admin/login`.

@@ -45,6 +45,9 @@ internal/cp/auth (or api)    GET /v1/auth/me handler + "memberships for user" qu
   sets `rag_session` (HttpOnly) and returns `{csrf_token}`; Next relays the cookie to the browser
   with the Domain rewritten to the Next origin and returns `csrf_token`. The OIDC button navigates
   to the Next-proxied `/v1/auth/oidc/start`; the provider `redirect_uri` targets the Next origin.
+  On return, the callback sets `rag_session` and `303`-redirects the browser into the SPA
+  (`OIDC_POST_LOGIN_URL`, default `/admin`), or back to `/admin/login?error=<code>` on failure — no
+  JSON body, so the SPA picks up `csrf_token` from `/v1/auth/me` on hydration (ISSUE-0058, ADR-0020).
   `POST /v1/auth/logout` (via the BFF) clears the session.
 - **Hydration:** `GET /v1/auth/me` (session-authenticated, via the BFF) returns the current user,
   admin flag, memberships, and the current `csrf_token`. A 401 → logged out → redirect to

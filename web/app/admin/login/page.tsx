@@ -1,9 +1,27 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth, LoginFailed } from "@/lib/auth";
 import { Unauthorized } from "@/lib/api";
+
+// oidcErrorMessage maps the ?error=<code> the OIDC callback redirects with
+// (ISSUE-0058) to a message for the operator. An unknown code falls back to a
+// generic sign-in failure.
+function oidcErrorMessage(code: string): string {
+  switch (code) {
+    case "invalid_state":
+      return "Your sign-in session expired. Please try again.";
+    case "email_unverified":
+      return "Your email is not verified with your identity provider.";
+    case "not_provisioned":
+      return "No account exists for this identity. Contact your administrator.";
+    case "unavailable":
+      return "Single sign-on is temporarily unavailable. Please try again later.";
+    default:
+      return "Single sign-on failed. Please try again.";
+  }
+}
 
 function Spinner() {
   return (
@@ -29,11 +47,23 @@ const inputClasses =
   "h-10 rounded-md border border-border bg-bg px-3 text-sm text-fg placeholder:text-fg-subtle transition-colors hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-text focus-visible:ring-offset-2 focus-visible:ring-offset-bg-elevated";
 
 export default function LoginPage() {
+  // useSearchParams (read in LoginForm) must sit under a Suspense boundary, or
+  // `next build` fails the route (Next.js requirement).
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const { login } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const oidcError = searchParams?.get("error") ?? null;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(oidcError ? oidcErrorMessage(oidcError) : null);
   const [submitting, setSubmitting] = useState(false);
 
   async function onSubmit(e: FormEvent) {
@@ -124,10 +154,25 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* OIDC login is deferred: the callback returns JSON for a fetch client rather than
-            303-redirecting the browser into the SPA, so a top-level navigation here would dead-end
-            on a raw JSON page. Re-add the button once that round-trip works end-to-end
-            (ISSUE-0058). */}
+        {/* OIDC sign-in is a top-level browser navigation (not a fetch): the callback
+            303-redirects into the SPA, or back here with ?error=<code> on failure (ISSUE-0058). */}
+        <div className="mt-6 flex flex-col gap-3">
+          <div className="flex items-center gap-3 text-xs text-fg-subtle">
+            <span className="h-px flex-1 bg-border" />
+            or
+            <span className="h-px flex-1 bg-border" />
+          </div>
+          {/* A real full-page navigation, not next/link client routing: the browser
+              must hit the BFF route handler so it follows the provider redirect and the
+              callback's 303 back into the SPA. next/link cannot drive a route handler. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+          <a
+            href="/bff/v1/auth/oidc/start"
+            className="inline-flex h-10 items-center justify-center rounded-md border border-border bg-bg text-sm font-medium text-fg transition-colors hover:border-border-strong hover:bg-bg-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-text focus-visible:ring-offset-2 focus-visible:ring-offset-bg-elevated"
+          >
+            Sign in with OIDC
+          </a>
+        </div>
       </div>
     </main>
   );

@@ -25,6 +25,7 @@ import (
 	"github.com/rag-platform/ragctl/internal/ingest/ingestdoc"
 	"github.com/rag-platform/ragctl/internal/ingest/parse"
 	"github.com/rag-platform/ragctl/internal/ingest/sidecar"
+	"github.com/rag-platform/ragctl/internal/migrate"
 	"github.com/rag-platform/ragctl/internal/objectstore"
 	"github.com/rag-platform/ragctl/internal/obs"
 	"github.com/rag-platform/ragctl/internal/tenant"
@@ -130,6 +131,15 @@ func runWorker(ctx context.Context, wc workerConfig, logw io.Writer) error {
 	// on a ticker. A sample failure is logged, never fatal.
 	go sampleQueueDepthLoop(ctx, pool, metrics, log)
 
+	// tenant_schema_mismatch sampler (SPEC-10 §2/§5, ISSUE-0046): count active tenants
+	// behind this binary's expected tenant migration version. A version-derivation
+	// failure disables the loop but never brings the worker down (observability only).
+	if expected, verr := migrate.ExpectedTenantVersion(); verr != nil {
+		log.Warn("tenant_schema_mismatch sampler disabled: cannot derive expected version", "err", verr)
+	} else {
+		go sampleSchemaMismatchLoop(ctx, pool, expected, metrics, log)
+	}
+
 	// The leader-elected scheduler enqueues cron syncs and daily GC (SPEC-08 §2). Every
 	// replica runs it; a Postgres advisory lock means only one sweeps at a time. It
 	// stops when ctx is cancelled; we wait for it before the pool closes.
@@ -165,6 +175,33 @@ func sampleQueueDepthLoop(ctx context.Context, pool *pgxpool.Pool, metrics *obs.
 	}
 	sample()
 	t := time.NewTicker(workerQueueDepthInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			sample()
+		}
+	}
+}
+
+// schemaMismatchInterval is how often the worker refreshes tenant_schema_mismatch
+// (SPEC-10 §2/§5). 60 s mirrors the readiness embedding-ping refresh (SPEC-10 §4) and
+// is well under the alert's evaluation cadence.
+const schemaMismatchInterval = time.Minute
+
+// sampleSchemaMismatchLoop refreshes the tenant_schema_mismatch gauge until ctx is
+// cancelled, mirroring sampleQueueDepthLoop: one sample at start, then per tick; a
+// sampling error is logged, never fatal.
+func sampleSchemaMismatchLoop(ctx context.Context, pool *pgxpool.Pool, expected int64, metrics *obs.Metrics, log *slog.Logger) {
+	sample := func() {
+		if err := worker.SampleTenantSchemaMismatch(ctx, pool, expected, metrics); err != nil && ctx.Err() == nil {
+			log.Warn("tenant-schema-mismatch sample failed", "err", err)
+		}
+	}
+	sample()
+	t := time.NewTicker(schemaMismatchInterval)
 	defer t.Stop()
 	for {
 		select {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 )
 
 // HTTP entry points for OIDC login (STORY-03.2). Like the password handlers in
@@ -23,11 +25,53 @@ const oidcStateCookieName = "rag_oidc_state"
 // cookie expires (5 minutes is ample for the redirect round trip).
 const oidcStateTTLSeconds = 300
 
+// Default browser redirect targets for the OIDC flow (ISSUE-0058). Both are SPA
+// paths on the Next origin; a relative path is origin-agnostic, so the same binary
+// works across environments (ADR-0073). SuccessURL is overridable per deployment.
+const (
+	defaultOIDCSuccessURL = "/admin"
+	defaultOIDCFailureURL = "/admin/login"
+)
+
 // OIDCHandlers are the HTTP handlers for the OIDC login flow. Secure controls the
 // cookie Secure attribute (true in production over TLS).
+//
+// The OIDC flow is driven by top-level BROWSER navigation, so Start and Callback
+// terminate the response with a redirect, never a JSON body (ISSUE-0058): on
+// success Callback sets the session cookie and 303-redirects into the SPA
+// (SuccessURL); on any failure it 303-redirects to FailureURL with an ?error=<code>
+// so the login page can show a message. The SPA then hydrates via GET /v1/auth/me,
+// which returns the CSRF token — so no fork of session handling is needed (ADR-0020).
 type OIDCHandlers struct {
 	Service *OIDCService
 	Secure  bool
+	// SuccessURL is where Callback redirects after a session is minted (default
+	// /admin). FailureURL is the login page a failure redirects to (default
+	// /admin/login). Empty falls back to the defaults.
+	SuccessURL string
+	FailureURL string
+}
+
+// successURL is the post-login redirect target, or the default when unset.
+func (h *OIDCHandlers) successURL() string {
+	if h.SuccessURL != "" {
+		return h.SuccessURL
+	}
+	return defaultOIDCSuccessURL
+}
+
+// failureURL is the login page plus an ?error=<code> query, so a browser
+// navigation never dead-ends on a raw error body.
+func (h *OIDCHandlers) failureURL(code string) string {
+	base := h.FailureURL
+	if base == "" {
+		base = defaultOIDCFailureURL
+	}
+	sep := "?"
+	if strings.Contains(base, "?") {
+		sep = "&"
+	}
+	return base + sep + "error=" + url.QueryEscape(code)
 }
 
 // Start redirects the browser to the provider's authorization endpoint and sets
@@ -35,7 +79,7 @@ type OIDCHandlers struct {
 func (h *OIDCHandlers) Start(w http.ResponseWriter, r *http.Request) {
 	authURL, st, err := h.Service.AuthCodeURL(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "oidc unavailable")
+		http.Redirect(w, r, h.failureURL("unavailable"), http.StatusSeeOther)
 		return
 	}
 	http.SetCookie(w, h.stateCookie(encodeLoginState(st)))
@@ -48,12 +92,12 @@ func (h *OIDCHandlers) Start(w http.ResponseWriter, r *http.Request) {
 func (h *OIDCHandlers) Callback(w http.ResponseWriter, r *http.Request) {
 	c, err := r.Cookie(oidcStateCookieName)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "missing or expired login state")
+		http.Redirect(w, r, h.failureURL("invalid_state"), http.StatusSeeOther)
 		return
 	}
 	st, err := decodeLoginState(c.Value)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid login state")
+		http.Redirect(w, r, h.failureURL("invalid_state"), http.StatusSeeOther)
 		return
 	}
 	// Clear the single-use state cookie regardless of outcome.
@@ -63,26 +107,25 @@ func (h *OIDCHandlers) Callback(w http.ResponseWriter, r *http.Request) {
 	sess, err := h.Service.Callback(r.Context(), params, st)
 	switch {
 	case errors.Is(err, ErrOIDCStateMismatch), errors.Is(err, ErrOIDCNonceMismatch):
-		writeError(w, http.StatusBadRequest, "login validation failed")
+		http.Redirect(w, r, h.failureURL("login_failed"), http.StatusSeeOther)
 		return
 	case errors.Is(err, ErrOIDCEmailUnverified):
-		writeError(w, http.StatusForbidden, "email not verified with identity provider")
+		http.Redirect(w, r, h.failureURL("email_unverified"), http.StatusSeeOther)
 		return
 	case errors.Is(err, ErrOIDCUserNotProvisioned):
-		writeError(w, http.StatusForbidden, "no account for this identity")
+		http.Redirect(w, r, h.failureURL("not_provisioned"), http.StatusSeeOther)
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, "login failed")
+		http.Redirect(w, r, h.failureURL("login_failed"), http.StatusSeeOther)
 		return
 	}
 
-	// Same session cookie + CSRF response shape as password login (do not fork
-	// session handling).
+	// Set the SAME session cookie as password login (do not fork session handling,
+	// ADR-0020), then redirect the browser into the SPA. The CSRF token is not
+	// returned here; the SPA reads it from GET /v1/auth/me on hydration.
 	sh := &Handlers{Service: h.Service.Auth, Secure: h.Secure}
 	http.SetCookie(w, sh.sessionCookie(sess.Token))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{"csrf_token": sess.CSRFToken})
+	http.Redirect(w, r, h.successURL(), http.StatusSeeOther)
 }
 
 func (h *OIDCHandlers) stateCookie(value string) *http.Cookie {

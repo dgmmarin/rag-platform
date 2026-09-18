@@ -3,7 +3,11 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Unauthorized } from "@/lib/api";
 
 const push = vi.fn();
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+let searchParams = new URLSearchParams();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push }),
+  useSearchParams: () => searchParams,
+}));
 
 const login = vi.fn();
 const { LoginFailed } = vi.hoisted(() => {
@@ -23,6 +27,7 @@ import LoginPage from "./page";
 beforeEach(() => {
   push.mockClear();
   login.mockReset();
+  searchParams = new URLSearchParams();
 });
 
 describe("LoginPage", () => {
@@ -74,10 +79,23 @@ describe("LoginPage", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  // OIDC login is deferred (ISSUE-0058): the button is removed until the callback
-  // 303-redirects the browser instead of returning JSON.
-  it("does not render an OIDC login control", () => {
+  // ISSUE-0058: the OIDC control is a top-level navigation to the BFF-proxied start
+  // endpoint (the callback now 303-redirects the browser instead of returning JSON).
+  it("renders an OIDC sign-in link to the BFF start endpoint", () => {
     render(<LoginPage />);
-    expect(screen.queryByRole("link", { name: /oidc/i })).not.toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /oidc/i });
+    expect(link).toHaveAttribute("href", "/bff/v1/auth/oidc/start");
+  });
+
+  it("shows a message when the OIDC callback redirected back with ?error", () => {
+    searchParams = new URLSearchParams("error=not_provisioned");
+    render(<LoginPage />);
+    expect(screen.getByText(/no account exists for this identity/i)).toBeInTheDocument();
+  });
+
+  it("shows a generic OIDC message for an unknown error code", () => {
+    searchParams = new URLSearchParams("error=weird_code");
+    render(<LoginPage />);
+    expect(screen.getByText(/single sign-on failed/i)).toBeInTheDocument();
   });
 });

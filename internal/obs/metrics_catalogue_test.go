@@ -63,6 +63,18 @@ func TestCatalogueEmitsJobMetrics(t *testing.T) {
 	}
 }
 
+// TestCatalogueEmitsTenantSchemaMismatch proves the fleet schema-mismatch gauge is
+// exposed and carries no per-tenant label (SPEC-10 §2 cardinality guard).
+func TestCatalogueEmitsTenantSchemaMismatch(t *testing.T) {
+	m := NewMetrics()
+	m.SetTenantSchemaMismatch(2)
+
+	body := scrape(t, m)
+	if !strings.Contains(body, "tenant_schema_mismatch 2") {
+		t.Fatalf("tenant_schema_mismatch not 2:\n%s", body)
+	}
+}
+
 // TestCatalogueEmitsIngestMetrics proves the ingest counters appear with their
 // SPEC-10 §2 labels (documents by result/source_kind, chunks + tokens by provider).
 func TestCatalogueEmitsIngestMetrics(t *testing.T) {
@@ -149,6 +161,7 @@ func TestNilMetricsMethodsAreSafe(_ *testing.T) {
 	m.ObserveJob("k", 1)
 	m.IncJobFailed("k")
 	m.SetQueueDepth("q", 1)
+	m.SetTenantSchemaMismatch(1)
 	m.IncIngestDocument("t", "upload", "changed")
 	m.AddIngestChunks("t", "voyage", 3)
 	m.AddEmbedTokens("t", "voyage", 100)
