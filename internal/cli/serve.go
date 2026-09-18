@@ -20,6 +20,7 @@ import (
 // wiring. Tracing is disabled when OTLPEndpoint is empty.
 type ObsSettings struct {
 	LogLevel     string
+	LogFormat    string
 	OTLPEndpoint string
 	OTLPInsecure bool
 	SamplerRatio float64
@@ -29,6 +30,7 @@ type ObsSettings struct {
 func obsSettingsFromConfig(cfg config.Config) ObsSettings {
 	return ObsSettings{
 		LogLevel:     cfg.LogLevel,
+		LogFormat:    cfg.LogFormat,
 		OTLPEndpoint: cfg.OTLPEndpoint,
 		OTLPInsecure: cfg.OTLPInsecure,
 		SamplerRatio: cfg.TraceSamplerRatio,
@@ -63,7 +65,7 @@ type serveConfig struct {
 // obs settings. It blocks until ctx is cancelled (SIGINT/SIGTERM) or the listener
 // fails, then shuts the HTTP server down gracefully (STORY-04.1).
 func runAPIServer(ctx context.Context, sc serveConfig, logw io.Writer) error {
-	log := obs.Logger("ragctl", obs.ParseLevel(sc.Obs.LogLevel), logw)
+	log := obs.NewLogger("ragctl", obs.ParseLevel(sc.Obs.LogLevel), sc.Obs.LogFormat, logw)
 
 	shutdownTracing, err := obs.SetupTracing(ctx, obs.TracingConfig{
 		Service:      "ragctl",

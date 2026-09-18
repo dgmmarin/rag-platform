@@ -160,6 +160,7 @@ func New(deps Deps) (*Worker, error) {
 		Sidecar:  deps.Sidecar,
 		Cache:    embedcache.NewPgCache(),
 		Metrics:  deps.Metrics,
+		Log:      log,
 		Now:      time.Now,
 	}
 	river.AddWorker(workers, &ingestWorker{ingestor: ingestor, log: log})

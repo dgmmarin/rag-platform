@@ -56,6 +56,9 @@ type Config struct {
 	// LogLevel is the textual slog level (debug, info, warn, error). Empty means
 	// info (STORY-01.6, SPEC-10 §1).
 	LogLevel string
+	// LogFormat selects the log handler: "text"/"console" for human-readable
+	// key=value lines (local dev), anything else for structured JSON (default).
+	LogFormat string
 	// OTLPEndpoint is the OpenTelemetry OTLP/gRPC collector endpoint (host:port).
 	// Empty disables tracing so local dev needs nothing (SPEC-10 §3).
 	OTLPEndpoint string
@@ -221,6 +224,7 @@ func Load(filePath string) (Config, error) {
 	// Observability (STORY-01.6, SPEC-10). The OTLP endpoint follows the standard
 	// OTEL_EXPORTER_OTLP_ENDPOINT variable; empty leaves tracing disabled.
 	cfg.LogLevel = firstNonEmpty(mustGet(get, "LOG_LEVEL"), "info")
+	cfg.LogFormat = firstNonEmpty(mustGet(get, "LOG_FORMAT"), "json")
 	cfg.OTLPEndpoint = mustGet(get, "OTEL_EXPORTER_OTLP_ENDPOINT")
 	cfg.OTLPInsecure = mustGet(get, "OTEL_EXPORTER_OTLP_INSECURE") == "true"
 	if raw := mustGet(get, "OTEL_TRACES_SAMPLER_RATIO"); raw != "" {

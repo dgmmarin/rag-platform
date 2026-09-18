@@ -55,7 +55,7 @@ type workerConfig struct {
 // mirrors runAPIServer: structured logs and tracing go to logw/OTLP, and the whole
 // thing is cancellable so the process shuts down gracefully (STORY-09.1).
 func runWorker(ctx context.Context, wc workerConfig, logw io.Writer) error {
-	log := obs.Logger("ragctl-worker", obs.ParseLevel(wc.Obs.LogLevel), logw)
+	log := obs.NewLogger("ragctl-worker", obs.ParseLevel(wc.Obs.LogLevel), wc.Obs.LogFormat, logw)
 
 	shutdownTracing, err := obs.SetupTracing(ctx, obs.TracingConfig{
 		Service:      "ragctl-worker",

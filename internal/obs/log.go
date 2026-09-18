@@ -19,12 +19,33 @@ import (
 	"log/slog"
 )
 
-// Logger returns a slog.Logger writing JSON to w at the given level, tagged with
-// the mandatory `service` base field (SPEC-10 §1). The remaining mandatory
-// fields (request_id, tenant_id, duration_ms, err, …) are attached per-record by
-// callers — the middleware and With — where they are known.
+// Logger returns a JSON slog.Logger (the production/machine format, SPEC-10 §1).
+// It is the default and what tests and log-scraping tooling expect; NewLogger
+// selects a human-readable console format when asked.
 func Logger(service string, level slog.Level, w io.Writer) *slog.Logger {
-	handler := slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})
+	return NewLogger(service, level, "json", w)
+}
+
+// NewLogger returns a slog.Logger writing to w at the given level, tagged with the
+// mandatory `service` base field (SPEC-10 §1). format selects the handler:
+//
+//   - "text" / "console" — one line of key=value pairs per record, for a human
+//     reading the local stack in mprocs; much easier to scan than JSON.
+//   - anything else (incl. "json" and "") — structured JSON, the machine format.
+//
+// It uses slog's built-in handlers only: the go.mod go-1.22 pin (ADR-0014) rules
+// out a third-party pretty-logger such as zerolog, which requires a newer Go and a
+// larger dependency set. The remaining mandatory fields (request_id, tenant_id,
+// duration_ms, err, …) are attached per-record by callers.
+func NewLogger(service string, level slog.Level, format string, w io.Writer) *slog.Logger {
+	opts := &slog.HandlerOptions{Level: level}
+	var handler slog.Handler
+	switch format {
+	case "text", "console":
+		handler = slog.NewTextHandler(w, opts)
+	default:
+		handler = slog.NewJSONHandler(w, opts)
+	}
 	return slog.New(handler).With(slog.String("service", service))
 }
 

@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 	"unicode/utf8"
 
@@ -171,6 +172,12 @@ type Config struct {
 	// Now is the clock; nil uses time.Now. startedAt is captured at New.
 	Now func() time.Time
 
+	// Log traces each document through the pipeline (received → parsed → chunked →
+	// embedded → committed) at Debug, and logs a per-document failure at Warn (these
+	// are otherwise only counted in Stats, never surfaced). Nil uses slog.Default().
+	// Never logs document content (C-3): only external_id, counts and timings.
+	Log *slog.Logger
+
 	// SeenSince is the boundary a FULL sync's delete pass compares last_seen_at
 	// against: documents not seen since this time are soft-deleted. It must be the
 	// start of the whole RUN SERIES, not of this attempt — otherwise a sync that
@@ -189,6 +196,7 @@ type Sink struct {
 	startedAt time.Time
 	seenSince time.Time
 	stats     Stats
+	log       *slog.Logger
 }
 
 // New builds a sink. startedAt is this attempt's start (used for DurationMS);
@@ -204,7 +212,11 @@ func New(cfg Config) *Sink {
 	if seenSince.IsZero() {
 		seenSince = startedAt
 	}
-	return &Sink{cfg: cfg, now: now, startedAt: startedAt, seenSince: seenSince}
+	log := cfg.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Sink{cfg: cfg, now: now, startedAt: startedAt, seenSince: seenSince, log: log}
 }
 
 // Put ingests one document through the SPEC-05 §1 flow. It returns:
@@ -218,6 +230,8 @@ func New(cfg Config) *Sink {
 func (s *Sink) Put(ctx context.Context, doc Document) error {
 	s.stats.DocsSeen++
 	s.stats.BytesFetched += int64(bytesFetched(doc))
+	s.log.Debug("sink: document received",
+		"external_id", doc.ExternalID, "mime", doc.MimeType, "bytes", bytesFetched(doc))
 
 	// 1. Parse: Go registry, routing the heavy formats to the sidecar. A parse
 	// failure is a single-document error — recorded and skipped (SPEC-05 §2/§8).
@@ -231,6 +245,8 @@ func (s *Sink) Put(ctx context.Context, doc Document) error {
 	content := norm.Markdown()
 	sum := sha256.Sum256([]byte(content))
 	hash := sum[:]
+	s.log.Debug("sink: parsed",
+		"external_id", doc.ExternalID, "parser", parser, "chars", utf8.RuneCountInString(content))
 
 	// 3. Compare to the current version hash BEFORE chunk/embed: an unchanged
 	// document only touches last_seen_at, costing no embedding (SPEC-05 §1).
@@ -241,11 +257,13 @@ func (s *Sink) Put(ctx context.Context, doc Document) error {
 	if unchanged {
 		s.stats.DocsUnchanged++
 		s.cfg.Metrics.IncIngestDocument(s.cfg.Tenant, s.cfg.SourceKind, "unchanged")
+		s.log.Debug("sink: unchanged, skipped", "external_id", doc.ExternalID)
 		return nil
 	}
 
 	// 4. Chunk (structure-aware; target/overlap from settings).
 	chunks := chunk.Document(norm, s.cfg.Chunk)
+	s.log.Debug("sink: chunked", "external_id", doc.ExternalID, "chunks", len(chunks))
 
 	// Per-chunk content hash of the exact embed-text (chunk-level drift key).
 	hashes := make([][]byte, len(chunks))
@@ -287,9 +305,15 @@ func (s *Sink) Put(ctx context.Context, doc Document) error {
 	}
 	var tokens int
 	if len(missTexts) > 0 {
+		s.log.Debug("sink: embedding chunks",
+			"external_id", doc.ExternalID, "provider", s.cfg.Provider, "model", s.cfg.Model,
+			"to_embed", len(missTexts), "reused", len(chunks)-len(missTexts))
+		embedStart := s.now()
 		res, err := s.cfg.Embedder.Embed(ctx, missTexts)
 		if err != nil {
 			if errors.Is(err, embed.ErrCircuitOpen) {
+				s.log.Warn("sink: embedding circuit open, snoozing job",
+					"external_id", doc.ExternalID, "provider", s.cfg.Provider)
 				return &SnoozeError{Err: err}
 			}
 			s.recordFailure(doc.ExternalID, err)
@@ -303,6 +327,9 @@ func (s *Sink) Put(ctx context.Context, doc Document) error {
 		}
 		tokens = res.Tokens
 		s.cfg.Metrics.AddEmbedTokens(s.cfg.Tenant, s.cfg.Provider, tokens)
+		s.log.Debug("sink: embedded chunks",
+			"external_id", doc.ExternalID, "embedded", len(missTexts), "tokens", tokens,
+			"duration_ms", s.now().Sub(embedStart).Milliseconds())
 	}
 	s.stats.ChunksEmbedded += len(missTexts)
 	s.stats.ChunksReused += len(chunks) - len(missTexts)
@@ -315,6 +342,9 @@ func (s *Sink) Put(ctx context.Context, doc Document) error {
 	if _, err := s.cfg.Store.Put(ctx, s.cfg.DB, in); err != nil {
 		return err
 	}
+	s.log.Debug("sink: committed document",
+		"external_id", doc.ExternalID, "chunks", len(chunks), "embedded", len(missTexts),
+		"reused", len(chunks)-len(missTexts))
 
 	s.stats.DocsChanged++
 	s.stats.ChunksWritten += len(chunks)
@@ -423,6 +453,10 @@ func (s *Sink) putInput(doc Document, norm parse.Normalised, content string, has
 func (s *Sink) recordFailure(externalID string, err error) {
 	s.stats.DocsFailed++
 	s.cfg.Metrics.IncIngestDocument(s.cfg.Tenant, s.cfg.SourceKind, "failed")
+	// Surface the failure: a recorded per-document error (parse or non-circuit embed)
+	// otherwise lives only in Stats and never appears in the logs (the error message
+	// is client-safe metadata, never document content — C-3).
+	s.log.Warn("sink: document failed", "external_id", externalID, "err", err.Error())
 	if len(s.stats.Errors) < maxDocErrors {
 		s.stats.Errors = append(s.stats.Errors, DocError{ExternalID: externalID, Msg: err.Error()})
 	}

@@ -37,6 +37,36 @@ func TestLoggerEmitsJSONWithService(t *testing.T) {
 	}
 }
 
+// TestNewLoggerTextFormatIsHumanReadable proves the "text"/"console" format emits
+// key=value pairs (not JSON) and still carries the service field, so a human can
+// scan the local stack (ISSUE-0082). "json" and unknown formats stay JSON.
+func TestNewLoggerTextFormatIsHumanReadable(t *testing.T) {
+	for _, format := range []string{"text", "console"} {
+		var buf bytes.Buffer
+		log := NewLogger("ragctl-worker", slog.LevelInfo, format, &buf)
+		log.Info("sink: parsed", "external_id", "https://x/y", "chars", 42)
+
+		out := buf.String()
+		if json.Valid(bytes.TrimSpace(buf.Bytes())) {
+			t.Fatalf("format %q should not be JSON: %s", format, out)
+		}
+		for _, want := range []string{"service=ragctl-worker", "external_id=", "chars=42", "sink: parsed"} {
+			if !bytes.Contains(buf.Bytes(), []byte(want)) {
+				t.Fatalf("format %q text line missing %q:\n%s", format, want, out)
+			}
+		}
+	}
+
+	// The default and unknown formats stay JSON (the machine format tooling expects).
+	for _, format := range []string{"json", ""} {
+		var buf bytes.Buffer
+		NewLogger("ragctl", slog.LevelInfo, format, &buf).Info("hi")
+		if !json.Valid(bytes.TrimSpace(buf.Bytes())) {
+			t.Fatalf("format %q should be JSON: %s", format, buf.String())
+		}
+	}
+}
+
 // TestLoggerLevelFiltersDebug proves the configured level is honoured: a debug
 // line is suppressed at info level.
 func TestLoggerLevelFiltersDebug(t *testing.T) {

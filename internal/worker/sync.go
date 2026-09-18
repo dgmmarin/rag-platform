@@ -190,6 +190,7 @@ func (w *syncWorker) Work(ctx context.Context, job *river.Job[SyncSourceArgs]) e
 		SourceKind: src.Kind,
 		Provider:   s.EmbeddingProvider,
 		Now:        time.Now,
+		Log:        w.log,
 	})
 
 	var state connector.StateStore

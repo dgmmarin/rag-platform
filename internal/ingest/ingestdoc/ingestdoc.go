@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -95,7 +96,10 @@ type Ingestor struct {
 	Cache embedcache.Cache
 	// Metrics records ingestion throughput (SPEC-10 §2). Optional: nil is a no-op.
 	Metrics *obs.Metrics
-	Now     func() time.Time
+	// Log traces the ingest pipeline steps in the sink. Optional: nil lets the sink
+	// fall back to slog.Default().
+	Log *slog.Logger
+	Now func() time.Time
 }
 
 // Dispatch resolves the tenant DB and runs the job. This is the entry point
@@ -155,6 +159,7 @@ func (in *Ingestor) Run(ctx context.Context, db *tenant.DB, job Job) (sink.Stats
 		SourceKind: "upload",
 		Provider:   s.EmbeddingProvider,
 		Now:        in.Now,
+		Log:        in.Log,
 	})
 
 	doc := sink.Document{
